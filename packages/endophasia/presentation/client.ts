@@ -40,7 +40,7 @@ export interface EndophasiaPresentationClientV0 {
 	detach(context: Context): Promise<void>;
 	/** A fresh per-lane Session Overview captured by the attached worker on every call. */
 	sessionOverview(context: Context): Promise<SessionOverviewV0>;
-	/** Dispose the service bindings and the Pi client. Idempotent. */
+	/** Dispose the service bindings and the Pi client. Every call returns the same disposal promise. */
 	dispose(): Promise<void>;
 }
 
@@ -63,10 +63,7 @@ export async function openEndophasiaPresentationClientV0(
 	});
 	const server = createServerServiceSource(client, { onError });
 	const session = createSessionServiceSource(client, { onError });
-	let disposed = false;
-	const dispose = async (): Promise<void> => {
-		if (disposed) return;
-		disposed = true;
+	const disposeResources = async (): Promise<void> => {
 		// Each source disposes the bindings it opened.
 		const results = await Promise.allSettled([
 			server.dispose(BACKGROUND_CONTEXT),
@@ -76,6 +73,12 @@ export async function openEndophasiaPresentationClientV0(
 		const errors = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
 		if (errors.length === 1) throw errors[0];
 		if (errors.length > 1) throw new AggregateError(errors, "Failed to dispose Endophasia presentation client");
+	};
+	// Every caller, including concurrent ones, awaits the same cleanup and observes its result.
+	let disposal: Promise<void> | undefined;
+	const dispose = (): Promise<void> => {
+		disposal ??= disposeResources();
+		return disposal;
 	};
 
 	try {

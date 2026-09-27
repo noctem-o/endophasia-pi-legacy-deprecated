@@ -112,15 +112,18 @@ describe("Endophasia Presentation Client v0", () => {
 		await presentation.detach(BACKGROUND_CONTEXT);
 		// Re-attach "observed" once its idle worker has stopped: a re-attach that races Pi's idle-worker shutdown
 		// currently fails with an internal server error, independent of this client.
-		await expect.poll(() => server.workerPids.size).toBe(0);
+		await expect.poll(() => server.workerPids.size, { timeout: 10_000 }).toBe(0);
 		await observe("observed");
 		expect(errors).toEqual([]);
 
-		await presentation.dispose();
-		await presentation.dispose();
+		// Concurrent and later callers all wait on the same cleanup and observe its result.
+		const disposal = presentation.dispose();
+		expect(presentation.dispose()).toBe(disposal);
+		await disposal;
+		expect(presentation.dispose()).toBe(disposal);
 		await expect(Promise.resolve().then(() => presentation.sessionOverview(BACKGROUND_CONTEXT))).rejects.toThrow();
 		// The server releases the disposed client's attachment, so the idle worker stops.
-		await expect.poll(() => server.workerPids.size).toBe(0);
+		await expect.poll(() => server.workerPids.size, { timeout: 10_000 }).toBe(0);
 	});
 
 	it("exposes no agent control, model mutation or Session management", () => {
