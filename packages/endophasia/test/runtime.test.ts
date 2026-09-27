@@ -140,9 +140,9 @@ describe("Endophasia runtime v0", () => {
 	it("loads in plain Node with coding-agent's source resolver preloaded, without Vitest aliases", async () => {
 		const resolver = new URL("../../coding-agent/src/experimental/source-resolver.ts", import.meta.url);
 		const script = `
-			const server = await import(${JSON.stringify(new URL("../runtime/server.ts", import.meta.url).href)});
-			const worker = await import(${JSON.stringify(new URL("../runtime/session-worker.ts", import.meta.url).href)});
-			console.log(typeof server.startEndophasiaServer, typeof worker.runEndophasiaSessionWorker);
+			import { startEndophasiaServer } from ${JSON.stringify(new URL("../runtime/server.ts", import.meta.url).href)};
+			import { runEndophasiaSessionWorker } from ${JSON.stringify(new URL("../runtime/session-worker.ts", import.meta.url).href)};
+			console.log(typeof startEndophasiaServer, typeof runEndophasiaSessionWorker);
 		`;
 		const { stdout } = await promisify(execFile)(process.execPath, [
 			"--import",

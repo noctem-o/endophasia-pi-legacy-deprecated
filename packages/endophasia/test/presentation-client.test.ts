@@ -159,7 +159,10 @@ describe("Endophasia Presentation Client v0", () => {
 	it("loads in plain Node with coding-agent's source resolver preloaded, without Vitest aliases", async () => {
 		const resolver = new URL("../../coding-agent/src/experimental/source-resolver.ts", import.meta.url);
 		const client = new URL("../presentation/client.ts", import.meta.url);
-		const script = `console.log(typeof (await import(${JSON.stringify(client.href)})).openEndophasiaPresentationClientV0);`;
+		const script = `
+			import { openEndophasiaPresentationClientV0 } from ${JSON.stringify(client.href)};
+			console.log(typeof openEndophasiaPresentationClientV0);
+		`;
 		const { stdout } = await promisify(execFile)(process.execPath, [
 			"--import",
 			resolver.href,
