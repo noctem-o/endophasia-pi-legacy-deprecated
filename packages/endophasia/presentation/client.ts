@@ -47,7 +47,7 @@ export interface EndophasiaPresentationClientV0 {
 export interface OpenEndophasiaPresentationClientV0Options {
 	readonly serverId: string;
 	readonly transportFactory: ByteTransportFactory;
-	/** Receives client listener, service-source and binding errors. */
+	/** Observes client listener, service-source and binding errors. Exceptions it throws are ignored. */
 	readonly onError?: (error: Error) => void;
 }
 
@@ -55,7 +55,14 @@ export interface OpenEndophasiaPresentationClientV0Options {
 export async function openEndophasiaPresentationClientV0(
 	options: OpenEndophasiaPresentationClientV0Options,
 ): Promise<EndophasiaPresentationClientV0> {
-	const onError = options.onError ?? (() => {});
+	// Diagnostic observers cannot affect client, service-source or attachment state.
+	const onError = (error: Error): void => {
+		try {
+			options.onError?.(error);
+		} catch {
+			// A throwing observer is ignored, as Pi's listener error handlers are.
+		}
+	};
 	const client = await Client.connect({
 		serverId: options.serverId,
 		transportFactory: options.transportFactory,
