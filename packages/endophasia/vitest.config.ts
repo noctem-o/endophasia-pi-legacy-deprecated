@@ -5,7 +5,8 @@ import baseConfig from "../../vitest.base.ts";
 export default mergeConfig(
 	baseConfig,
 	defineConfig({
-		test: { environment: "node", include: ["test/**/*.test.ts"] },
+		// Runtime and presentation tests start real servers and Session worker processes, as coding-agent tests do.
+		test: { environment: "node", include: ["test/**/*.test.ts"], testTimeout: 30_000 },
 		resolve: {
 			conditions: ["source"],
 			alias: [
