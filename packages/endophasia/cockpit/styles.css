@@ -485,6 +485,10 @@ pre {
 	color: var(--text-faint);
 }
 
+.source-note {
+	color: var(--accent-amber);
+}
+
 .reasoning {
 	color: var(--accent-violet);
 	opacity: 0.8;

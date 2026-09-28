@@ -117,9 +117,12 @@ describe("Standard Cockpit integration", () => {
 		const shell = await get(cockpit.url);
 		expect(shell.status).toBe(200);
 		expect(shell.body).toContain('<script type="module" src="app.js"></script>');
-		expect((await get(`${origin}/app.js`)).body.length).toBeGreaterThan(1_000);
+		expect((await get(`${cockpit.url}app.js`)).body.length).toBeGreaterThan(1_000);
+		// The capability-bearing bootstrap is only under the per-launch page path.
+		expect(cockpit.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/c\/[A-Za-z0-9_-]{43}\/$/);
+		expect((await get(`${origin}/bootstrap.json`)).status).toBe(404);
 
-		const bootstrapResponse = await get(`${origin}/bootstrap.json`);
+		const bootstrapResponse = await get(`${cockpit.url}bootstrap.json`);
 		const bootstrap = parseBootstrap(JSON.parse(bootstrapResponse.body));
 		expect(bootstrap).toEqual({ serverId: cockpit.server.serverId, websocketUrl: cockpit.server.browser.url });
 
@@ -150,7 +153,7 @@ describe("Standard Cockpit integration", () => {
 
 	it("admits only the cockpit's own origin to the Pi WebSocket", async () => {
 		const cockpit = await startCockpit();
-		const bootstrap = parseBootstrap(JSON.parse((await get(`${new URL(cockpit.url).origin}/bootstrap.json`)).body));
+		const bootstrap = parseBootstrap(JSON.parse((await get(`${cockpit.url}bootstrap.json`)).body));
 		await expect(
 			openEndophasiaPresentationClientV0({
 				serverId: bootstrap.serverId,

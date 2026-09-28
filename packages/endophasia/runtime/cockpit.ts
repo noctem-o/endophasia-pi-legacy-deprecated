@@ -47,7 +47,7 @@ export interface EndophasiaCockpitOptions extends Omit<EndophasiaBrowserServerOp
 }
 
 export interface RunningEndophasiaCockpit {
-	/** The page to open, http://127.0.0.1:<port>/. */
+	/** The page to open, http://127.0.0.1:<port>/c/<per-launch token>/. It is a credential for this launch. */
 	readonly url: string;
 	readonly server: RunningEndophasiaBrowserServer;
 	/** Resolves when the Endophasia server has closed, whether by close() or on its own. */
@@ -80,7 +80,7 @@ export async function startEndophasiaCockpit(
 		() => host.close(),
 		() => host.close(),
 	);
-	return { url: `${host.origin}/`, server, closed: server.closed, close };
+	return { url: host.url, server, closed: server.closed, close };
 }
 
 /** Settle every cleanup; one failure rethrows as is, several as an AggregateError. */

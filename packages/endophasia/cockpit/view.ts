@@ -17,6 +17,7 @@ import {
 	projectSessions,
 	projectVisibleTranscript,
 	type StatusView,
+	type VisibleEntryCache,
 } from "./view-model.ts";
 
 /** Previews at most this long start expanded. */
@@ -92,6 +93,8 @@ function renderBlock(block: ContentBlockView): HTMLElement {
 		}
 		case "error":
 			return el("div", "block-error", block.text.text);
+		case "note":
+			return el("div", "block-note source-note", `△ ${block.text}`);
 		case "unsupported":
 			return el("div", "block-note", block.label);
 	}
@@ -153,6 +156,8 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 	transcriptScroll.append(transcriptEmpty, entryList, streamingSlot);
 	transcriptPanel.append(transcriptHeader, operationStrip, transcriptScroll);
 	const renderedEntries = new Map<string, RenderedEntry>();
+	// Projections of immutable entries, so each streamed update projects only new or replaced entries.
+	const projections: VisibleEntryCache = new WeakMap();
 
 	// Inspector sections.
 	const connectionSection = el("section", "inspector-section");
@@ -256,7 +261,7 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 		transcriptEmpty.textContent = "The main-lane transcript is empty.";
 
 		// Keyed reconciliation: entries are immutable, so an unchanged source object keeps its card.
-		const visible = projectVisibleTranscript(snapshot.transcript);
+		const visible = projectVisibleTranscript(snapshot.transcript, projections);
 		transcriptEmpty.hidden = visible.length > 0;
 		const seen = new Set<string>();
 		let index = 0;

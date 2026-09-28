@@ -161,6 +161,8 @@ export type ContentBlockView =
 	| { readonly kind: "image"; readonly mimeType: string }
 	| { readonly kind: "preview"; readonly label: string; readonly text: BoundedText }
 	| { readonly kind: "error"; readonly text: BoundedText }
+	/** A fact about the source itself, such as output the source already truncated. */
+	| { readonly kind: "note"; readonly text: string }
 	| { readonly kind: "unsupported"; readonly label: string };
 
 export type EntryKind =
@@ -264,6 +266,17 @@ export function projectMessage(id: string, message: unknown, timestamp?: number)
 		}
 		case "bashExecution": {
 			const exitCode = numberField(message, "exitCode");
+			const fullOutputPath = stringField(message, "fullOutputPath");
+			// Pi retains partial output for long commands; the card must not present it as complete.
+			const sourceTruncated: ContentBlockView[] =
+				message.truncated === true
+					? [
+							{
+								kind: "note",
+								text: `Output truncated at source${fullOutputPath === undefined ? "" : ` · full output: ${fullOutputPath}`}`,
+							},
+						]
+					: [];
 			return {
 				id,
 				kind: "shell",
@@ -272,10 +285,12 @@ export function projectMessage(id: string, message: unknown, timestamp?: number)
 					...meta,
 					exitCode === undefined ? "no exit code" : `exit ${exitCode}`,
 					...(message.cancelled === true ? ["cancelled"] : []),
+					...(message.truncated === true ? ["output truncated"] : []),
 				],
 				blocks: [
 					{ kind: "preview", label: "Command", text: boundText(stringField(message, "command") ?? "") },
 					{ kind: "preview", label: "Output", text: boundText(stringField(message, "output") ?? "") },
+					...sourceTruncated,
 				],
 			};
 		}
@@ -376,12 +391,38 @@ export interface VisibleEntry {
 	readonly view: EntryView;
 }
 
-/** The main-lane transcript as the cockpit shows it: every entry for display, in order. */
-export function projectVisibleTranscript(transcript: readonly unknown[]): VisibleEntry[] {
+/** Visible cards for one immutable source entry, keyed by that entry's identity. */
+export type VisibleEntryCache = WeakMap<object, readonly VisibleEntry[]>;
+
+/**
+ * The main-lane transcript as the cockpit shows it: every entry for display, in order. Pi's main-lane transcript
+ * starts at the latest compaction, and the messages that compaction retained live only in its retainedTail, so they
+ * follow its card, under the same display rules as ordinary messages. Entries are immutable, so a cache keyed by entry
+ * identity lets a streamed update project only new or replaced entries.
+ */
+export function projectVisibleTranscript(transcript: readonly unknown[], cache?: VisibleEntryCache): VisibleEntry[] {
 	return transcript.flatMap((source) => {
-		const view = projectTranscriptEntry(source);
-		return view === undefined ? [] : [{ source, view }];
+		const cached = isRecord(source) ? cache?.get(source) : undefined;
+		if (cached !== undefined) return cached;
+		const visible = projectEntryCards(source);
+		if (isRecord(source)) cache?.set(source, visible);
+		return visible;
 	});
+}
+
+function projectEntryCards(source: unknown): VisibleEntry[] {
+	const view = projectTranscriptEntry(source);
+	const cards: VisibleEntry[] = view === undefined ? [] : [{ source, view }];
+	if (view?.kind === "compaction" && isRecord(source) && Array.isArray(source.retainedTail)) {
+		source.retainedTail.forEach((message, index) => {
+			const timestamp = isRecord(message) ? numberField(message, "timestamp") : undefined;
+			const retained = projectMessage(`${view.id}:retained:${index}`, message, timestamp);
+			if (retained !== undefined) {
+				cards.push({ source: message, view: { ...retained, meta: [...retained.meta, "retained by compaction"] } });
+			}
+		});
+	}
+	return cards;
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { EntryView } from "../cockpit/view-model.ts";
+import type { EntryView, VisibleEntryCache } from "../cockpit/view-model.ts";
 import {
 	boundText,
 	formatClock,
@@ -323,6 +323,47 @@ describe("cockpit transcript projections", () => {
 			kind: "custom",
 			blocks: [{ kind: "preview", text: { text: expect.stringContaining("durable") } }],
 		});
+	});
+
+	it("marks shell output the source already truncated", () => {
+		const shell = (fields: Record<string, unknown>) =>
+			visible(
+				entry({
+					type: "message",
+					message: {
+						role: "bashExecution",
+						command: "make",
+						output: "partial",
+						exitCode: 0,
+						cancelled: false,
+						timestamp: 1,
+						...fields,
+					},
+				}),
+			);
+		const truncated = shell({ truncated: true, fullOutputPath: "/tmp/pi-output-1.log" });
+		expect(truncated.meta).toContain("output truncated");
+		expect(truncated.blocks.at(-1)).toEqual({
+			kind: "note",
+			text: "Output truncated at source · full output: /tmp/pi-output-1.log",
+		});
+		expect(shell({ truncated: true }).blocks.at(-1)).toEqual({ kind: "note", text: "Output truncated at source" });
+		const complete = shell({ truncated: false });
+		expect(complete.meta).not.toContain("output truncated");
+		expect(complete.blocks.map((block) => block.kind)).toEqual(["preview", "preview"]);
+	});
+
+	it("projects each immutable entry once across streamed updates", () => {
+		const first = entry({ id: "a", type: "custom", customType: "x", data: { n: 1 } });
+		const second = entry({ id: "b", type: "message", message: { role: "user", content: "hi", timestamp: 1 } });
+		const cache: VisibleEntryCache = new WeakMap();
+		const before = projectVisibleTranscript([first], cache);
+		const after = projectVisibleTranscript([first, second], cache);
+		expect(after[0]!.view).toBe(before[0]!.view);
+		expect(after.map(({ view }) => view.id)).toEqual(["a", "b"]);
+		// A replaced entry is a new object and is projected afresh.
+		const replaced = { ...first, data: { n: 2 } };
+		expect(projectVisibleTranscript([replaced, second], cache)[0]!.view).not.toBe(before[0]!.view);
 	});
 
 	it("bounds previews without changing the source value", () => {

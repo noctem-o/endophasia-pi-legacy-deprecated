@@ -1,13 +1,16 @@
 // Source-only loopback HTTP host for Standard Cockpit v0. It serves exactly four fixed routes: the page shell, its
-// script, its stylesheet and a bootstrap naming the Pi server and its WebSocket capability URL. It is presentation
-// plumbing, not a runtime API: Session, transcript and model data cross the Pi WebSocket only. Load it with
-// coding-agent's source resolver preloaded (see server.ts).
+// script, its stylesheet and a bootstrap naming the Pi server and its WebSocket capability URL. All four live under
+// an unguessable per-launch path, because the bootstrap reveals the WebSocket capability: another local process that
+// finds the port must not be able to read it. It is presentation plumbing, not a runtime API: Session, transcript and
+// model data cross the Pi WebSocket only. Load it with coding-agent's source resolver preloaded (see server.ts).
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type Server as HttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { loopbackAuthority } from "./browser-listener.ts";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const HTTP_TIMEOUT_MS = 10_000;
 const MAX_HEADER_BYTES = 16 * 1024;
+const PAGE_TOKEN_BYTES = 32;
 
 export interface CockpitAssets {
 	readonly html: string;
@@ -31,6 +34,8 @@ export interface CockpitHostOptions {
 export interface CockpitHost {
 	/** The exact browser Origin of pages this host serves, e.g. http://127.0.0.1:48123. */
 	readonly origin: string;
+	/** The page URL, http://127.0.0.1:<port>/c/<per-launch token>/. It is a credential: print it only to its user. */
+	readonly url: string;
 	/** Publish the bootstrap once the Endophasia browser server is running; until then bootstrap.json is 503. */
 	setBootstrap(bootstrap: CockpitBootstrap): void;
 	close(): Promise<void>;
@@ -51,9 +56,10 @@ export async function startCockpitHost(options: CockpitHostOptions): Promise<Coc
 	};
 	let authority: string | undefined;
 	let bootstrap: CockpitBootstrap | undefined;
+	const pagePath = `/c/${randomBytes(PAGE_TOKEN_BYTES).toString("base64url")}/`;
 	const server = createServer({ maxHeaderSize: MAX_HEADER_BYTES }, (request, response) => {
 		try {
-			handleRequest(request, response, options.assets, authority, bootstrap);
+			handleRequest(request, response, options.assets, authority, pagePath, bootstrap);
 		} catch (error) {
 			reportError(error);
 			if (!response.headersSent) respond(response, 500, "text/plain; charset=utf-8", "", undefined);
@@ -78,6 +84,7 @@ export async function startCockpitHost(options: CockpitHostOptions): Promise<Coc
 	let closePromise: Promise<void> | undefined;
 	return {
 		origin,
+		url: `${origin}${pagePath}`,
 		setBootstrap(value) {
 			bootstrap = { serverId: value.serverId, websocketUrl: value.websocketUrl };
 		},
@@ -96,6 +103,7 @@ function handleRequest(
 	response: ServerResponse,
 	assets: CockpitAssets,
 	authority: string | undefined,
+	pagePath: string,
 	bootstrap: CockpitBootstrap | undefined,
 ): void {
 	// Only the exact loopback authority is served, which also defeats DNS rebinding.
@@ -103,7 +111,9 @@ function handleRequest(
 		respond(response, 403, "text/plain; charset=utf-8", "", undefined);
 		return;
 	}
-	const route = ROUTES[request.url ?? ""];
+	// Every route sits under the per-launch page path; anything else, including the bare origin, is 404.
+	const path = request.url ?? "";
+	const route = hasPrefix(path, pagePath) ? ROUTES[path.slice(pagePath.length)] : undefined;
 	if (route === undefined) {
 		respond(response, 404, "text/plain; charset=utf-8", "", undefined);
 		return;
@@ -139,11 +149,18 @@ function handleRequest(
 type Route = "html" | "js" | "css" | "bootstrap";
 
 const ROUTES: Readonly<Record<string, Route>> = Object.assign(Object.create(null), {
-	"/": "html",
-	"/app.js": "js",
-	"/app.css": "css",
-	"/bootstrap.json": "bootstrap",
+	"": "html",
+	"app.js": "js",
+	"app.css": "css",
+	"bootstrap.json": "bootstrap",
 });
+
+/** Constant-time prefix check, so response timing does not reveal the page token. */
+function hasPrefix(path: string, prefix: string): boolean {
+	const actual = Buffer.from(path.slice(0, prefix.length));
+	const expected = Buffer.from(prefix);
+	return actual.byteLength === expected.byteLength && timingSafeEqual(actual, expected);
+}
 
 const CONTENT_TYPES: Readonly<Record<Route, string>> = {
 	html: "text/html; charset=utf-8",
