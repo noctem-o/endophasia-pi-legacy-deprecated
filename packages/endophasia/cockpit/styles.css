@@ -596,6 +596,140 @@ pre {
 	cursor: default;
 }
 
+/* Mission Trace: an ordered lifecycle spine. Nesting is illustrative; the sequence is the only order. */
+
+.trace-note,
+.trace-window {
+	margin: 0;
+	font-size: 11px;
+	color: var(--text-faint);
+}
+
+.trace-body {
+	width: 100%;
+}
+
+.trace-list {
+	position: relative;
+	list-style: none;
+	margin: 0;
+	padding: 2px 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.trace-list::before {
+	content: "";
+	position: absolute;
+	left: 47px;
+	top: 6px;
+	bottom: 6px;
+	width: 1px;
+	background: var(--line-strong);
+}
+
+.trace-row {
+	position: relative;
+	padding: 3px 0;
+	font-size: 12px;
+}
+
+.trace-row-head {
+	display: grid;
+	grid-template-columns: 38px 14px auto 1fr;
+	align-items: center;
+	column-gap: 4px;
+}
+
+.trace-sequence {
+	font-family: var(--font-mono);
+	font-size: 11px;
+	color: var(--text-faint);
+	text-align: right;
+}
+
+.trace-node {
+	justify-self: center;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--bg);
+	border: 1px solid var(--text-faint);
+	z-index: 1;
+}
+
+.family-mission .trace-node {
+	width: 9px;
+	height: 9px;
+	background: var(--accent-violet);
+	border-color: var(--accent-violet);
+}
+
+.family-model .trace-node {
+	border-color: var(--accent-blue);
+}
+
+.family-tool .trace-node {
+	border-radius: 2px;
+	border-color: var(--accent-green);
+}
+
+.trace-row.tone-live .trace-node {
+	box-shadow: 0 0 6px rgba(111, 214, 168, 0.4);
+}
+
+.family-mission.tone-live .trace-node {
+	background: var(--accent-green);
+	border-color: var(--accent-green);
+}
+
+.trace-row.tone-warn .trace-node {
+	background: var(--accent-amber);
+	border-color: var(--accent-amber);
+}
+
+.trace-row.tone-pending .trace-node {
+	border-color: var(--accent-blue);
+}
+
+.trace-label {
+	white-space: nowrap;
+}
+
+.depth-1 .trace-label {
+	padding-left: 10px;
+}
+
+.depth-2 .trace-label {
+	padding-left: 20px;
+}
+
+.family-mission .trace-label {
+	font-weight: 600;
+}
+
+.trace-subject {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	color: var(--text-soft);
+	text-align: right;
+}
+
+.trace-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin: 2px 0 0 56px;
+}
+
+.depth-2 .trace-meta {
+	margin-left: 76px;
+}
+
 /* Footer and notices ------------------------------------------------------------------------------------------ */
 
 .footer {

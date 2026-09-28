@@ -153,6 +153,7 @@ try {
 			[
 				"packages/endophasia/cockpit/view.ts",
 				"packages/endophasia/cockpit/controller.ts",
+				"packages/endophasia/src/mission-trace-service.ts",
 				"packages/endophasia/presentation/websocket-transport.ts",
 				"packages/endophasia/presentation/client.ts",
 				"packages/client/src/client.ts",
@@ -183,6 +184,7 @@ try {
 				normalized.includes("node_modules/ws/") ||
 				normalized.includes("node_modules/esbuild/") ||
 				normalized.includes("packages/endophasia/runtime/") ||
+				normalized.includes("packages/agent/src/") ||
 				normalized.includes("packages/server/") ||
 				normalized.endsWith("packages/client/src/unix.ts") ||
 				normalized.endsWith("packages/coding-agent/src/experimental/server.ts")

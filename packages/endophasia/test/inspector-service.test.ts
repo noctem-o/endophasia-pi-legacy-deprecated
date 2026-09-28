@@ -2,27 +2,11 @@ import {
 	type Context,
 	createFacetHost,
 	createRemoteServiceBinding,
-	createRemoteServiceEndpoint,
 	createServiceCatalogueCall,
-	createServiceStateDecoder,
-	createServiceStateEncoder,
-	createServiceSubscribeCall,
-	createServiceUnsubscribeCall,
 	type FacetHost,
-	isJsonValue,
-	type JsonValue,
-	parseServiceCall,
 	parseServiceCatalogue,
-	parseServiceSubscriptionSnapshot,
-	parseWireServiceProviderUpdate,
-	parseWireServiceSubscriptionSnapshot,
 	type RemoteServiceBinding,
-	type RemoteServiceProvider,
-	type RemoteServiceTransport,
-	type ServiceProviderUpdate,
-	type ServiceUpdatePublisher,
 } from "@earendil-works/chord";
-import { createContextKey, withContextValue } from "@earendil-works/chord/context";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentHarness, type AgentHarness as AgentHarnessType } from "../../agent/src/harness/agent-harness.ts";
@@ -37,10 +21,10 @@ import {
 	EndophasiaInspectorV0,
 	type SessionOverviewV0,
 } from "../src/index.ts";
+import { connectStrictJson, HOST_REQUEST } from "./strict-json-transport.ts";
 
 const sessions: Session[] = [];
 const cleanups: (() => Promise<void>)[] = [];
-const HOST_REQUEST = createContextKey<number>("endophasia.test.hostRequest");
 
 afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
@@ -58,72 +42,6 @@ async function fixture(): Promise<{ harness: AgentHarnessType; faux: ReturnType<
 	models.setProvider(faux.provider);
 	const { harness } = await AgentHarness.create({ session, models, model: faux.getModel() }, BACKGROUND_CONTEXT);
 	return { harness, faux };
-}
-
-/** Copy one value across a strict-JSON wire, rejecting anything JSON.stringify would silently drop or coerce. */
-function throughWire(value: unknown): JsonValue {
-	if (!isJsonValue(value)) throw new TypeError("Value crossing the service boundary is not strict JSON");
-	return JSON.parse(JSON.stringify(value)) as JsonValue;
-}
-
-/**
- * Test transport with the same split as pi-client and pi-server: every call and result crosses strict JSON, Chord's
- * `$chord.service` control calls drive subscriptions through a real endpoint, and each subscription owns one state
- * encoder/decoder pair. The consumer's Context does not cross the wire; each host call gets its own Context.
- */
-function connectStrictJson(provider: RemoteServiceProvider): {
-	transport: RemoteServiceTransport;
-	hostContexts: Context[];
-	dispose(): void;
-} {
-	const endpoint = createRemoteServiceEndpoint(provider);
-	const hostContexts: Context[] = [];
-	const deliveries = new Map<string, (update: ServiceProviderUpdate) => void>();
-	const publish: ServiceUpdatePublisher = (subscriptionId, update) => deliveries.get(subscriptionId)?.(update);
-	let subscriptions = 0;
-	// `encode` runs on the host before the wire, as pi-server encodes subscription snapshots.
-	const request = async (
-		call: unknown,
-		encode: (result: JsonValue) => unknown = (result) => result,
-	): Promise<JsonValue | undefined> => {
-		const hostContext = withContextValue(HOST_REQUEST, hostContexts.length, BACKGROUND_CONTEXT);
-		hostContexts.push(hostContext);
-		const result = await endpoint.invoke(parseServiceCall(throughWire(call)), publish, hostContext);
-		return result === undefined ? undefined : throughWire(encode(result));
-	};
-	return {
-		hostContexts,
-		transport: {
-			invoke: (call) => request(call),
-			async subscribe(serviceId, mode, listener) {
-				const subscriptionId = `subscription-${++subscriptions}`;
-				const encoder = createServiceStateEncoder();
-				const decoder = createServiceStateDecoder();
-				const queued: ServiceProviderUpdate[] = [];
-				let active = false;
-				const deliver = (update: ServiceProviderUpdate): void => {
-					const wire = parseWireServiceProviderUpdate(throughWire(encoder.encodeUpdate(update)));
-					listener(decoder.decodeUpdate(wire), BACKGROUND_CONTEXT);
-				};
-				deliveries.set(subscriptionId, (update) => (active ? deliver(update) : queued.push(update)));
-				const wireSnapshot = await request(createServiceSubscribeCall(subscriptionId, serviceId, mode), (result) =>
-					encoder.encodeSnapshot(parseServiceSubscriptionSnapshot(result)),
-				);
-				return {
-					snapshot: decoder.decodeSnapshot(parseWireServiceSubscriptionSnapshot(wireSnapshot)),
-					activate() {
-						active = true;
-						for (const update of queued.splice(0)) deliver(update);
-					},
-					async close() {
-						deliveries.delete(subscriptionId);
-						await request(createServiceUnsubscribeCall(subscriptionId));
-					},
-				};
-			},
-		},
-		dispose: () => endpoint.dispose(),
-	};
 }
 
 async function connect(harness: Pick<AgentHarnessType, "lanes">): Promise<{

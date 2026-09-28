@@ -19,7 +19,7 @@ import { SessionManagement } from "@earendil-works/pi-coding-agent/experimental/
 import { Transcript } from "@earendil-works/pi-coding-agent/experimental/services/transcript";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type EndophasiaServerOptions, startEndophasiaServer } from "../runtime/server.ts";
-import { EndophasiaInspectorV0 } from "../src/index.ts";
+import { EndophasiaInspectorV0, EndophasiaMissionTraceV0 } from "../src/index.ts";
 
 const directories: string[] = [];
 const servers: RunningServer[] = [];
@@ -106,6 +106,7 @@ describe("Endophasia runtime v0", () => {
 
 		const catalogue = await sessionCatalogue(client);
 		expect(catalogue.filter((id) => id === EndophasiaInspectorV0.id)).toHaveLength(1);
+		expect(catalogue.filter((id) => id === EndophasiaMissionTraceV0.id)).toHaveLength(1);
 		for (const service of [AgentController, Models, Transcript, SessionPlugins]) {
 			expect(catalogue).toContain(service.id);
 		}
@@ -128,12 +129,16 @@ describe("Endophasia runtime v0", () => {
 			await source.dispose(BACKGROUND_CONTEXT);
 		}
 
-		// Compared with a plain Pi server's worker, the Endophasia worker adds exactly the Inspector.
+		// Compared with a plain Pi server's worker, the Endophasia worker adds exactly the Inspector and Mission Trace.
 		const plain = await startServer({ ...workerModel, directory: await temporaryDirectory("endophasia-plain-") });
 		servers.push(plain);
 		const plainCatalogue = await sessionCatalogue(await attach(plain, "plain"));
 		expect(plainCatalogue).not.toContain(EndophasiaInspectorV0.id);
-		expect(catalogue.filter((id) => !plainCatalogue.includes(id))).toEqual([EndophasiaInspectorV0.id]);
+		expect(plainCatalogue).not.toContain(EndophasiaMissionTraceV0.id);
+		// The Endophasia worker adds exactly its two trusted host services, no more and no less.
+		expect(catalogue.filter((id) => !plainCatalogue.includes(id)).sort()).toEqual(
+			[EndophasiaInspectorV0.id, EndophasiaMissionTraceV0.id].sort(),
+		);
 		expect(plainCatalogue.filter((id) => !catalogue.includes(id))).toEqual([]);
 	});
 

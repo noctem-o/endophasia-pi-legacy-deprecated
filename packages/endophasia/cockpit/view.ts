@@ -10,6 +10,7 @@ import {
 	projectAttachment,
 	projectConnection,
 	projectMessage,
+	projectMissionTrace,
 	projectModels,
 	projectOperation,
 	projectQueues,
@@ -164,8 +165,22 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 	const attachmentSection = el("section", "inspector-section");
 	const modelSection = el("section", "inspector-section");
 	const laneSection = el("section", "inspector-section");
+	const traceSection = el("section", "inspector-section trace");
+	traceSection.setAttribute("aria-label", "Mission Trace");
+	const traceHeader = el("div", "section-header");
+	traceHeader.append(el("h3", "section-title", "Mission Trace"), el("span", "chip", "Live · worker lifetime"));
+	const traceNote = el("p", "trace-note", "Recent events of this Session worker · ordered by sequence, not time");
+	const traceBody = el("div", "trace-body");
+	traceSection.append(traceHeader, traceNote, traceBody);
 	const overviewSection = el("section", "inspector-section overview");
-	inspectorPanel.append(connectionSection, attachmentSection, modelSection, laneSection, overviewSection);
+	inspectorPanel.append(
+		connectionSection,
+		attachmentSection,
+		modelSection,
+		laneSection,
+		traceSection,
+		overviewSection,
+	);
 
 	const detachButton = el("button", "button", "Detach");
 	detachButton.type = "button";
@@ -416,6 +431,50 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 		overviewSection.replaceChildren(...body);
 	};
 
+	const renderTrace = (controller: CockpitController): void => {
+		const trace = controller.missionTrace;
+		if (trace.status === "hidden") {
+			const message = {
+				detached: "Attach a Session to observe its Mission Trace.",
+				switching: "Hidden while the observed Session changes.",
+				attaching: "Hidden until the Session is attached.",
+				degraded: "Unavailable: the Session attachment is degraded.",
+				hydrating: "Waiting for the Mission Trace to hydrate.",
+			}[trace.reason];
+			traceBody.replaceChildren(el("p", "muted", message));
+			return;
+		}
+		const view = projectMissionTrace(trace.observation);
+		if (view.total === 0) {
+			traceBody.replaceChildren(el("p", "muted", "No lifecycle events observed yet."));
+			return;
+		}
+		const list = el("ol", "trace-list");
+		for (const row of view.rows) {
+			const item = el("li", `trace-row family-${row.family} depth-${row.depth} tone-${row.tone}`);
+			if (row.title !== "") item.title = row.title;
+			const head = el("div", "trace-row-head");
+			head.append(
+				el("span", "trace-sequence", row.sequence),
+				el("span", "trace-node"),
+				el("span", "trace-label", row.label),
+				el("span", "trace-subject", row.subject),
+			);
+			item.append(head);
+			if (row.meta.length > 0) {
+				const meta = el("div", "trace-meta");
+				for (const part of row.meta) meta.append(el("span", `chip${part === "error" ? " chip-warn" : ""}`, part));
+				item.append(meta);
+			}
+			list.append(item);
+		}
+		const parts: HTMLElement[] = [];
+		if (view.truncated !== undefined) parts.push(el("p", "trace-window", view.truncated));
+		if (view.window !== undefined) parts.push(el("p", "trace-window", view.window));
+		parts.push(list);
+		traceBody.replaceChildren(...parts);
+	};
+
 	const renderDiagnostics = (controller: CockpitController): void => {
 		const latest = controller.diagnostics[0];
 		const diagnostic = el("div", "diagnostic");
@@ -440,6 +499,7 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 			if (regions.has("sessions")) renderSessions(controller);
 			if (regions.has("transcript")) renderTranscript(controller);
 			if (regions.has("inspector")) renderInspector(controller);
+			if (regions.has("trace")) renderTrace(controller);
 			if (regions.has("diagnostics")) renderDiagnostics(controller);
 		},
 	};

@@ -10,6 +10,7 @@ import type { TranscriptState } from "@earendil-works/pi-coding-agent/experiment
 import { describe, expect, it } from "vitest";
 import { CockpitController, type CockpitPresentation, type CockpitRegion } from "../cockpit/controller.ts";
 import { projectAttachment, projectSessions } from "../cockpit/view-model.ts";
+import type { MissionTraceEventV0, MissionTraceObservationV0 } from "../src/index.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 
 type Listener<T> = Parameters<ReplicatedState<T>["subscribe"]>[0];
@@ -66,6 +67,7 @@ function fixture() {
 	const sessions = new FakeState<SessionDirectoryState>();
 	const transcript = new FakeState<TranscriptState>();
 	const models = new FakeState<ModelsState>();
+	const missionTrace = new FakeState<MissionTraceObservationV0>();
 	const attachCalls: string[] = [];
 	const attaches: Deferred<void>[] = [];
 	const overviews: Deferred<SessionOverviewV0>[] = [];
@@ -75,6 +77,7 @@ function fixture() {
 		sessions,
 		transcript,
 		models,
+		missionTrace,
 		attach(sessionId) {
 			attachCalls.push(sessionId);
 			const next = deferred<void>();
@@ -114,6 +117,7 @@ function fixture() {
 		sessions,
 		transcript,
 		models,
+		missionTrace,
 		attachCalls,
 		attaches,
 		overviews,
@@ -295,7 +299,7 @@ describe("Standard Cockpit controller", () => {
 	});
 
 	it("contains render failures and bounds diagnostics without breaking the lifecycle", () => {
-		const { connection, attachment, sessions, transcript, models } = fixture();
+		const { connection, attachment, sessions, transcript, models, missionTrace } = fixture();
 		const scheduled: (() => void)[] = [];
 		let calls = 0;
 		const controller = new CockpitController({
@@ -305,6 +309,7 @@ describe("Standard Cockpit controller", () => {
 				sessions,
 				transcript,
 				models,
+				missionTrace,
 				attach: async () => {},
 				detach: async () => {},
 				sessionOverview: async () => overview("x"),
@@ -328,5 +333,84 @@ describe("Standard Cockpit controller", () => {
 		expect(controller.diagnostics[0]!.message.length).toBeLessThanOrEqual(501);
 		controller.dispose();
 		expect(() => controller.report(new Error("after dispose"))).not.toThrow();
+	});
+
+	describe("Mission Trace", () => {
+		const event = (sequence: number, runId: string): MissionTraceEventV0 => ({
+			schemaVersion: "mission-trace.v0",
+			sequence,
+			kind: "mission.started",
+			lane: "main",
+			runId,
+		});
+		const observation = (...events: MissionTraceEventV0[]): MissionTraceObservationV0 => ({
+			schemaVersion: "mission-trace-observation.v0",
+			scope: "session-worker-lifetime",
+			events,
+		});
+
+		it("renders only the trace region for a Mission Trace update", () => {
+			const { controller, missionTrace, renders, flush } = fixture();
+			flush();
+			renders.length = 0;
+			missionTrace.set(observation(event(1, "a")));
+			missionTrace.set(observation(event(1, "a"), event(2, "a")));
+			flush();
+			expect(renders.map((regions) => [...regions])).toEqual([["trace"]]);
+			controller.dispose();
+			expect(missionTrace.listeners.size).toBe(0);
+		});
+
+		it("never presents Session A's trace while Session B is being selected or attached", async () => {
+			const { controller, attachment, missionTrace, completeAttach, attaches } = fixture();
+			controller.select("a");
+			await completeAttach(0, "a");
+			missionTrace.set(observation(event(1, "run-of-a")));
+			expect(controller.missionTrace).toMatchObject({ status: "visible", sessionId: "a" });
+
+			// Select B: Pi still reports A attached and the replicated value is still A's trace.
+			controller.select("b");
+			expect(attachment.value).toEqual({ status: "attached", sessionId: "a" });
+			expect(missionTrace.value?.events[0]?.runId).toBe("run-of-a");
+			expect(controller.missionTrace).toEqual({ status: "hidden", reason: "switching" });
+
+			// Pi moves to attaching B while A's trace lingers.
+			attachment.set({ status: "attaching", sessionId: "b" });
+			expect(controller.missionTrace).toEqual({ status: "hidden", reason: "switching" });
+
+			// B attaches and hydrates its own trace; only then is a trace shown, and it is B's.
+			missionTrace.set(observation(event(1, "run-of-b")));
+			attachment.set({ status: "attached", sessionId: "b" });
+			attaches[1]!.resolve();
+			await settle();
+			const visible = controller.missionTrace;
+			expect(visible).toMatchObject({ status: "visible", sessionId: "b" });
+			expect(visible.status === "visible" && visible.observation.events[0]?.runId).toBe("run-of-b");
+			controller.dispose();
+		});
+
+		it("hides a lingering trace for attaching, degraded, detached and unhydrated states", () => {
+			const { controller, attachment, missionTrace } = fixture();
+			missionTrace.set(observation(event(1, "stale")));
+			expect(controller.missionTrace).toEqual({ status: "hidden", reason: "detached" });
+			attachment.set({ status: "attaching", sessionId: "x" });
+			expect(controller.missionTrace).toEqual({ status: "hidden", reason: "attaching" });
+			attachment.set({ status: "degraded", sessionId: "x" });
+			expect(controller.missionTrace).toEqual({ status: "hidden", reason: "degraded" });
+			attachment.set({ status: "detached" });
+			expect(controller.missionTrace).toEqual({ status: "hidden", reason: "detached" });
+
+			const unhydrated = fixture();
+			unhydrated.attachment.set({ status: "attached", sessionId: "y" });
+			expect(unhydrated.controller.missionTrace).toEqual({ status: "hidden", reason: "hydrating" });
+			// A real trace with zero events is shown as such, not confused with an absent service.
+			unhydrated.missionTrace.set(observation());
+			expect(unhydrated.controller.missionTrace).toMatchObject({
+				status: "visible",
+				observation: { events: [] },
+			});
+			controller.dispose();
+			unhydrated.controller.dispose();
+		});
 	});
 });

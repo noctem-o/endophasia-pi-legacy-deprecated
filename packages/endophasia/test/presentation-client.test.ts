@@ -93,6 +93,11 @@ describe("Endophasia Presentation Client v0", () => {
 				provider: "anthropic",
 				modelId: "claude-sonnet-4-5",
 			});
+			expect(presentation.missionTrace.value).toMatchObject({
+				schemaVersion: "mission-trace-observation.v0",
+				scope: "session-worker-lifetime",
+				events: expect.any(Array),
+			});
 			const overview = await presentation.sessionOverview(BACKGROUND_CONTEXT);
 			expect(overview).toMatchObject({
 				schemaVersion: "session-overview.v0",
@@ -133,6 +138,7 @@ describe("Endophasia Presentation Client v0", () => {
 			| "sessions"
 			| "transcript"
 			| "models"
+			| "missionTrace"
 			| "attach"
 			| "detach"
 			| "sessionOverview"
@@ -141,6 +147,8 @@ describe("Endophasia Presentation Client v0", () => {
 		expectTypeOf<keyof EndophasiaPresentationClientV0["models"]>().toEqualTypeOf<"value" | "subscribe">();
 		expectTypeOf<keyof EndophasiaPresentationClientV0["transcript"]>().toEqualTypeOf<"value" | "subscribe">();
 		expectTypeOf<keyof EndophasiaPresentationClientV0["sessions"]>().toEqualTypeOf<"value" | "subscribe">();
+		// Mission Trace is read-only replicated state: no mutation, attachment or harness access.
+		expectTypeOf<keyof EndophasiaPresentationClientV0["missionTrace"]>().toEqualTypeOf<"value" | "subscribe">();
 	});
 
 	it("reports a degraded attachment instead of an Endophasia view on a plain Pi server", async () => {
@@ -154,6 +162,22 @@ describe("Endophasia Presentation Client v0", () => {
 			"Remote service endophasia.inspector.v0 is not allowlisted",
 		);
 		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
+	});
+
+	it("requires Mission Trace: an Inspector-only worker degrades instead of showing an empty trace", async () => {
+		const server = await startServer({
+			...workerModel,
+			directory: await temporaryDirectory("endophasia-inspector-only-"),
+			sessionWorkerEntryUrl: new URL("./fixtures/inspector-only-session-worker.ts", import.meta.url),
+		});
+		servers.push(server);
+		const presentation = await open(server);
+		await expect(presentation.attach("observed", BACKGROUND_CONTEXT)).rejects.toThrow(
+			"Remote service endophasia.mission-trace.v0 is not allowlisted",
+		);
+		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
+		// A missing capability is not reported as a real trace with zero events.
+		expect(presentation.missionTrace.value).toBeUndefined();
 	});
 
 	it("contains a throwing diagnostic observer without changing the attachment lifecycle", async () => {

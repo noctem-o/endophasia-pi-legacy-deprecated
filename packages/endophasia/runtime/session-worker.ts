@@ -7,11 +7,18 @@ import {
 } from "@earendil-works/pi-coding-agent/experimental/process";
 import { runCodingAgentSessionWorker } from "@earendil-works/pi-coding-agent/experimental/session-worker";
 import { createEndophasiaInspectorFacetV0 } from "../src/inspector-service.ts";
+import { createEndophasiaMissionTraceFacetV0 } from "../src/mission-trace-service.ts";
 
-/** Run the standard coding-agent Session worker with the read-only Endophasia Inspector as a trusted host facet. */
+/**
+ * Run the standard coding-agent Session worker with the read-only Endophasia Inspector and Mission Trace as trusted
+ * host facets, each given only the harness capability it needs.
+ */
 export function runEndophasiaSessionWorker(args: readonly string[]): Promise<void> {
 	return runCodingAgentSessionWorker(args, {
-		createHostFacets: ({ harness }) => [createEndophasiaInspectorFacetV0(harness)],
+		createHostFacets: ({ harness }) => [
+			createEndophasiaInspectorFacetV0(harness),
+			createEndophasiaMissionTraceFacetV0(harness),
+		],
 	});
 }
 

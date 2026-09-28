@@ -537,3 +537,137 @@ export function projectSessionOverview(overview: SessionOverviewV0, capturedAt: 
 		})),
 	};
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Mission Trace v0
+
+/** Rows the cockpit renders at most, from the replicated observation's own bounded window. */
+export const MISSION_TRACE_ROW_LIMIT = 50;
+
+export type MissionTraceFamily = "mission" | "turn" | "model" | "tool" | "unknown";
+
+export interface MissionTraceRowView {
+	/** Pi's sequence, which orders events; it is not a time. */
+	readonly sequence: string;
+	readonly label: string;
+	readonly family: MissionTraceFamily;
+	/** Illustrative nesting only: model.completed carries no turn ID, so no exact parent is implied. */
+	readonly depth: 0 | 1 | 2;
+	readonly tone: Tone;
+	/** The lane, or the tool name for tool events. */
+	readonly subject: string;
+	/** Compact identifiers and the tool outcome Pi reported. */
+	readonly meta: readonly string[];
+	/** The exact identifiers, for a tooltip. */
+	readonly title: string;
+}
+
+export interface MissionTraceView {
+	readonly total: number;
+	readonly rows: readonly MissionTraceRowView[];
+	/** Present when only the latest rows are shown. */
+	readonly window?: string;
+	/** Present when the replicated window no longer holds the start of the worker-lifetime trace. */
+	readonly truncated?: string;
+}
+
+const MISSION_TRACE_KINDS: Readonly<
+	Record<
+		string,
+		{ readonly label: string; readonly family: MissionTraceFamily; readonly depth: 0 | 1 | 2; readonly tone: Tone }
+	>
+> = {
+	"mission.started": { label: "Mission started", family: "mission", depth: 0, tone: "live" },
+	"mission.resumed": { label: "Mission resumed", family: "mission", depth: 0, tone: "live" },
+	"mission.suspended": { label: "Mission suspended", family: "mission", depth: 0, tone: "pending" },
+	"mission.completed": { label: "Mission completed", family: "mission", depth: 0, tone: "live" },
+	"mission.aborted": { label: "Mission aborted", family: "mission", depth: 0, tone: "warn" },
+	"mission.failed": { label: "Mission failed", family: "mission", depth: 0, tone: "warn" },
+	"turn.started": { label: "Turn started", family: "turn", depth: 1, tone: "idle" },
+	"turn.finished": { label: "Turn finished", family: "turn", depth: 1, tone: "idle" },
+	"model.completed": { label: "Model completed", family: "model", depth: 1, tone: "idle" },
+	"tool.started": { label: "Tool started", family: "tool", depth: 2, tone: "pending" },
+	"tool.finished": { label: "Tool finished", family: "tool", depth: 2, tone: "live" },
+};
+
+function compactId(id: string): string {
+	return id.length > 10 ? `${id.slice(0, 8)}…` : id;
+}
+
+/**
+ * Project one Mission Trace v0 event. Only the schema's own identity fields are read: the trace carries no payloads,
+ * and an unknown future kind becomes a neutral row instead of being interpreted.
+ */
+export function projectMissionTraceEvent(event: unknown): MissionTraceRowView {
+	const record = isRecord(event) ? event : {};
+	const sequence = numberField(record, "sequence");
+	const kind = stringField(record, "kind");
+	const known =
+		kind === undefined ? undefined : Object.hasOwn(MISSION_TRACE_KINDS, kind) ? MISSION_TRACE_KINDS[kind] : undefined;
+	const sequenceLabel = sequence === undefined ? "#?" : `#${sequence}`;
+	if (known === undefined) {
+		return {
+			sequence: sequenceLabel,
+			label: "Unknown trace event",
+			family: "unknown",
+			depth: 0,
+			tone: "idle",
+			subject: "",
+			meta: [],
+			title: "",
+		};
+	}
+	const lane = stringField(record, "lane") ?? "unknown lane";
+	const runId = stringField(record, "runId");
+	const turnId = stringField(record, "turnId");
+	const toolCallId = stringField(record, "toolCallId");
+	const toolName = stringField(record, "toolName");
+	const failedTool = kind === "tool.finished" && record.isError === true;
+	const meta: string[] = [];
+	if (known.family === "tool") {
+		meta.push(lane);
+		if (toolCallId !== undefined) meta.push(`call ${compactId(toolCallId)}`);
+		if (kind === "tool.finished") meta.push(failedTool ? "error" : "ok");
+	} else if (known.family === "turn" && turnId !== undefined) {
+		meta.push(`turn ${compactId(turnId)}`);
+	} else if (runId !== undefined) {
+		meta.push(`run ${compactId(runId)}`);
+	}
+	const title = [
+		runId === undefined ? undefined : `run ${runId}`,
+		turnId === undefined ? undefined : `turn ${turnId}`,
+		toolCallId === undefined ? undefined : `call ${toolCallId}`,
+	]
+		.filter((part) => part !== undefined)
+		.join(" · ");
+	return {
+		sequence: sequenceLabel,
+		label: known.label,
+		family: known.family,
+		depth: known.depth,
+		tone: failedTool ? "warn" : known.tone,
+		subject: known.family === "tool" ? (toolName ?? "unknown tool") : lane,
+		meta,
+		title,
+	};
+}
+
+/** The latest rows of a Mission Trace observation, in its own sequence order. */
+export function projectMissionTrace(
+	observation: { readonly events: readonly unknown[] },
+	limit = MISSION_TRACE_ROW_LIMIT,
+): MissionTraceView {
+	const total = observation.events.length;
+	const shown = total > limit ? observation.events.slice(total - limit) : observation.events;
+	const first = observation.events[0];
+	const firstSequence = isRecord(first) ? numberField(first, "sequence") : undefined;
+	return {
+		total,
+		rows: shown.map(projectMissionTraceEvent),
+		...(total > limit ? { window: `Showing latest ${limit} of ${total} replicated events` } : {}),
+		// Sequences start at 1 for each worker, so a later first sequence means the window dropped earlier events.
+		...(firstSequence !== undefined && firstSequence > 1
+			? { truncated: "Earlier worker-lifetime trace events are outside the replicated window." }
+			: {}),
+	};
+}
