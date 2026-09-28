@@ -1,8 +1,8 @@
 // Research-only (Prime Runtime Conformance v0). Opt-in live probe: `PRIME_AGENT_BIN=... npm run check:prime-conformance`.
 // Never downloads Prime and never runs in CI. Writes .artifacts/prime-conformance/report.json (outside git).
 //
-// Flags: --scenario <name> (repeatable), --write-fixtures (refresh test/fixtures/prime/<version>/), --retain (keep the
-// temporary Prime environments for inspection).
+// Flags: --scenario <name> (repeatable), --write-fixtures (refresh test/fixtures/prime/<version>/; needs a clean
+// PRIME_AGENT_ROOT checkout), --retain (keep the temporary Prime environments for inspection).
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,12 +22,23 @@ function fail(message: string): never {
 	process.exit(1);
 }
 
+// Strict parsing: a malformed command must fail before anything runs. In particular a trailing `--scenario` without a
+// name must not silently become a full refresh that rewrites and prunes every fixture.
+const only: string[] = [];
+let writeFixtures = false;
+let retain = false;
 const args = process.argv.slice(2);
-const only = args.flatMap((arg, index) =>
-	arg === "--scenario" && args[index + 1] !== undefined ? [args[index + 1]!] : [],
-);
-const unknownScenario = only.find((name) => !SCENARIOS.some((scenario) => scenario.name === name));
-if (unknownScenario !== undefined) fail(`unknown scenario ${unknownScenario}`);
+for (let index = 0; index < args.length; index++) {
+	const arg = args[index];
+	if (arg === "--write-fixtures") writeFixtures = true;
+	else if (arg === "--retain") retain = true;
+	else if (arg === "--scenario") {
+		const name = args[++index];
+		if (name === undefined || name.startsWith("--")) fail("--scenario needs a scenario name");
+		if (!SCENARIOS.some((scenario) => scenario.name === name)) fail(`unknown scenario ${name}`);
+		only.push(name);
+	} else fail(`unknown argument ${arg}`);
+}
 
 const binary = resolvePrimeBinaryV0(process.env);
 if (binary === undefined) {
@@ -45,7 +56,7 @@ process.stdout.write(`Prime Agent ${provenance.version}${provenance.commit ? ` @
 const evidence = await runPrimeProbeV0({
 	binary,
 	provenance,
-	retain: args.includes("--retain"),
+	retain,
 	...(only.length > 0 ? { only } : {}),
 	log: (message) => process.stdout.write(`  ${message}\n`),
 });
@@ -57,7 +68,19 @@ const report = buildPrimeConformanceReportV0(evidence, { ...(reference === undef
 const artifactDir = join(repoRoot, ".artifacts", "prime-conformance");
 mkdirSync(artifactDir, { recursive: true });
 const reportPath = join(artifactDir, "report.json");
-writeFileSync(reportPath, `${JSON.stringify(report, null, "\t")}\n`);
+// A report with a privacy violation may carry the leaked payload in any field, so only a redacted diagnostic is kept:
+// provenance and the violation labels (which name planted sentinels, never real content).
+const persisted =
+	report.privacyViolations.length === 0
+		? report
+		: {
+				schemaVersion: report.schemaVersion,
+				generatedBy: report.generatedBy,
+				provenance: report.provenance,
+				redacted: "privacy violation: evidence, findings and scenario details withheld",
+				privacyViolations: report.privacyViolations,
+			};
+writeFileSync(reportPath, `${JSON.stringify(persisted, null, "\t")}\n`);
 
 const problems = [
 	...report.privacyViolations.map((item) => `privacy: ${item}`),
@@ -71,8 +94,15 @@ const problems = [
 	]),
 ];
 // Fixtures are written only from a clean run: a failed or malformed live run must not replace committed evidence.
-if (args.includes("--write-fixtures")) {
+if (writeFixtures) {
 	if (problems.length > 0) fail(`refusing to write fixtures from a run with problems:\n${problems.join("\n")}`);
+	// Fixtures are the drift reference, so they must name the exact build: a commit from a clean checkout.
+	if (provenance.commit === undefined || provenance.checkoutDirty === true) {
+		fail(
+			"refusing to write fixtures without verified provenance: run from a clean PRIME_AGENT_ROOT checkout so the " +
+				"fixtures are pinned to a commit.",
+		);
+	}
 	// A full run replaces the directory's contents; a --scenario run refreshes only its own fixtures.
 	writePrimeFixturesV0(join(fixtureRoot, provenance.version), evidence, { prune: only.length === 0 });
 	process.stdout.write(`fixtures written to ${join(fixtureRoot, provenance.version)}\n`);
@@ -90,7 +120,12 @@ if (report.drift.stale) {
 if (report.drift.unverified) {
 	process.stdout.write(
 		`UNVERIFIED: committed fixtures are pinned to Prime ${report.drift.referenceVersion} @ ${report.drift.referenceCommit}; ` +
-			"this binary reports the same version but no commit, so the build cannot be confirmed.\n",
+			"this build reports the same version but no commit, or a checkout with modified files, so it cannot be confirmed.\n",
+	);
+}
+if (report.drift.probeChanged) {
+	process.stdout.write(
+		"PROBE CHANGED: the committed fixtures were produced by another probe revision; refresh them with --write-fixtures.\n",
 	);
 }
 process.stdout.write(`report: ${reportPath}\n`);

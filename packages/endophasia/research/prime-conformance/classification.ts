@@ -133,6 +133,27 @@ function compactionSummaryCounted(
 	return undefined;
 }
 
+/**
+ * Stats equal in every stable field. contextUsageTokens is excluded: it is Prime's context-window estimate, documented
+ * here as a different, volatile fact (it is null right after compaction until the next response).
+ */
+function stableStatsEqual(a: PrimeStatsEvidenceV0, b: PrimeStatsEvidenceV0): boolean {
+	return (
+		a.userMessages === b.userMessages &&
+		a.assistantMessages === b.assistantMessages &&
+		a.toolCalls === b.toolCalls &&
+		a.toolResults === b.toolResults &&
+		a.totalMessages === b.totalMessages &&
+		a.tokens.input === b.tokens.input &&
+		a.tokens.output === b.tokens.output &&
+		a.tokens.cacheRead === b.tokens.cacheRead &&
+		a.tokens.cacheWrite === b.tokens.cacheWrite &&
+		a.tokens.total === b.tokens.total &&
+		a.cost === b.cost &&
+		a.keys.join(",") === b.keys.join(",")
+	);
+}
+
 const DOCUMENTED_EVENT_TYPES = new Set([
 	"agent_start",
 	"agent_end",
@@ -167,15 +188,18 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 			? undefined
 			: (() => {
 					const called = toolRun.events.flatMap((event) =>
-						event.type === "message_end" ? (event.assistant?.toolCalls.map((call) => call.id) ?? []) : [],
+						event.type === "message_end" ? (event.assistant?.toolCalls ?? []) : [],
 					);
-					const executed = toolRun.events.flatMap((event) =>
-						event.type === "tool_execution_end" ? [event.toolCallId] : [],
-					);
-					// A missing id ("") never counts as a native identity, even when both sides lack one.
+					const executed = toolRun.events.flatMap((event) => (event.type === "tool_execution_end" ? [event] : []));
+					// The (id, name) pair must match; a missing id ("") never counts, even when both sides lack one.
 					return (
 						executed.length > 0 &&
-						executed.every((id) => id !== "" && called.includes(id) && !id.startsWith("adapter:"))
+						executed.every(
+							(execution) =>
+								execution.toolCallId !== "" &&
+								!execution.toolCallId.startsWith("adapter:") &&
+								called.some((call) => call.id === execution.toolCallId && call.name === execution.toolName),
+						)
 					);
 				})();
 
@@ -244,8 +268,7 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 		reopenStatsEqual:
 			lastReopenPrompt === undefined || afterReopen === undefined
 				? undefined
-				: JSON.stringify(lastReopenPrompt.tokens) === JSON.stringify(afterReopen.tokens) &&
-					lastReopenPrompt.cost === afterReopen.cost,
+				: stableStatsEqual(lastReopenPrompt, afterReopen),
 		reopenEntryIdsStable: noteFlag(reopen, "entry ids stable across reopen:"),
 		rebuildMatchesStatsOnSinglePath:
 			reopen === undefined || afterReopen === undefined
@@ -263,15 +286,23 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 							usage.cost.total === afterReopen.cost
 						);
 					})(),
+		// Only the durable rows up to and including the compaction entry: later prompts must not make up for loss.
 		rebuildIncludesCompactionUsage:
 			compaction === undefined || beforeCompaction === undefined || compactionEntry?.usage === undefined
 				? undefined
-				: rebuildPrimeRuntimeMetricsV0(compaction.sessionEntries).usage.cost.total >=
+				: rebuildPrimeRuntimeMetricsV0(
+						compaction.sessionEntries.slice(0, compaction.sessionEntries.indexOf(compactionEntry) + 1),
+					).usage.cost.total ===
 					beforeCompaction.cost + compactionEntry.usage.cost.total,
 		childUsageFoldedIntoStats:
 			childStats === undefined || childEntry?.aggregateUsage === undefined
 				? undefined
-				: childStats.tokens.input === childEntry.aggregateUsage.input,
+				: // Every dimension both report. Stats recompute tokens.total, so it is not comparable to totalTokens.
+					childStats.tokens.input === childEntry.aggregateUsage.input &&
+					childStats.tokens.output === childEntry.aggregateUsage.output &&
+					childStats.tokens.cacheRead === childEntry.aggregateUsage.cacheRead &&
+					childStats.tokens.cacheWrite === childEntry.aggregateUsage.cacheWrite &&
+					childStats.cost === childEntry.aggregateUsage.cost.total,
 		childUsageRewritesEarlierRow:
 			childStats === undefined || childTarget?.usage === undefined
 				? undefined
@@ -357,7 +388,7 @@ export function classifyPrimeConformanceV0(
 		support: "adapter-state",
 		semanticFit: "qualified",
 		evidence: [
-			`probe:tool-run: tool_execution_* toolCallId and toolName are Prime's own and match the assistant tool calls: ${show(facts.toolCallIdsNative)}`,
+			`probe:tool-run: tool_execution_* (toolCallId, toolName) pairs are Prime's own and match the assistant tool calls: ${show(facts.toolCallIdsNative)}`,
 			`probe:tool-error: tool_execution_end isError=true and the run recovers to stop: ${show(facts.toolErrorRecovered)}`,
 			`probe:provider-failure: final stop reason ${show(facts.providerFailureStop)}`,
 			`probe:abort-stream: final stop reason ${show(facts.abortStreamStop)}`,

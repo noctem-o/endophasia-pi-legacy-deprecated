@@ -112,9 +112,10 @@ export class PrimeRpcClientV0 {
 		});
 	}
 
-	/** Close stdin and wait for exit; kill the process if it does not exit in time. */
+	/** Close stdin and wait for exit and stdout drain; kill the process if it does not exit in time. */
 	async close(timeoutMs = 10_000): Promise<PrimeRpcExitV0> {
-		if (this.#exit !== undefined) return this.#exit;
+		// Already exited: stdout may still be draining, so wait for `exited` rather than returning the exit early.
+		if (this.#exit !== undefined) return await this.exited;
 		this.#child.stdin.end();
 		const timer = setTimeout(() => this.#child.kill("SIGKILL"), timeoutMs);
 		try {

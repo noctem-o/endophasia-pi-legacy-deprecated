@@ -4,7 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 export const PROBE_PROVIDER = "probe-local";
 export const PROBE_MODEL = "probe-model";
@@ -55,12 +55,16 @@ export interface PrimeBinaryV0 {
 
 /** Resolve the Prime executable: PRIME_AGENT_BIN, else PRIME_AGENT_ROOT's documented source launcher. */
 export function resolvePrimeBinaryV0(env: NodeJS.ProcessEnv): PrimeBinaryV0 | undefined {
+	// Prime is spawned from a disposable cwd, so a relative path is resolved against the invocation directory now.
+	// A bare command name (no "/") is left to PATH.
 	if (env.PRIME_AGENT_BIN !== undefined && env.PRIME_AGENT_BIN.length > 0) {
-		return { command: env.PRIME_AGENT_BIN, leadingArgs: [], description: env.PRIME_AGENT_BIN };
+		const command = env.PRIME_AGENT_BIN.includes("/") ? resolve(env.PRIME_AGENT_BIN) : env.PRIME_AGENT_BIN;
+		return { command, leadingArgs: [], description: command };
 	}
 	if (env.PRIME_AGENT_ROOT !== undefined && env.PRIME_AGENT_ROOT.length > 0) {
-		const launcher = join(env.PRIME_AGENT_ROOT, "prime-agent.sh");
-		return { command: launcher, leadingArgs: [], description: launcher, checkout: env.PRIME_AGENT_ROOT };
+		const checkout = resolve(env.PRIME_AGENT_ROOT);
+		const launcher = join(checkout, "prime-agent.sh");
+		return { command: launcher, leadingArgs: [], description: launcher, checkout };
 	}
 	return undefined;
 }

@@ -47,7 +47,9 @@ type Step =
 	  }
 	| { readonly kind: "tool"; readonly usage: string; readonly mode: "ok" | "fail" | "hang" }
 	| { readonly kind: "http-error" }
-	| { readonly kind: "hang-stream" };
+	| { readonly kind: "hang-stream" }
+	/** A request no scenario scripted: an unknown marker, or more replies than the script has. */
+	| { readonly kind: "unexpected" };
 
 /** Each scenario's scripted assistant responses, by how many assistant replies follow the scenario's user prompt. */
 const SCRIPTS: Readonly<Record<string, readonly Step[]>> = {
@@ -100,11 +102,14 @@ export function selectStepV0(messages: readonly ChatMessage[]): { scenario: stri
 			break;
 		}
 	}
-	if (lastUser === -1) return { scenario: "summary", step: { kind: "text", usage: "summary" } };
-	const scenario = SCENARIO_MARKER.exec(text(messages[lastUser]?.content))?.[1] ?? "simple";
+	if (lastUser === -1) return { scenario: SUMMARY_PROVIDER_REQUEST, step: { kind: "text", usage: "summary" } };
+	const scenario = SCENARIO_MARKER.exec(text(messages[lastUser]?.content))?.[1] ?? "";
 	const replies = messages.slice(lastUser + 1).filter((message) => message.role === "assistant").length;
-	const script = SCRIPTS[scenario] ?? SCRIPTS.simple!;
-	return { scenario, step: script[Math.min(replies, script.length - 1)]! };
+	// Never fall back to another script: a request the scenario did not script must fail the run.
+	const step = SCRIPTS[scenario]?.[replies];
+	return step === undefined
+		? { scenario: UNEXPECTED_PROVIDER_REQUEST, step: { kind: "unexpected" } }
+		: { scenario, step };
 }
 
 function usageChunk(name: string): Record<string, unknown> {
@@ -120,6 +125,10 @@ function usageChunk(name: string): Record<string, unknown> {
 
 /** Recorded in `requests` for a request whose body is not JSON with a `messages` array. */
 export const MALFORMED_PROVIDER_REQUEST = "malformed-request";
+/** Recorded in `requests` for a request with an unknown marker or beyond its scenario's script. */
+export const UNEXPECTED_PROVIDER_REQUEST = "unexpected-request";
+/** Recorded in `requests` for a request with no marker: served the summary script, legitimate only for summarization. */
+export const SUMMARY_PROVIDER_REQUEST = "summary";
 
 export interface FakeProviderV0 {
 	readonly baseUrl: string;
@@ -153,6 +162,13 @@ export async function startFakeProviderV0(): Promise<FakeProviderV0> {
 			const { scenario, step } = selectStepV0(body.messages as ChatMessage[]);
 			requests.push(scenario);
 			const model = typeof body.model === "string" ? body.model : "probe-model";
+			if (step.kind === "unexpected") {
+				response.writeHead(400, { "content-type": "application/json" });
+				response.end(
+					JSON.stringify({ error: { message: "unscripted probe request", type: "invalid_request_error" } }),
+				);
+				return;
+			}
 			if (step.kind === "http-error") {
 				response.writeHead(400, { "content-type": "application/json" });
 				response.end(

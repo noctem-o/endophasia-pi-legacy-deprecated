@@ -12,6 +12,7 @@ import {
 	classifyPrimeConformanceV0,
 	derivePrimeFactsV0,
 } from "../research/prime-conformance/classification.ts";
+import type { PrimeStatsEvidenceV0 } from "../research/prime-conformance/evidence.ts";
 import { SENTINEL_PATTERN, SENTINELS } from "../research/prime-conformance/fake-provider.ts";
 import { mapPrimeMissionTraceV0, PRIME_ROOT_LANE_LABEL } from "../research/prime-conformance/mission-trace.ts";
 import { projectPrimeUsageRowsV0, rebuildPrimeRuntimeMetricsV0 } from "../research/prime-conformance/projection.ts";
@@ -213,6 +214,61 @@ describe("conformance report", () => {
 		expect(buildPrimeConformanceReportV0([anonymous]).scenarios[0]!.evidenceProblems.length).toBeGreaterThan(0);
 	});
 
+	it("requires every compared dimension before reporting a match", () => {
+		const withStats = (
+			scenario: string,
+			label: string,
+			change: (stats: PrimeStatsEvidenceV0) => PrimeStatsEvidenceV0,
+		) => {
+			const run = fixture(scenario);
+			return { ...run, stats: run.stats.map((item) => (item.label === label ? change(item) : item)) };
+		};
+		expect(derivePrimeFactsV0([fixture("multi-turn-reopen")]).reopenStatsEqual).toBe(true);
+		const fewerMessages = withStats("multi-turn-reopen", "after-reopen", (item) => ({
+			...item,
+			totalMessages: item.totalMessages - 1,
+		}));
+		expect(derivePrimeFactsV0([fewerMessages]).reopenStatsEqual).toBe(false);
+		expect(derivePrimeFactsV0([fixture("child-usage-replay")]).childUsageFoldedIntoStats).toBe(true);
+		const lostOutput = withStats("child-usage-replay", "after-open", (item) => ({
+			...item,
+			tokens: { ...item.tokens, output: item.tokens.output - 1 },
+		}));
+		expect(derivePrimeFactsV0([lostOutput]).childUsageFoldedIntoStats).toBe(false);
+		const run = fixture("tool-run");
+		const renamed = {
+			...run,
+			events: run.events.map((event) =>
+				event.type === "tool_execution_end" ? { ...event, toolName: "other_tool" } : event,
+			),
+		};
+		expect(derivePrimeFactsV0([renamed]).toolCallIdsNative).toBe(false);
+	});
+
+	it("proves compaction usage retention from rows before the later prompt", () => {
+		const run = fixture("compaction");
+		expect(derivePrimeFactsV0([run]).rebuildIncludesCompactionUsage).toBe(true);
+		// Losing a pre-compaction row must show, however much the post-compaction prompt adds.
+		const firstAssistant = run.sessionEntries.findIndex((entry) => entry.role === "assistant");
+		const lost = { ...run, sessionEntries: run.sessionEntries.filter((_, index) => index !== firstAssistant) };
+		expect(derivePrimeFactsV0([lost]).rebuildIncludesCompactionUsage).toBe(false);
+	});
+
+	it("flags a tool result without a boolean isError instead of reading it as success", () => {
+		const run = fixture("tool-error");
+		const unflagged = {
+			...run,
+			events: run.events.map((event) => (event.type === "tool_execution_end" ? { ...event, isError: null } : event)),
+		};
+		const report = buildPrimeConformanceReportV0([unflagged]);
+		expect(report.scenarios[0]!.evidenceProblems).toContain(
+			"event 9 (tool_execution_end): tool execution without boolean isError",
+		);
+		expect(mapPrimeMissionTraceV0({ evidence: unflagged.events }).unmapped).toContain(
+			"tool_execution_end without isError at 9",
+		);
+	});
+
 	it("detects a rebuild mismatch in any shared usage dimension", () => {
 		const reopen = fixture("multi-turn-reopen");
 		const skewed = {
@@ -282,6 +338,12 @@ describe("conformance report", () => {
 		const { commit: _commit, ...binaryRun } = current;
 		expect(checkPrimeDriftV0(binaryRun, current)).toMatchObject({ stale: false, unverified: true });
 		expect(checkPrimeDriftV0(current, current).unverified).toBe(false);
+		expect(checkPrimeDriftV0({ ...current, checkoutDirty: true }, current)).toMatchObject({ unverified: true });
+		expect(checkPrimeDriftV0(current, current).probeChanged).toBe(false);
+		expect(checkPrimeDriftV0({ ...current, probeVersion: "9.9.9" }, current)).toMatchObject({
+			stale: false,
+			probeChanged: true,
+		});
 		expect(() =>
 			buildPrimeConformanceReportV0([
 				fixture("simple"),
@@ -294,6 +356,12 @@ describe("conformance report", () => {
 				{ ...fixture("tool-run"), provenance: { ...fixture("tool-run").provenance, probeVersion: "9.9.9" } },
 			]),
 		).toThrow("mixes probe versions");
+		expect(() =>
+			buildPrimeConformanceReportV0([
+				fixture("simple"),
+				{ ...fixture("tool-run"), provenance: { ...fixture("tool-run").provenance, node: "v99.0.0" } },
+			]),
+		).toThrow("mixes environments");
 	});
 
 	it("reports a leaked sentinel instead of hiding it", () => {
@@ -303,6 +371,15 @@ describe("conformance report", () => {
 });
 
 describe("isolation", () => {
+	it("rejects malformed arguments before anything runs", () => {
+		const run = (...args: string[]) =>
+			spawnSync(process.execPath, [cli, ...args], { env: { PATH: process.env.PATH }, encoding: "utf8" });
+		expect(run("--write-fixtures", "--scenario").stderr).toContain("--scenario needs a scenario name");
+		expect(run("--scenario", "--write-fixtures").stderr).toContain("--scenario needs a scenario name");
+		expect(run("--scenario", "no-such").stderr).toContain("unknown scenario no-such");
+		expect(run("--writefixtures").stderr).toContain("unknown argument --writefixtures");
+	});
+
 	it("fails clearly when no Prime Agent is configured", () => {
 		const result = spawnSync(process.execPath, [cli], { env: { PATH: process.env.PATH }, encoding: "utf8" });
 		expect(result.status).toBe(1);

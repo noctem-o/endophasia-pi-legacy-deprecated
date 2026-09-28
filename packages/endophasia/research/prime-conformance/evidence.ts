@@ -11,6 +11,8 @@ export interface PrimeProvenanceV0 {
 	readonly version: string;
 	/** The Prime source commit, when the probe ran against a checkout. */
 	readonly commit?: string;
+	/** Set when that checkout had modified tracked files: the code that ran is not exactly `commit`. */
+	readonly checkoutDirty?: true;
 	readonly mode: "rpc";
 	readonly generatedBy: typeof PROBE_NAME;
 	readonly probeVersion: string;
@@ -223,6 +225,8 @@ function assistantProblems(label: string, assistant: PrimeAssistantEvidenceV0 | 
 	if (assistant === undefined) return [];
 	return [
 		...(assistant.stopReason === "" ? [`${label}: assistant has no stop reason`] : []),
+		// Every assistant message carries usage, even an aborted one (zeros); a missing object would undercount.
+		...(assistant.usage === undefined ? [`${label}: assistant has no usage`] : []),
 		...assistant.toolCalls.flatMap((call) =>
 			call.id === "" || call.name === "" ? [`${label}: tool call without id or name`] : [],
 		),
@@ -247,18 +251,25 @@ export function evidenceProblemsV0(run: PrimeScenarioEvidenceV0): string[] {
 			case "turn_end":
 				return [
 					...assistantProblems(label, event.assistant),
-					...event.toolResults.flatMap((result) =>
-						result.toolCallId === "" || result.toolName === ""
+					...event.toolResults.flatMap((result) => [
+						...(result.toolCallId === "" || result.toolName === ""
 							? [`${label}: tool result without id or name`]
-							: [],
-					),
+							: []),
+						...(result.isError === null ? [`${label}: tool result without boolean isError`] : []),
+					]),
 				];
 			case "tool_execution_start":
 			case "tool_execution_update":
-			case "tool_execution_end":
 				return event.toolCallId === "" || event.toolName === ""
 					? [`${label}: tool execution without id or name`]
 					: [];
+			case "tool_execution_end":
+				return [
+					...(event.toolCallId === "" || event.toolName === ""
+						? [`${label}: tool execution without id or name`]
+						: []),
+					...(event.isError === null ? [`${label}: tool execution without boolean isError`] : []),
+				];
 			case "agent_end":
 				return [
 					...(event.messageRoles.includes("") ? [`${label}: message without role`] : []),
@@ -270,7 +281,18 @@ export function evidenceProblemsV0(run: PrimeScenarioEvidenceV0): string[] {
 	});
 	const entries = run.sessionEntries.flatMap((entry, index) => {
 		const label = `entry ${index} (${entry.type})`;
+		// Assistant messages and child attributions always carry usage; compaction and branch summaries may not.
+		const required = [
+			...(entry.type === "message" && entry.role === "assistant" && entry.usage === undefined
+				? [`${label}: assistant entry has no usage`]
+				: []),
+			...(entry.type === "child_usage_attributed" &&
+			(entry.childUsage === undefined || entry.aggregateUsage === undefined)
+				? [`${label}: child attribution without childUsage or aggregateUsage`]
+				: []),
+		];
 		return [
+			...required,
 			...usageProblems(label, entry.usage),
 			...usageProblems(`${label} childUsage`, entry.childUsage),
 			...usageProblems(`${label} aggregateUsage`, entry.aggregateUsage),

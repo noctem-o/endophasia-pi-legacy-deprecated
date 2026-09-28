@@ -9,6 +9,7 @@ import {
 	invalidStatsFieldsV0,
 	PROBE_NAME,
 	PROBE_VERSION,
+	type PrimeCommandErrorKindV0,
 	type PrimeCommandEvidenceV0,
 	type PrimeProvenanceV0,
 	type PrimeScenarioEvidenceV0,
@@ -18,7 +19,14 @@ import {
 	sanitizeSessionEntryV0,
 	sanitizeStatsV0,
 } from "./evidence.ts";
-import { type FakeProviderV0, MALFORMED_PROVIDER_REQUEST, SENTINELS, startFakeProviderV0 } from "./fake-provider.ts";
+import {
+	type FakeProviderV0,
+	MALFORMED_PROVIDER_REQUEST,
+	SENTINELS,
+	SUMMARY_PROVIDER_REQUEST,
+	startFakeProviderV0,
+	UNEXPECTED_PROVIDER_REQUEST,
+} from "./fake-provider.ts";
 import { type PrimeEvidenceEventV0, sanitizePrimeEventV0 } from "./protocol.ts";
 import { PrimeRpcClientV0 } from "./rpc-client.ts";
 
@@ -55,11 +63,20 @@ class ProbeSession {
 		});
 	}
 
-	/** Send a command and record it. A refusal fails the scenario unless the scenario expects it (`mayFail`). */
-	async command(command: { readonly type: string } & Record<string, unknown>, options: { mayFail?: boolean } = {}) {
+	/**
+	 * Send a command and record it. A refusal fails the scenario unless the scenario expects exactly that refusal
+	 * (`mayFailWith`): any other error kind is not the behavior under test.
+	 */
+	async command(
+		command: { readonly type: string } & Record<string, unknown>,
+		options: { mayFailWith?: PrimeCommandErrorKindV0 } = {},
+	) {
 		const response = await this.client.request(command);
-		this.#run.commands.push(sanitizeCommandV0(response));
-		if (!response.success && options.mayFail !== true) throw new Error(`${command.type} failed unexpectedly`);
+		const evidence = sanitizeCommandV0(response);
+		this.#run.commands.push(evidence);
+		if (!response.success && (options.mayFailWith === undefined || evidence.errorKind !== options.mayFailWith)) {
+			throw new Error(`${command.type} failed unexpectedly (${evidence.errorKind ?? "no error kind"})`);
+		}
 		return response;
 	}
 
@@ -69,7 +86,7 @@ class ProbeSession {
 	 */
 	async prompt(
 		scenario: string,
-		options: { abortOn?: Trigger; streamingBehavior?: "followUp"; mayBeRefused?: boolean } = {},
+		options: { abortOn?: Trigger; streamingBehavior?: "followUp"; mayBeRefusedWith?: PrimeCommandErrorKindV0 } = {},
 	): Promise<boolean> {
 		this.#abortOn = options.abortOn;
 		const ended = new Promise<void>((resolve) => {
@@ -81,7 +98,7 @@ class ProbeSession {
 				message: `SCENARIO:${scenario} ${SENTINELS.prompt}`,
 				...(options.streamingBehavior === undefined ? {} : { streamingBehavior: options.streamingBehavior }),
 			},
-			{ mayFail: options.mayBeRefused === true },
+			options.mayBeRefusedWith === undefined ? {} : { mayFailWith: options.mayBeRefusedWith },
 		);
 		if (!response.success) return false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -142,9 +159,11 @@ function readSessionEntries(path: string): PrimeSessionEntryEvidenceV0[] {
 	return readFileSync(path, "utf8")
 		.split("\n")
 		.filter((line) => line.length > 0)
-		.flatMap((line) => {
+		.map((line, index) => {
+			// Every line is evidence: dropping one would shift adapter sequences and undercount usage.
 			const entry = sanitizeSessionEntryV0(JSON.parse(line));
-			return entry === undefined ? [] : [entry];
+			if (entry === undefined) throw new Error(`session file line ${index + 1} is not a typed entry`);
+			return entry;
 		});
 }
 
@@ -158,6 +177,8 @@ interface ScenarioContext {
 interface ScenarioDefinition {
 	readonly name: string;
 	readonly description: string;
+	/** Whether the scenario makes marker-less summarization requests (manual compaction). */
+	readonly summarizes?: boolean;
 	execute(context: ScenarioContext): Promise<void>;
 }
 
@@ -274,7 +295,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			await session.stats("after");
 			// An RPC abort suspends Prime's input queue; a plain prompt is refused until a prompt that may queue resumes it.
 			run.notes.push(
-				`plain prompt after abort admitted: ${await session.prompt("multi-a", { mayBeRefused: true })}`,
+				`plain prompt after abort admitted: ${await session.prompt("multi-a", { mayBeRefusedWith: "queued-input-suspended" })}`,
 			);
 			run.notes.push(
 				`followUp prompt after abort admitted: ${await session.prompt("multi-b", { streamingBehavior: "followUp" })}`,
@@ -334,10 +355,9 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			run.notes.push(`reopen via switch_session succeeded: ${switched.success}`);
 			await second.stats("after-reopen");
 			const messages = await second.command({ type: "get_messages" });
-			const count = Array.isArray((messages.data as { messages?: unknown[] } | undefined)?.messages)
-				? (messages.data as { messages: unknown[] }).messages.length
-				: -1;
-			run.notes.push(`messages after reopen: ${count}`);
+			const restored = (messages.data as { messages?: unknown } | undefined)?.messages;
+			if (!Array.isArray(restored)) throw new Error("get_messages has no messages array");
+			run.notes.push(`messages after reopen: ${restored.length}`);
 			const after = readSessionEntries(await second.sessionFile());
 			run.notes.push(
 				`entry ids stable across reopen: ${JSON.stringify(before.map((entry) => entry.id)) === JSON.stringify(after.slice(0, before.length).map((entry) => entry.id))}`,
@@ -349,6 +369,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 	{
 		name: "compaction",
 		description: "Two prompts, then a manual compaction whose summary also reports usage.",
+		summarizes: true,
 		async execute({ open, run }) {
 			const session = open();
 			await session.prompt("multi-a");
@@ -360,7 +381,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			// Manual compaction aborts first (compact -> abort -> requestAbort), which suspends the input queue. Record the
 			// plain refusal, then resume with a prompt that may queue.
 			run.notes.push(
-				`plain prompt after compaction admitted: ${await session.prompt("multi-c", { mayBeRefused: true })}`,
+				`plain prompt after compaction admitted: ${await session.prompt("multi-c", { mayBeRefusedWith: "queued-input-suspended" })}`,
 			);
 			run.notes.push(
 				`followUp prompt after compaction admitted: ${await session.prompt("multi-c", { streamingBehavior: "followUp" })}`,
@@ -379,17 +400,19 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			await session.prompt("multi-b");
 			await session.stats("before-fork");
 			const originalFile = await session.sessionFile();
-			const forkable = await session.client.request({ type: "get_fork_messages" });
-			if (!forkable.success) throw new Error("get_fork_messages failed unexpectedly");
-			const entries = (
-				(forkable.data as { messages?: { entryId?: unknown }[] } | undefined)?.messages ?? []
-			).flatMap((message) => (typeof message.entryId === "string" ? [message.entryId] : []));
+			const forkableResponse = await session.client.request({ type: "get_fork_messages" });
+			if (!forkableResponse.success) throw new Error("get_fork_messages failed unexpectedly");
+			const forkable = (forkableResponse.data as { messages?: unknown } | undefined)?.messages;
+			if (!Array.isArray(forkable)) throw new Error("get_fork_messages has no messages array");
+			const entries = forkable.flatMap((message: { entryId?: unknown } | null) =>
+				typeof message?.entryId === "string" ? [message.entryId] : [],
+			);
 			run.notes.push(`forkable user messages: ${entries.length}`);
+			// The fork is the operation under test: without a target the scenario must fail, not continue unforked.
 			const target = entries.at(-1);
-			if (target !== undefined) {
-				const forked = await session.command({ type: "fork", entryId: target });
-				run.notes.push(`fork succeeded: ${forked.success}`);
-			}
+			if (target === undefined) throw new Error("get_fork_messages offered no fork target");
+			const forked = await session.command({ type: "fork", entryId: target });
+			run.notes.push(`fork succeeded: ${forked.success}`);
 			await session.stats("after-fork");
 			const forkFile = await session.sessionFile();
 			run.notes.push(`fork created a different session file: ${forkFile !== originalFile}`);
@@ -466,8 +489,17 @@ export async function runPrimeProbeV0(options: PrimeProbeOptionsV0): Promise<Pri
 			await fake.close();
 		}
 		run.notes.push(`provider requests: ${fake.requests.length}`);
-		const malformed = fake.requests.filter((request) => request === MALFORMED_PROVIDER_REQUEST).length;
-		if (malformed > 0) run.notes.push(`scenario error: ${malformed} malformed provider request(s)`);
+		const count = (kind: string) => fake.requests.filter((request) => request === kind).length;
+		if (count(MALFORMED_PROVIDER_REQUEST) > 0) {
+			run.notes.push(`scenario error: ${count(MALFORMED_PROVIDER_REQUEST)} malformed provider request(s)`);
+		}
+		if (count(UNEXPECTED_PROVIDER_REQUEST) > 0) {
+			run.notes.push(`scenario error: ${count(UNEXPECTED_PROVIDER_REQUEST)} unscripted provider request(s)`);
+		}
+		// Marker-less requests are summarization; only a scenario that summarizes may make them.
+		if (count(SUMMARY_PROVIDER_REQUEST) > 0 && scenario.summarizes !== true) {
+			run.notes.push(`scenario error: ${count(SUMMARY_PROVIDER_REQUEST)} unexpected summary request(s)`);
+		}
 		results.push({
 			provenance: { ...options.provenance, scenario: scenario.name },
 			description: scenario.description,
@@ -495,16 +527,26 @@ export function describePrimeV0(binary: PrimeBinaryV0): PrimeProvenanceV0 {
 		environment.dispose(binary);
 	}
 	let commit: string | undefined;
+	let checkoutDirty = false;
 	// Only a source checkout the probe actually runs has a commit; PRIME_AGENT_BIN is attributed to none.
 	if (binary.checkout !== undefined) {
 		try {
-			commit = execFileSync("git", ["-C", binary.checkout, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+			const head = execFileSync("git", ["-C", binary.checkout, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+			// Modified tracked files mean the running code is not HEAD. Untracked build output (dist, node_modules) is
+			// expected in a built checkout and is not counted.
+			checkoutDirty =
+				execFileSync("git", ["-C", binary.checkout, "status", "--porcelain", "--untracked-files=no"], {
+					encoding: "utf8",
+				}).trim().length > 0;
+			// Recorded only once cleanliness is known: a commit whose state could not be checked is no commit.
+			commit = head;
 		} catch {}
 	}
 	return {
 		source: "prime-agent",
 		version,
 		...(commit === undefined ? {} : { commit }),
+		...(checkoutDirty ? { checkoutDirty: true } : {}),
 		mode: "rpc",
 		generatedBy: PROBE_NAME,
 		probeVersion: PROBE_VERSION,

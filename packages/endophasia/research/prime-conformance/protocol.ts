@@ -85,7 +85,8 @@ export type PrimeEvidenceEventV0 =
 			readonly toolResults: readonly {
 				readonly toolCallId: string;
 				readonly toolName: string;
-				readonly isError: boolean;
+				/** null when Prime sent no boolean: never read as "no error". */
+				readonly isError: boolean | null;
 			}[];
 	  }
 	| {
@@ -102,7 +103,7 @@ export type PrimeEvidenceEventV0 =
 			readonly type: "tool_execution_end";
 			readonly toolCallId: string;
 			readonly toolName: string;
-			readonly isError: boolean;
+			readonly isError: boolean | null;
 	  }
 	| { readonly type: "compaction_start"; readonly reason: string }
 	| {
@@ -130,6 +131,10 @@ function record(value: unknown): Record<string, unknown> | undefined {
  */
 function string(value: unknown): string {
 	return typeof value === "string" ? value : "";
+}
+
+function flag(value: unknown): boolean | null {
+	return typeof value === "boolean" ? value : null;
 }
 
 function number(value: unknown): number {
@@ -212,7 +217,7 @@ export function sanitizePrimeEventV0(type: string, event: Record<string, unknown
 					return {
 						toolCallId: string(item.toolCallId),
 						toolName: string(item.toolName),
-						isError: item.isError === true,
+						isError: flag(item.isError),
 					};
 				}),
 			};
@@ -233,7 +238,7 @@ export function sanitizePrimeEventV0(type: string, event: Record<string, unknown
 				type,
 				toolCallId: string(event.toolCallId),
 				toolName: string(event.toolName),
-				isError: event.isError === true,
+				isError: flag(event.isError),
 			};
 		case "compaction_start":
 			return { type, reason: string(event.reason) };

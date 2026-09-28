@@ -15,7 +15,9 @@ import {
 	MALFORMED_PROVIDER_REQUEST,
 	SENTINEL_PATTERN,
 	SENTINELS,
+	SUMMARY_PROVIDER_REQUEST,
 	startFakeProviderV0,
+	UNEXPECTED_PROVIDER_REQUEST,
 } from "../research/prime-conformance/fake-provider.ts";
 import { encodeJsonlRecordV0, JsonlDecoderV0, type JsonlRecordV0 } from "../research/prime-conformance/jsonl.ts";
 import { classifyPrimeRecordV0, sanitizePrimeEventV0 } from "../research/prime-conformance/protocol.ts";
@@ -241,6 +243,8 @@ describe("sanitization", () => {
 	it("never fabricates identities or numbers, and flags what it could not read", () => {
 		const events = [
 			sanitizePrimeEventV0("tool_execution_end", { toolName: "probe_tool", isError: false }),
+			sanitizePrimeEventV0("tool_execution_end", { toolCallId: "call_1", toolName: "probe_tool" }),
+			sanitizePrimeEventV0("message_end", { message: { role: "assistant", stopReason: "stop", content: [] } }),
 			sanitizePrimeEventV0("message_end", {
 				message: {
 					role: "assistant",
@@ -250,6 +254,7 @@ describe("sanitization", () => {
 			}),
 		].flatMap((event) => (event === undefined ? [] : [event]));
 		expect(events[0]).toMatchObject({ toolCallId: "" });
+		expect(events[1]).toMatchObject({ isError: null });
 		const problems = evidenceProblemsV0({
 			provenance: {
 				source: "prime-agent",
@@ -273,13 +278,15 @@ describe("sanitization", () => {
 		});
 		expect(problems).toEqual([
 			"event 0 (tool_execution_end): tool execution without id or name",
-			"event 1 (message_end): assistant has no stop reason",
-			"event 1 (message_end): tool call without id or name",
-			"event 1 (message_end): usage output is not a finite number",
-			"event 1 (message_end): usage cost.input is not a finite number",
-			"event 1 (message_end): usage cost.output is not a finite number",
-			"event 1 (message_end): usage cost.cacheRead is not a finite number",
-			"event 1 (message_end): usage cost.cacheWrite is not a finite number",
+			"event 1 (tool_execution_end): tool execution without boolean isError",
+			"event 2 (message_end): assistant has no usage",
+			"event 3 (message_end): assistant has no stop reason",
+			"event 3 (message_end): tool call without id or name",
+			"event 3 (message_end): usage output is not a finite number",
+			"event 3 (message_end): usage cost.input is not a finite number",
+			"event 3 (message_end): usage cost.output is not a finite number",
+			"event 3 (message_end): usage cost.cacheRead is not a finite number",
+			"event 3 (message_end): usage cost.cacheWrite is not a finite number",
 		]);
 	});
 
@@ -353,7 +360,18 @@ describe("isolation", () => {
 			const ok = await post(JSON.stringify({ messages: [] }));
 			expect(ok.status).toBe(200);
 			await ok.text();
-			expect(fake.requests).toEqual([MALFORMED_PROVIDER_REQUEST, MALFORMED_PROVIDER_REQUEST, "summary"]);
+			// No script fallback: an unknown marker, or a reply beyond the script, is refused.
+			const user = (content: string) => ({ role: "user", content });
+			expect((await post(JSON.stringify({ messages: [user("SCENARIO:no-such-scenario x")] }))).status).toBe(400);
+			const beyond = [user("SCENARIO:simple x"), { role: "assistant", content: "done" }];
+			expect((await post(JSON.stringify({ messages: beyond }))).status).toBe(400);
+			expect(fake.requests).toEqual([
+				MALFORMED_PROVIDER_REQUEST,
+				MALFORMED_PROVIDER_REQUEST,
+				SUMMARY_PROVIDER_REQUEST,
+				UNEXPECTED_PROVIDER_REQUEST,
+				UNEXPECTED_PROVIDER_REQUEST,
+			]);
 		} finally {
 			await fake.close();
 		}

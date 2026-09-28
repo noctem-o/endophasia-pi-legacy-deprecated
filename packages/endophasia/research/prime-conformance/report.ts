@@ -22,10 +22,13 @@ export interface PrimeDriftV0 {
 	/** True when the evidence was produced by a different Prime than the reference (e.g. the committed fixtures). */
 	readonly stale: boolean;
 	/**
-	 * True when the reference is pinned to a commit but the evidence has none (a PRIME_AGENT_BIN run): the version
-	 * matches, but whether it is the same build cannot be verified. Never reported as a match.
+	 * True when the reference is pinned to a commit but the evidence has none (a PRIME_AGENT_BIN run) or came from a
+	 * checkout with modified tracked files: the version matches, but whether it is the same build cannot be verified.
+	 * Never reported as a match.
 	 */
 	readonly unverified: boolean;
+	/** True when the reference was produced by another probe revision: Prime may be unchanged, but the evidence is not. */
+	readonly probeChanged: boolean;
 	readonly evidenceVersion: string;
 	readonly evidenceCommit?: string;
 	readonly referenceVersion?: string;
@@ -68,7 +71,10 @@ export function checkPrimeDriftV0(evidence: PrimeProvenanceV0, reference: PrimeP
 			reference !== undefined &&
 			reference.version === evidence.version &&
 			reference.commit !== undefined &&
-			evidence.commit === undefined,
+			(evidence.commit === undefined || evidence.checkoutDirty === true),
+		probeChanged:
+			reference !== undefined &&
+			(reference.generatedBy !== evidence.generatedBy || reference.probeVersion !== evidence.probeVersion),
 		evidenceVersion: evidence.version,
 		...(evidence.commit === undefined ? {} : { evidenceCommit: evidence.commit }),
 		...(reference === undefined ? {} : { referenceVersion: reference.version }),
@@ -102,6 +108,18 @@ export function buildPrimeConformanceReportV0(
 			item.provenance.generatedBy !== provenance.generatedBy ||
 			item.provenance.probeVersion !== provenance.probeVersion,
 	);
+	// The runtime can affect process and framing behavior; one report describes one environment.
+	const otherEnvironment = evidence.find(
+		(item) =>
+			item.provenance.platform !== provenance.platform ||
+			item.provenance.node !== provenance.node ||
+			item.provenance.checkoutDirty !== provenance.checkoutDirty,
+	);
+	if (otherEnvironment !== undefined) {
+		throw new Error(
+			`Evidence mixes environments (${provenance.platform} ${provenance.node} and ${otherEnvironment.provenance.platform} ${otherEnvironment.provenance.node})`,
+		);
+	}
 	if (otherProbe !== undefined) {
 		throw new Error(
 			`Evidence mixes probe versions (${provenance.generatedBy} ${provenance.probeVersion} and ${otherProbe.provenance.generatedBy} ${otherProbe.provenance.probeVersion})`,
