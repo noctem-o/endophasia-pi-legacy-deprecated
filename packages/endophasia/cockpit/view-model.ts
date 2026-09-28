@@ -8,6 +8,7 @@ import type {
 } from "@earendil-works/pi-coding-agent/experimental/services/connection";
 import type { ModelsState } from "@earendil-works/pi-coding-agent/experimental/services/models";
 import type { SessionDirectoryState } from "@earendil-works/pi-coding-agent/experimental/services/sessions";
+import type { RuntimeMetricsV0 } from "../src/runtime-metrics.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 
 /** Upper bound for tool arguments, tool output and custom payload previews. */
@@ -535,6 +536,49 @@ export function projectSessionOverview(overview: SessionOverviewV0, capturedAt: 
 							: { capturedModel: formatModel(lane.operation.capturedModel) }),
 					}),
 		})),
+	};
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Session Accounting (Runtime Metrics v0)
+
+export interface AccountingRowView {
+	readonly label: string;
+	readonly value: string;
+}
+
+export interface AccountingView {
+	readonly capturedAt: string;
+	readonly rows: readonly AccountingRowView[];
+}
+
+/** A count with en-US grouping and every fraction digit kept, so the displayed value is the reported value. */
+function formatCount(value: number): string {
+	return value.toLocaleString("en-US", { maximumFractionDigits: 20 });
+}
+
+/**
+ * Session-wide cumulative accounting as reported, captured explicitly. Values are shown exactly, negative ones
+ * included: totals are not assumed monotonic, nothing is recomputed, and cost carries no currency. capturedAt is when
+ * this cockpit received the capture. Optional fields appear only when present.
+ */
+export function projectRuntimeMetrics(metrics: RuntimeMetricsV0, capturedAt: number): AccountingView {
+	const { usage } = metrics;
+	return {
+		capturedAt: formatClock(capturedAt),
+		rows: [
+			{ label: "Persisted messages", value: formatCount(metrics.messageCount) },
+			{ label: "Input tokens", value: formatCount(usage.input) },
+			{ label: "Output tokens", value: formatCount(usage.output) },
+			{ label: "Cache read", value: formatCount(usage.cacheRead) },
+			{ label: "Cache write", value: formatCount(usage.cacheWrite) },
+			...(usage.reasoning === undefined ? [] : [{ label: "Reasoning", value: formatCount(usage.reasoning) }]),
+			...(usage.cacheWrite1h === undefined
+				? []
+				: [{ label: "1h cache write", value: formatCount(usage.cacheWrite1h) }]),
+			{ label: "Reported total", value: formatCount(usage.totalTokens) },
+			{ label: "Accounted cost", value: String(usage.cost.total) },
+		],
 	};
 }
 

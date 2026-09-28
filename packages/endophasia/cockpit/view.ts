@@ -14,6 +14,7 @@ import {
 	projectModels,
 	projectOperation,
 	projectQueues,
+	projectRuntimeMetrics,
 	projectSessionOverview,
 	projectSessions,
 	projectVisibleTranscript,
@@ -173,6 +174,8 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 	const traceBody = el("div", "trace-body");
 	traceSection.append(traceHeader, traceNote, traceBody);
 	const overviewSection = el("section", "inspector-section overview");
+	const accountingSection = el("section", "inspector-section accounting");
+	accountingSection.setAttribute("aria-label", "Session Accounting");
 	inspectorPanel.append(
 		connectionSection,
 		attachmentSection,
@@ -180,6 +183,7 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 		laneSection,
 		traceSection,
 		overviewSection,
+		accountingSection,
 	);
 
 	const detachButton = el("button", "button", "Detach");
@@ -188,6 +192,9 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 	const overviewButton = el("button", "button", "Capture overview");
 	overviewButton.type = "button";
 	overviewButton.addEventListener("click", () => void getController().refreshOverview());
+	const accountingButton = el("button", "button", "Capture");
+	accountingButton.type = "button";
+	accountingButton.addEventListener("click", () => void getController().captureAccounting());
 
 	const renderStatus = (controller: CockpitController): void => {
 		const { presentation } = controller;
@@ -429,6 +436,52 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 			}
 		}
 		overviewSection.replaceChildren(...body);
+		renderAccounting(controller);
+	};
+
+	const renderAccounting = (controller: CockpitController): void => {
+		const capture = controller.accounting;
+		const header = el("div", "section-header");
+		header.append(el("h3", "section-title", "Session Accounting"), accountingButton);
+		accountingButton.disabled = !controller.canCaptureAccounting;
+		accountingButton.textContent = capture.status === "captured" ? "Refresh" : "Capture";
+		const body: HTMLElement[] = [header];
+		switch (capture.status) {
+			case "none":
+				body.push(
+					el(
+						"p",
+						"muted",
+						controller.presentation.attachment.value?.status === "attached"
+							? "Not captured. Session Accounting is an explicit capture, not live state."
+							: "Attach a Session to capture its accounting.",
+					),
+				);
+				break;
+			case "capturing":
+				body.push(el("p", "muted", `Capturing ${capture.sessionId}…`));
+				break;
+			case "failed":
+				body.push(el("p", "block-error", `Capture failed: ${capture.message}`));
+				break;
+			case "captured": {
+				const view = projectRuntimeMetrics(capture.metrics, capture.capturedAt);
+				const fields = el("dl", "fields");
+				fields.append(field("Received", view.capturedAt, "mono"));
+				for (const row of view.rows) fields.append(field(row.label, row.value, "mono"));
+				body.push(
+					fields,
+					el(
+						"p",
+						"trace-note",
+						"Cumulative session accounting · explicit capture · not current context occupancy",
+					),
+					el("p", "trace-note", "Pi-maintained cumulative accounting · not a provider invoice"),
+				);
+				break;
+			}
+		}
+		accountingSection.replaceChildren(...body);
 	};
 
 	const renderTrace = (controller: CockpitController): void => {

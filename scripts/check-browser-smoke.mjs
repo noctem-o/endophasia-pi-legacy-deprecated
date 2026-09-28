@@ -154,6 +154,7 @@ try {
 				"packages/endophasia/cockpit/view.ts",
 				"packages/endophasia/cockpit/controller.ts",
 				"packages/endophasia/src/mission-trace-service.ts",
+				"packages/endophasia/src/runtime-facts-service.ts",
 				"packages/endophasia/presentation/websocket-transport.ts",
 				"packages/endophasia/presentation/client.ts",
 				"packages/client/src/client.ts",

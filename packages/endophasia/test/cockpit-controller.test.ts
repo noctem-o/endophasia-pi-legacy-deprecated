@@ -10,7 +10,7 @@ import type { TranscriptState } from "@earendil-works/pi-coding-agent/experiment
 import { describe, expect, it } from "vitest";
 import { CockpitController, type CockpitPresentation, type CockpitRegion } from "../cockpit/controller.ts";
 import { projectAttachment, projectSessions } from "../cockpit/view-model.ts";
-import type { MissionTraceEventV0, MissionTraceObservationV0 } from "../src/index.ts";
+import type { MissionTraceEventV0, MissionTraceObservationV0, RuntimeMetricsV0 } from "../src/index.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 
 type Listener<T> = Parameters<ReplicatedState<T>["subscribe"]>[0];
@@ -61,6 +61,30 @@ function overview(tipId: string): SessionOverviewV0 {
 	};
 }
 
+function metrics(totalTokens: number, costTotal = 0): RuntimeMetricsV0 {
+	return {
+		schemaVersion: "runtime-metrics.v0",
+		scope: "session",
+		messageCount: 2,
+		usage: {
+			input: 1,
+			output: 2,
+			cacheRead: 3,
+			cacheWrite: 4,
+			totalTokens,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: costTotal },
+		},
+	};
+}
+
+function event(sequence: number, runId: string): MissionTraceEventV0 {
+	return { schemaVersion: "mission-trace.v0", sequence, kind: "mission.started", lane: "main", runId };
+}
+
+function observation(...events: MissionTraceEventV0[]): MissionTraceObservationV0 {
+	return { schemaVersion: "mission-trace-observation.v0", scope: "session-worker-lifetime", events };
+}
+
 function fixture() {
 	const connection = new FakeState<ServerConnectionState>({ status: "connected", since: "2026-01-01T00:00:00.000Z" });
 	const attachment = new FakeState<SessionAttachmentState>({ status: "detached" });
@@ -71,6 +95,7 @@ function fixture() {
 	const attachCalls: string[] = [];
 	const attaches: Deferred<void>[] = [];
 	const overviews: Deferred<SessionOverviewV0>[] = [];
+	const accounting: Deferred<RuntimeMetricsV0>[] = [];
 	const presentation: CockpitPresentation = {
 		connection,
 		attachment,
@@ -90,6 +115,11 @@ function fixture() {
 		sessionOverview() {
 			const next = deferred<SessionOverviewV0>();
 			overviews.push(next);
+			return next.promise;
+		},
+		runtimeMetrics() {
+			const next = deferred<RuntimeMetricsV0>();
+			accounting.push(next);
 			return next.promise;
 		},
 	};
@@ -121,6 +151,7 @@ function fixture() {
 		attachCalls,
 		attaches,
 		overviews,
+		accounting,
 		controller,
 		scheduled,
 		renders,
@@ -313,6 +344,7 @@ describe("Standard Cockpit controller", () => {
 				attach: async () => {},
 				detach: async () => {},
 				sessionOverview: async () => overview("x"),
+				runtimeMetrics: async () => metrics(0),
 			},
 			render: () => {
 				calls++;
@@ -336,19 +368,6 @@ describe("Standard Cockpit controller", () => {
 	});
 
 	describe("Mission Trace", () => {
-		const event = (sequence: number, runId: string): MissionTraceEventV0 => ({
-			schemaVersion: "mission-trace.v0",
-			sequence,
-			kind: "mission.started",
-			lane: "main",
-			runId,
-		});
-		const observation = (...events: MissionTraceEventV0[]): MissionTraceObservationV0 => ({
-			schemaVersion: "mission-trace-observation.v0",
-			scope: "session-worker-lifetime",
-			events,
-		});
-
 		it("renders only the trace region for a Mission Trace update", () => {
 			const { controller, missionTrace, renders, flush } = fixture();
 			flush();
@@ -411,6 +430,117 @@ describe("Standard Cockpit controller", () => {
 			});
 			controller.dispose();
 			unhydrated.controller.dispose();
+		});
+	});
+
+	describe("Session Accounting", () => {
+		it("is an explicit capture: attaching, trace updates and state changes never request it", async () => {
+			const { controller, missionTrace, transcript, accounting, completeAttach, flush } = fixture();
+			controller.select("a");
+			await completeAttach(0, "a");
+			missionTrace.set(observation(event(1, "run")));
+			transcript.set({} as TranscriptState);
+			flush();
+			await settle();
+			expect(accounting).toHaveLength(0);
+			expect(controller.accounting).toEqual({ status: "none" });
+
+			const capture = controller.captureAccounting();
+			expect(controller.accounting).toEqual({ status: "capturing", sessionId: "a" });
+			expect(controller.canCaptureAccounting).toBe(false);
+			// A second click while capturing starts nothing.
+			await controller.captureAccounting();
+			expect(accounting).toHaveLength(1);
+			accounting[0]!.resolve(metrics(154_800, 0.9375));
+			await capture;
+			expect(controller.accounting).toEqual({
+				status: "captured",
+				sessionId: "a",
+				metrics: metrics(154_800, 0.9375),
+				capturedAt: 1_000,
+			});
+			expect(controller.canCaptureAccounting).toBe(true);
+			missionTrace.set(observation(event(1, "run"), event(2, "run")));
+			await settle();
+			expect(accounting).toHaveLength(1);
+			controller.dispose();
+		});
+
+		it("never shows Session A's late accounting under Session B", async () => {
+			const { controller, attachment, accounting } = fixture();
+			attachment.set({ status: "attached", sessionId: "a" });
+			const lateA = controller.captureAccounting();
+			// Switching Sessions clears the capture, including the one in flight.
+			attachment.set({ status: "attaching", sessionId: "b" });
+			expect(controller.accounting).toEqual({ status: "none" });
+			attachment.set({ status: "attached", sessionId: "b" });
+			const currentB = controller.captureAccounting();
+			accounting[1]!.resolve(metrics(20));
+			await currentB;
+			accounting[0]!.resolve(metrics(10));
+			await lateA;
+			expect(controller.accounting).toMatchObject({ status: "captured", sessionId: "b", metrics: metrics(20) });
+
+			// A late result is also dropped when no newer capture replaced it.
+			const lateB = controller.captureAccounting();
+			attachment.set({ status: "detached" });
+			accounting[2]!.resolve(metrics(30));
+			await lateB;
+			expect(controller.accounting).toEqual({ status: "none" });
+
+			// And when the same Session is re-attached before the late result arrives.
+			attachment.set({ status: "attached", sessionId: "a" });
+			const lateA2 = controller.captureAccounting();
+			attachment.set({ status: "detached" });
+			attachment.set({ status: "attached", sessionId: "a" });
+			accounting[3]!.resolve(metrics(40));
+			await lateA2;
+			expect(controller.accounting).toEqual({ status: "none" });
+			controller.dispose();
+		});
+
+		it("is available only for a healthy attached Session with no selection pending", async () => {
+			const { controller, attachment, accounting } = fixture();
+			expect(controller.canCaptureAccounting).toBe(false);
+			await controller.captureAccounting();
+			for (const state of [
+				{ status: "attaching", sessionId: "a" },
+				{ status: "degraded", sessionId: "a" },
+			] as const) {
+				attachment.set(state);
+				expect(controller.canCaptureAccounting).toBe(false);
+				await controller.captureAccounting();
+			}
+			expect(accounting).toHaveLength(0);
+			expect(controller.accounting).toEqual({ status: "none" });
+
+			attachment.set({ status: "attached", sessionId: "a" });
+			expect(controller.canCaptureAccounting).toBe(true);
+			controller.select("b");
+			expect(controller.canCaptureAccounting).toBe(false);
+			await controller.captureAccounting();
+			expect(accounting).toHaveLength(0);
+			controller.dispose();
+			expect(controller.canCaptureAccounting).toBe(false);
+		});
+
+		it("keeps a failure local and bounded, and passes negative corrections through unchanged", async () => {
+			const { controller, attachment, accounting } = fixture();
+			attachment.set({ status: "attached", sessionId: "a" });
+			const failing = controller.captureAccounting();
+			accounting[0]!.reject(new Error("x".repeat(2_000)));
+			await failing;
+			expect(controller.accounting).toMatchObject({ status: "failed", sessionId: "a" });
+			const message = controller.accounting.status === "failed" ? controller.accounting.message : "";
+			expect(message.length).toBeLessThanOrEqual(501);
+			expect(controller.diagnostics).toEqual([]);
+			expect(attachment.value).toEqual({ status: "attached", sessionId: "a" });
+
+			const corrected = controller.captureAccounting();
+			accounting[1]!.resolve(metrics(-80, -15));
+			await corrected;
+			expect(controller.accounting).toMatchObject({ status: "captured", metrics: metrics(-80, -15) });
+			controller.dispose();
 		});
 	});
 });

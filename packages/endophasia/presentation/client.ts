@@ -17,8 +17,11 @@ import {
 	SessionManagement,
 } from "@earendil-works/pi-coding-agent/experimental/services/sessions";
 import { Transcript, type TranscriptState } from "@earendil-works/pi-coding-agent/experimental/services/transcript";
+import type { OperationOutcomeV0 } from "../src/durable-outcomes.ts";
 import { EndophasiaInspectorV0 } from "../src/inspector-service.ts";
 import { EndophasiaMissionTraceV0, type MissionTraceObservationV0 } from "../src/mission-trace-service.ts";
+import { EndophasiaRuntimeFactsV0 } from "../src/runtime-facts-service.ts";
+import type { RuntimeMetricsV0 } from "../src/runtime-metrics.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 
 /**
@@ -41,12 +44,25 @@ export interface EndophasiaPresentationClientV0 {
 	 * previous attachment while the Session changes: present it only while attachment reports this Session attached.
 	 */
 	readonly missionTrace: ReplicatedState<MissionTraceObservationV0>;
-	/** Attach a Session and wait until its services, including the Endophasia Inspector and Mission Trace, hydrate. */
+	/**
+	 * Attach a Session and wait until its services, including the Endophasia Inspector, Mission Trace and Runtime Facts,
+	 * hydrate. A worker missing any of them attaches degraded.
+	 */
 	attach(sessionId: string, context: Context): Promise<void>;
 	/** Detach the current Session and wait until its services are released. */
 	detach(context: Context): Promise<void>;
 	/** A fresh per-lane Session Overview captured by the attached worker on every call. */
 	sessionOverview(context: Context): Promise<SessionOverviewV0>;
+	/**
+	 * The attached Session's cumulative accounting, captured by its worker on every call. It is not live, not attributable
+	 * to any lane, not current context occupancy, not a provider invoice, and not guaranteed monotonic.
+	 */
+	runtimeMetrics(context: Context): Promise<RuntimeMetricsV0>;
+	/**
+	 * The durable terminal outcome of one operation in the attached Session, read on every call. `null` means only that no
+	 * durable result exists for this ID at this read.
+	 */
+	operationOutcome(operationId: string, context: Context): Promise<OperationOutcomeV0 | null>;
 	/** Dispose the service bindings and the Pi client. Every call returns the same disposal promise. */
 	dispose(): Promise<void>;
 }
@@ -102,12 +118,13 @@ export async function openEndophasiaPresentationClientV0(
 			onError,
 		});
 		const sessionServices = session.open({
-			services: [Transcript, Models, EndophasiaInspectorV0, EndophasiaMissionTraceV0],
+			services: [Transcript, Models, EndophasiaInspectorV0, EndophasiaMissionTraceV0, EndophasiaRuntimeFactsV0],
 			assertAccess() {},
 			onError,
 		});
 		const management = serverServices.use(SessionManagement);
 		const inspector = sessionServices.use(EndophasiaInspectorV0);
+		const runtimeFacts = sessionServices.use(EndophasiaRuntimeFactsV0);
 		const presentation: EndophasiaPresentationClientV0 = {
 			connection: server.connection,
 			attachment: session.attachment,
@@ -124,6 +141,8 @@ export async function openEndophasiaPresentationClientV0(
 				await session.whenDetached(context);
 			},
 			sessionOverview: (context) => inspector.sessionOverview(context),
+			runtimeMetrics: (context) => runtimeFacts.runtimeMetrics(context),
+			operationOutcome: (operationId, context) => runtimeFacts.operationOutcome(operationId, context),
 			dispose,
 		};
 		await Promise.all([serverServices.ready(BACKGROUND_CONTEXT), sessionServices.ready(BACKGROUND_CONTEXT)]);

@@ -1,11 +1,12 @@
 // DOM-free Standard Cockpit v0 controller. Runtime and Session truth stays in the Presentation Client's replicated
 // states, which the renderer reads directly; the controller holds only presentation-local state: a pending
-// selection, the latest explicit Session Overview capture and ephemeral diagnostics. Replicated-state updates only
+// selection, the latest explicit Session Overview and Session Accounting captures and ephemeral diagnostics. Replicated-state updates only
 // mark regions dirty, and one scheduled frame renders each burst.
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { EndophasiaPresentationClientV0 } from "../presentation/client.ts";
 import type { MissionTraceObservationV0 } from "../src/mission-trace-service.ts";
+import type { RuntimeMetricsV0 } from "../src/runtime-metrics.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 
 /** The part of Presentation Client v0 the cockpit uses. It never reaches below this API. */
@@ -20,6 +21,7 @@ export type CockpitPresentation = Pick<
 	| "attach"
 	| "detach"
 	| "sessionOverview"
+	| "runtimeMetrics"
 >;
 
 /** Mission Trace has its own region: it can change far more often than the rest of the inspector. */
@@ -37,6 +39,19 @@ export type OverviewCapture =
 			readonly status: "captured";
 			readonly sessionId: string;
 			readonly overview: SessionOverviewV0;
+			/** When this cockpit received the capture; not an atomic server-side instant. */
+			readonly capturedAt: number;
+	  }
+	| { readonly status: "failed"; readonly sessionId: string; readonly message: string };
+
+/** The latest explicit Session Accounting capture. It is never refreshed implicitly. */
+export type AccountingCapture =
+	| { readonly status: "none" }
+	| { readonly status: "capturing"; readonly sessionId: string }
+	| {
+			readonly status: "captured";
+			readonly sessionId: string;
+			readonly metrics: RuntimeMetricsV0;
 			/** When this cockpit received the capture; not an atomic server-side instant. */
 			readonly capturedAt: number;
 	  }
@@ -76,6 +91,9 @@ export class CockpitController {
 	private overviewValue: OverviewCapture = { status: "none" };
 	/** Incremented whenever the observed Session changes or a capture starts; late captures compare against it. */
 	private overviewGeneration = 0;
+	private accountingValue: AccountingCapture = { status: "none" };
+	/** Incremented whenever the observed Session changes or an accounting capture starts. */
+	private accountingGeneration = 0;
 	private observedSessionId: string | undefined;
 	private readonly diagnosticsValue: Diagnostic[] = [];
 
@@ -108,6 +126,20 @@ export class CockpitController {
 
 	get overview(): OverviewCapture {
 		return this.overviewValue;
+	}
+
+	get accounting(): AccountingCapture {
+		return this.accountingValue;
+	}
+
+	/** Whether an accounting capture may start: Pi reports the Session attached and healthy, with no selection pending. */
+	get canCaptureAccounting(): boolean {
+		return (
+			!this.disposed &&
+			this.pending === undefined &&
+			attachedSessionId(this.presentation) !== undefined &&
+			this.accountingValue.status !== "capturing"
+		);
 	}
 
 	get diagnostics(): readonly Diagnostic[] {
@@ -186,6 +218,33 @@ export class CockpitController {
 		this.setOverview(next);
 	}
 
+	/**
+	 * Capture the attached Session's cumulative accounting once, on explicit request. Nothing subscribes or polls; a
+	 * capture that finishes after the observed Session changed, or after a newer capture started, is dropped.
+	 */
+	async captureAccounting(): Promise<void> {
+		if (!this.canCaptureAccounting) return;
+		const sessionId = attachedSessionId(this.presentation);
+		if (sessionId === undefined) return;
+		const generation = ++this.accountingGeneration;
+		this.setAccounting({ status: "capturing", sessionId });
+		let next: AccountingCapture;
+		try {
+			const metrics = await this.presentation.runtimeMetrics(this.context);
+			next = { status: "captured", sessionId, metrics, capturedAt: this.now() };
+		} catch (error) {
+			next = { status: "failed", sessionId, message: boundMessage(error) };
+		}
+		if (
+			this.disposed ||
+			generation !== this.accountingGeneration ||
+			attachedSessionId(this.presentation) !== sessionId
+		) {
+			return;
+		}
+		this.setAccounting(next);
+	}
+
 	/** Record an ephemeral presentation diagnostic. Never throws. */
 	report(error: unknown): void {
 		try {
@@ -230,6 +289,13 @@ export class CockpitController {
 		// A different (or no) observed Session invalidates any capture, including one still in flight.
 		this.overviewGeneration++;
 		this.overviewValue = { status: "none" };
+		this.accountingGeneration++;
+		this.accountingValue = { status: "none" };
+	}
+
+	private setAccounting(value: AccountingCapture): void {
+		this.accountingValue = value;
+		this.invalidate("inspector");
 	}
 
 	private setOverview(value: OverviewCapture): void {
