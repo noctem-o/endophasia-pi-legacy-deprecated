@@ -142,38 +142,57 @@ try {
 		);
 	}
 
-	const endophasiaBuild = await build({
-		entryPoints: ["scripts/endophasia-browser-transport-smoke-entry.ts"],
-		bundle: true,
-		platform: "browser",
-		format: "esm",
-		logLevel: "silent",
-		metafile: true,
-		outfile: endophasiaOutputPath,
-		write: false,
-	});
-	const endophasiaInputs = endophasiaBuild.metafile.inputs;
-	for (const expectedInput of [
-		"packages/endophasia/presentation/websocket-transport.ts",
-		"packages/endophasia/presentation/client.ts",
+	// The Presentation Client, its browser transport and the Standard Cockpit must bundle without Node or host code.
+	for (const [entryPoint, expectedInputs] of [
+		[
+			"scripts/endophasia-browser-transport-smoke-entry.ts",
+			["packages/endophasia/presentation/websocket-transport.ts", "packages/endophasia/presentation/client.ts"],
+		],
+		[
+			"packages/endophasia/cockpit/main.ts",
+			[
+				"packages/endophasia/cockpit/view.ts",
+				"packages/endophasia/cockpit/controller.ts",
+				"packages/endophasia/presentation/websocket-transport.ts",
+				"packages/endophasia/presentation/client.ts",
+				"packages/client/src/client.ts",
+				"packages/protocol/src/index.ts",
+			],
+		],
 	]) {
-		if (!findInput(endophasiaInputs, expectedInput)) {
-			throw new Error(`Endophasia browser bundle does not include ${expectedInput}`);
+		const endophasiaBuild = await build({
+			entryPoints: [entryPoint],
+			bundle: true,
+			platform: "browser",
+			format: "esm",
+			logLevel: "silent",
+			metafile: true,
+			outfile: endophasiaOutputPath,
+			write: false,
+		});
+		const endophasiaInputs = endophasiaBuild.metafile.inputs;
+		for (const expectedInput of expectedInputs) {
+			if (!findInput(endophasiaInputs, expectedInput)) {
+				throw new Error(`Endophasia browser bundle ${entryPoint} does not include ${expectedInput}`);
+			}
 		}
-	}
-	const forbiddenEndophasiaInputs = Object.keys(endophasiaInputs).filter((input) => {
-		const normalized = normalizePath(input);
-		return (
-			normalized.startsWith("node:") ||
-			normalized.includes("node_modules/ws/") ||
-			normalized.includes("packages/endophasia/runtime/") ||
-			normalized.includes("packages/server/") ||
-			normalized.endsWith("packages/client/src/unix.ts") ||
-			normalized.endsWith("packages/coding-agent/src/experimental/server.ts")
-		);
-	});
-	if (forbiddenEndophasiaInputs.length > 0) {
-		throw new Error(`Endophasia browser bundle unexpectedly includes ${forbiddenEndophasiaInputs.join(", ")}`);
+		const forbiddenEndophasiaInputs = Object.keys(endophasiaInputs).filter((input) => {
+			const normalized = normalizePath(input);
+			return (
+				normalized.startsWith("node:") ||
+				normalized.includes("node_modules/ws/") ||
+				normalized.includes("node_modules/esbuild/") ||
+				normalized.includes("packages/endophasia/runtime/") ||
+				normalized.includes("packages/server/") ||
+				normalized.endsWith("packages/client/src/unix.ts") ||
+				normalized.endsWith("packages/coding-agent/src/experimental/server.ts")
+			);
+		});
+		if (forbiddenEndophasiaInputs.length > 0) {
+			throw new Error(
+				`Endophasia browser bundle ${entryPoint} unexpectedly includes ${forbiddenEndophasiaInputs.join(", ")}`,
+			);
+		}
 	}
 
 	process.exit(0);
