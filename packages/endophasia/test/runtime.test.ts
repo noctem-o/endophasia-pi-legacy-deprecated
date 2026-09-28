@@ -19,7 +19,7 @@ import { SessionManagement } from "@earendil-works/pi-coding-agent/experimental/
 import { Transcript } from "@earendil-works/pi-coding-agent/experimental/services/transcript";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type EndophasiaServerOptions, startEndophasiaServer } from "../runtime/server.ts";
-import { EndophasiaInspectorV0, EndophasiaMissionTraceV0 } from "../src/index.ts";
+import { EndophasiaInspectorV0, EndophasiaMissionTraceV0, EndophasiaRuntimeFactsV0 } from "../src/index.ts";
 
 const directories: string[] = [];
 const servers: RunningServer[] = [];
@@ -107,13 +107,19 @@ describe("Endophasia runtime v0", () => {
 		const catalogue = await sessionCatalogue(client);
 		expect(catalogue.filter((id) => id === EndophasiaInspectorV0.id)).toHaveLength(1);
 		expect(catalogue.filter((id) => id === EndophasiaMissionTraceV0.id)).toHaveLength(1);
+		expect(catalogue.filter((id) => id === EndophasiaRuntimeFactsV0.id)).toHaveLength(1);
 		for (const service of [AgentController, Models, Transcript, SessionPlugins]) {
 			expect(catalogue).toContain(service.id);
 		}
 
 		const source = createSessionServiceSource(client);
-		const services = source.open({ services: [EndophasiaInspectorV0], assertAccess() {}, onError() {} });
+		const services = source.open({
+			services: [EndophasiaInspectorV0, EndophasiaRuntimeFactsV0],
+			assertAccess() {},
+			onError() {},
+		});
 		const inspector = services.use(EndophasiaInspectorV0);
+		const facts = services.use(EndophasiaRuntimeFactsV0);
 		try {
 			await services.ready(BACKGROUND_CONTEXT);
 			await source.whenAttached("endophasia", BACKGROUND_CONTEXT);
@@ -124,20 +130,39 @@ describe("Endophasia runtime v0", () => {
 				lanes: [{ name: "main", operation: null }],
 				counts: { lanes: 1, activeOperations: 0, abortingOperations: 0 },
 			});
+			// A fresh Session: Pi's zero accounting baseline, and no durable result for an unknown operation.
+			expect(await facts.runtimeMetrics(BACKGROUND_CONTEXT)).toEqual({
+				schemaVersion: "runtime-metrics.v0",
+				scope: "session",
+				messageCount: 0,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+			});
+			expect(await facts.operationOutcome("no-such-operation", BACKGROUND_CONTEXT)).toBeNull();
+			// Reacquiring the main lane for Runtime Facts did not create another lane.
+			expect((await inspector.sessionOverview(BACKGROUND_CONTEXT)).lanes.map(({ name }) => name)).toEqual(["main"]);
 		} finally {
 			await services.dispose(BACKGROUND_CONTEXT);
 			await source.dispose(BACKGROUND_CONTEXT);
 		}
 
-		// Compared with a plain Pi server's worker, the Endophasia worker adds exactly the Inspector and Mission Trace.
+		// Compared with a plain Pi server's worker, the Endophasia worker adds exactly Inspector, Mission Trace and
+		// Runtime Facts.
 		const plain = await startServer({ ...workerModel, directory: await temporaryDirectory("endophasia-plain-") });
 		servers.push(plain);
 		const plainCatalogue = await sessionCatalogue(await attach(plain, "plain"));
 		expect(plainCatalogue).not.toContain(EndophasiaInspectorV0.id);
 		expect(plainCatalogue).not.toContain(EndophasiaMissionTraceV0.id);
-		// The Endophasia worker adds exactly its two trusted host services, no more and no less.
+		expect(plainCatalogue).not.toContain(EndophasiaRuntimeFactsV0.id);
+		// The Endophasia worker adds exactly its three trusted host services, no more and no less.
 		expect(catalogue.filter((id) => !plainCatalogue.includes(id)).sort()).toEqual(
-			[EndophasiaInspectorV0.id, EndophasiaMissionTraceV0.id].sort(),
+			[EndophasiaInspectorV0.id, EndophasiaMissionTraceV0.id, EndophasiaRuntimeFactsV0.id].sort(),
 		);
 		expect(plainCatalogue.filter((id) => !catalogue.includes(id))).toEqual([]);
 	});

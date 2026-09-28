@@ -9,8 +9,12 @@ import {
 } from "@earendil-works/chord";
 import { withAbortSignal } from "@earendil-works/chord/context";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
-import { AgentHarness, type AgentHarness as AgentHarnessType } from "../../agent/src/harness/agent-harness.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+	AgentHarness,
+	type AgentHarness as AgentHarnessType,
+	type HarnessEventType,
+} from "../../agent/src/harness/agent-harness.ts";
 import { BACKGROUND_CONTEXT } from "../../agent/src/harness/context.ts";
 import { MemoryStorage } from "../../agent/src/harness/session/memory.ts";
 import { StorageBackedSession } from "../../agent/src/harness/session/session.ts";
@@ -22,11 +26,15 @@ import {
 	type SessionWorkerServices,
 } from "../../coding-agent/src/experimental/services/worker.ts";
 import {
+	captureOperationOutcomeV0,
+	captureRuntimeMetricsV0,
 	captureSessionOverviewV0,
 	createEndophasiaInspectorFacetV0,
 	createEndophasiaMissionTraceFacetV0,
+	createEndophasiaRuntimeFactsFacetV0,
 	EndophasiaInspectorV0,
 	EndophasiaMissionTraceV0,
+	EndophasiaRuntimeFactsV0,
 	type MissionTraceObservationV0,
 	type SessionOverviewV0,
 } from "../src/index.ts";
@@ -35,6 +43,12 @@ const sessions: Session[] = [];
 const workers: SessionWorkerServices[] = [];
 const scope = { serverConnectionId: "server-1", attachmentId: "attachment-1" };
 const sessionOverviewCall = { serviceId: EndophasiaInspectorV0.id, member: "sessionOverview", args: [] };
+const runtimeMetricsCall = { serviceId: EndophasiaRuntimeFactsV0.id, member: "runtimeMetrics", args: [] };
+const operationOutcomeCall = (operationId: string) => ({
+	serviceId: EndophasiaRuntimeFactsV0.id,
+	member: "operationOutcome",
+	args: [operationId],
+});
 
 afterEach(async () => {
 	for (const worker of workers.splice(0)) await worker.dispose();
@@ -56,7 +70,8 @@ async function fixture(): Promise<{ harness: AgentHarnessType; faux: ReturnType<
 
 /**
  * Compose the worker as `run()` and runEndophasiaSessionWorker do: the application acquires its lane and builds the
- * trusted Endophasia host facets, each given only the harness capability it needs.
+ * trusted Endophasia host facets, each given only the harness or lane capability it needs. Runtime Facts reads through
+ * the reacquired, already established main lane.
  */
 async function worker(
 	harness: AgentHarnessType,
@@ -66,8 +81,10 @@ async function worker(
 		readonly plugin?: Parameters<typeof defineFacet>[0];
 	} = {},
 ): Promise<SessionWorkerServices> {
+	const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+	const main = await harness.lane("main", BACKGROUND_CONTEXT);
 	const services = await createSessionWorkerServices({
-		lane: await harness.lane("main", BACKGROUND_CONTEXT),
+		lane,
 		modelRuntime: undefined,
 		hostFacets:
 			options.withInspector === false
@@ -75,6 +92,7 @@ async function worker(
 				: [
 						createEndophasiaInspectorFacetV0(options.observed ?? harness),
 						createEndophasiaMissionTraceFacetV0(harness),
+						createEndophasiaRuntimeFactsFacetV0(main),
 					],
 		facetLoader: options.plugin === undefined ? undefined : createStaticFacetLoader([defineFacet(options.plugin)]),
 		publish: async () => {},
@@ -97,18 +115,68 @@ async function remoteOverview(services: SessionWorkerServices, context: Context)
 }
 
 describe("Endophasia Inspector v0 in a Session worker", () => {
-	it("adds exactly the Inspector and Mission Trace services to the worker's generated catalogue", async () => {
+	it("adds exactly the Inspector, Mission Trace and Runtime Facts services to the worker's generated catalogue", async () => {
 		const { harness } = await fixture();
 		const without = await catalogueIds(await worker(harness, { withInspector: false }));
 		const withEndophasia = await catalogueIds(await worker(harness));
-		expect(without).not.toContain(EndophasiaInspectorV0.id);
-		expect(without).not.toContain(EndophasiaMissionTraceV0.id);
-		expect(withEndophasia.filter((id) => !without.includes(id)).sort()).toEqual(
-			[EndophasiaInspectorV0.id, EndophasiaMissionTraceV0.id].sort(),
+		const endophasia = [EndophasiaInspectorV0.id, EndophasiaMissionTraceV0.id, EndophasiaRuntimeFactsV0.id];
+		for (const id of endophasia) {
+			expect(without).not.toContain(id);
+			expect(withEndophasia.filter((entry) => entry === id)).toHaveLength(1);
+		}
+		expect(withEndophasia.filter((id) => !without.includes(id)).sort()).toEqual(endophasia.sort());
+		expect(withEndophasia).toHaveLength(without.length + 3);
+	});
+
+	it("reacquires the established main lane for Runtime Facts without creating a lane or mutating Pi", async () => {
+		const { harness } = await fixture();
+		const main = await harness.lane("main", BACKGROUND_CONTEXT);
+		const events = vi.fn();
+		const mutations: HarnessEventType[] = [
+			"lane_created",
+			"entry_added",
+			"config_update",
+			"queue_update",
+			"value_update",
+		];
+		const unsubscribe = mutations.map((type) => harness.events.on(type, events));
+		const before = {
+			lanes: await harness.lanes(BACKGROUND_CONTEXT),
+			entries: await main.findEntries({ order: "oldestFirst" }, BACKGROUND_CONTEXT),
+			execution: await main.inspectExecution(BACKGROUND_CONTEXT),
+		};
+		expect(await harness.lane("main", BACKGROUND_CONTEXT)).toBe(main);
+		await worker(harness);
+		expect({
+			lanes: await harness.lanes(BACKGROUND_CONTEXT),
+			entries: await main.findEntries({ order: "oldestFirst" }, BACKGROUND_CONTEXT),
+			execution: await main.inspectExecution(BACKGROUND_CONTEXT),
+		}).toEqual(before);
+		expect(before.lanes.map(({ name }) => name)).toEqual(["main"]);
+		expect(events).not.toHaveBeenCalled();
+		for (const remove of unsubscribe) remove();
+	});
+
+	it("serves fresh Runtime Facts through the worker endpoint and keeps them across plugin reloads", async () => {
+		const { harness, faux } = await fixture();
+		const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+		const services = await worker(harness, { plugin: { id: "@test/reloadable-facts", setup() {} } });
+		const baseline = await services.invoke(runtimeMetricsCall, scope, BACKGROUND_CONTEXT);
+		expect(baseline).toEqual(await captureRuntimeMetricsV0(lane, BACKGROUND_CONTEXT));
+		expect(await services.invoke(operationOutcomeCall("unknown"), scope, BACKGROUND_CONTEXT)).toBeNull();
+
+		faux.setResponses([fauxAssistantMessage("one")]);
+		const run = await lane.prompt("first", undefined, BACKGROUND_CONTEXT);
+		if (!run.ok) throw run.error;
+		await services.invoke({ serviceId: SessionPlugins.id, member: "reload", args: [] }, scope, BACKGROUND_CONTEXT);
+		expect((await catalogueIds(services)).filter((id) => id === EndophasiaRuntimeFactsV0.id)).toHaveLength(1);
+		// Nothing is held across the reload: each call is a fresh capture from Pi.
+		const metrics = await services.invoke(runtimeMetricsCall, scope, BACKGROUND_CONTEXT);
+		expect(metrics).toEqual(await captureRuntimeMetricsV0(lane, BACKGROUND_CONTEXT));
+		expect(metrics).not.toEqual(baseline);
+		expect(await services.invoke(operationOutcomeCall(run.value.operationId), scope, BACKGROUND_CONTEXT)).toEqual(
+			await captureOperationOutcomeV0(lane, run.value.operationId, BACKGROUND_CONTEXT),
 		);
-		expect(withEndophasia.filter((id) => id === EndophasiaInspectorV0.id)).toHaveLength(1);
-		expect(withEndophasia.filter((id) => id === EndophasiaMissionTraceV0.id)).toHaveLength(1);
-		expect(withEndophasia).toHaveLength(without.length + 2);
 	});
 
 	it("serves fresh Session Overview captures through the worker endpoint", async () => {

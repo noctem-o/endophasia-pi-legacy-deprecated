@@ -18,6 +18,10 @@ export {
 	EndophasiaMissionTraceV0,
 	MISSION_TRACE_REPLICATED_EVENT_LIMIT,
 } from "./mission-trace-service.ts";
+export {
+	createEndophasiaRuntimeFactsFacetV0,
+	EndophasiaRuntimeFactsV0,
+} from "./runtime-facts-service.ts";
 export type { RuntimeMetricsV0 } from "./runtime-metrics.ts";
 export { captureRuntimeMetricsV0 } from "./runtime-metrics.ts";
 export type { SessionLaneOverviewV0, SessionOverviewV0 } from "./session-overview.ts";
