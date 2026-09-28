@@ -24,7 +24,10 @@ import {
 import {
 	captureSessionOverviewV0,
 	createEndophasiaInspectorFacetV0,
+	createEndophasiaMissionTraceFacetV0,
 	EndophasiaInspectorV0,
+	EndophasiaMissionTraceV0,
+	type MissionTraceObservationV0,
 	type SessionOverviewV0,
 } from "../src/index.ts";
 
@@ -51,7 +54,10 @@ async function fixture(): Promise<{ harness: AgentHarnessType; faux: ReturnType<
 	return { harness, faux };
 }
 
-/** Compose the worker as `run()` does: the application acquires its lane and builds trusted host facets. */
+/**
+ * Compose the worker as `run()` and runEndophasiaSessionWorker do: the application acquires its lane and builds the
+ * trusted Endophasia host facets, each given only the harness capability it needs.
+ */
 async function worker(
 	harness: AgentHarnessType,
 	options: {
@@ -64,7 +70,12 @@ async function worker(
 		lane: await harness.lane("main", BACKGROUND_CONTEXT),
 		modelRuntime: undefined,
 		hostFacets:
-			options.withInspector === false ? [] : [createEndophasiaInspectorFacetV0(options.observed ?? harness)],
+			options.withInspector === false
+				? []
+				: [
+						createEndophasiaInspectorFacetV0(options.observed ?? harness),
+						createEndophasiaMissionTraceFacetV0(harness),
+					],
 		facetLoader: options.plugin === undefined ? undefined : createStaticFacetLoader([defineFacet(options.plugin)]),
 		publish: async () => {},
 	});
@@ -86,14 +97,18 @@ async function remoteOverview(services: SessionWorkerServices, context: Context)
 }
 
 describe("Endophasia Inspector v0 in a Session worker", () => {
-	it("adds exactly endophasia.inspector.v0 to the worker's generated catalogue", async () => {
+	it("adds exactly the Inspector and Mission Trace services to the worker's generated catalogue", async () => {
 		const { harness } = await fixture();
 		const without = await catalogueIds(await worker(harness, { withInspector: false }));
-		const withInspector = await catalogueIds(await worker(harness));
+		const withEndophasia = await catalogueIds(await worker(harness));
 		expect(without).not.toContain(EndophasiaInspectorV0.id);
-		expect(withInspector.filter((id) => !without.includes(id))).toEqual([EndophasiaInspectorV0.id]);
-		expect(withInspector.filter((id) => id === EndophasiaInspectorV0.id)).toHaveLength(1);
-		expect(withInspector).toHaveLength(without.length + 1);
+		expect(without).not.toContain(EndophasiaMissionTraceV0.id);
+		expect(withEndophasia.filter((id) => !without.includes(id)).sort()).toEqual(
+			[EndophasiaInspectorV0.id, EndophasiaMissionTraceV0.id].sort(),
+		);
+		expect(withEndophasia.filter((id) => id === EndophasiaInspectorV0.id)).toHaveLength(1);
+		expect(withEndophasia.filter((id) => id === EndophasiaMissionTraceV0.id)).toHaveLength(1);
+		expect(withEndophasia).toHaveLength(without.length + 2);
 	});
 
 	it("serves fresh Session Overview captures through the worker endpoint", async () => {
@@ -200,5 +215,37 @@ describe("Endophasia Inspector v0 in a Session worker", () => {
 		await services.dispose();
 		await expect(remoteOverview(services, BACKGROUND_CONTEXT)).rejects.toThrow();
 		expect(calls).toBe(2);
+	});
+
+	it("keeps the host Mission Trace, its events and its sequence across plugin reloads", async () => {
+		const { harness, faux } = await fixture();
+		const seen: MissionTraceObservationV0[] = [];
+		const services = await worker(harness, {
+			plugin: {
+				id: "@test/trace-reader",
+				setup(env) {
+					const trace = env.use(EndophasiaMissionTraceV0);
+					env.onActivate(() => {
+						if (trace.state.value !== undefined) seen.push(trace.state.value);
+					});
+				},
+			},
+		});
+		const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+		faux.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
+		expect(await lane.prompt("first", undefined, BACKGROUND_CONTEXT)).toMatchObject({ ok: true });
+
+		await services.invoke({ serviceId: SessionPlugins.id, member: "reload", args: [] }, scope, BACKGROUND_CONTEXT);
+		expect((await catalogueIds(services)).filter((id) => id === EndophasiaMissionTraceV0.id)).toHaveLength(1);
+		// The reloaded plugin reads the same host state: the first run's events survived the reload.
+		const afterReload = seen.at(-1);
+		expect(afterReload?.events.map(({ sequence }) => sequence)).toEqual([1, 2, 3, 4, 5]);
+
+		expect(await lane.prompt("second", undefined, BACKGROUND_CONTEXT)).toMatchObject({ ok: true });
+		await services.invoke({ serviceId: SessionPlugins.id, member: "reload", args: [] }, scope, BACKGROUND_CONTEXT);
+		const afterSecond = seen.at(-1);
+		expect(afterSecond?.events.map(({ sequence }) => sequence)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+		expect(afterSecond?.events.slice(0, 5)).toEqual(afterReload?.events);
+		expect(new Set(afterSecond?.events.map(({ runId }) => runId)).size).toBe(2);
 	});
 });

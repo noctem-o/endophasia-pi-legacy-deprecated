@@ -12,6 +12,12 @@ export { captureOperationOutcomeV0 } from "./durable-outcomes.ts";
 export { createEndophasiaInspectorFacetV0, EndophasiaInspectorV0 } from "./inspector-service.ts";
 export type { MissionTraceAttachmentV0, MissionTraceEventV0 } from "./mission-trace.ts";
 export { attachMissionTraceV0, observeMissionTraceV0 } from "./mission-trace.ts";
+export type { MissionTraceObservationV0 } from "./mission-trace-service.ts";
+export {
+	createEndophasiaMissionTraceFacetV0,
+	EndophasiaMissionTraceV0,
+	MISSION_TRACE_REPLICATED_EVENT_LIMIT,
+} from "./mission-trace-service.ts";
 export type { RuntimeMetricsV0 } from "./runtime-metrics.ts";
 export { captureRuntimeMetricsV0 } from "./runtime-metrics.ts";
 export type { SessionLaneOverviewV0, SessionOverviewV0 } from "./session-overview.ts";

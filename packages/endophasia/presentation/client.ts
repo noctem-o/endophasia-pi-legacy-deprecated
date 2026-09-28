@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/pi-coding-agent/experimental/services/sessions";
 import { Transcript, type TranscriptState } from "@earendil-works/pi-coding-agent/experimental/services/transcript";
 import { EndophasiaInspectorV0 } from "../src/inspector-service.ts";
+import { EndophasiaMissionTraceV0, type MissionTraceObservationV0 } from "../src/mission-trace-service.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 
 /**
@@ -34,7 +35,13 @@ export interface EndophasiaPresentationClientV0 {
 	readonly transcript: ReplicatedState<TranscriptState>;
 	/** The attached Session's model configuration. */
 	readonly models: ReplicatedState<ModelsState>;
-	/** Attach a Session and wait until its services, including the Endophasia Inspector, have hydrated. */
+	/**
+	 * The attached Session worker's live Mission Trace, observed since that worker activated. It is not durable history,
+	 * and its sequence orders events without timing them. Like every Session state, a value may briefly belong to the
+	 * previous attachment while the Session changes: present it only while attachment reports this Session attached.
+	 */
+	readonly missionTrace: ReplicatedState<MissionTraceObservationV0>;
+	/** Attach a Session and wait until its services, including the Endophasia Inspector and Mission Trace, hydrate. */
 	attach(sessionId: string, context: Context): Promise<void>;
 	/** Detach the current Session and wait until its services are released. */
 	detach(context: Context): Promise<void>;
@@ -95,7 +102,7 @@ export async function openEndophasiaPresentationClientV0(
 			onError,
 		});
 		const sessionServices = session.open({
-			services: [Transcript, Models, EndophasiaInspectorV0],
+			services: [Transcript, Models, EndophasiaInspectorV0, EndophasiaMissionTraceV0],
 			assertAccess() {},
 			onError,
 		});
@@ -107,6 +114,7 @@ export async function openEndophasiaPresentationClientV0(
 			sessions: serverServices.use(SessionDirectory).state,
 			transcript: sessionServices.use(Transcript).state,
 			models: sessionServices.use(Models).state,
+			missionTrace: sessionServices.use(EndophasiaMissionTraceV0).state,
 			async attach(sessionId, context) {
 				await management.attach(sessionId, context);
 				await session.whenAttached(sessionId, context);

@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { createServer as createNetServer } from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -9,6 +10,12 @@ import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { Client } from "@earendil-works/pi-client";
 import { createUnixTransportFactory } from "@earendil-works/pi-client/unix";
 import type { RunningServer } from "@earendil-works/pi-coding-agent/experimental/server";
+import { AgentController } from "@earendil-works/pi-coding-agent/experimental/services/agent-controller";
+import {
+	createServerServiceSource,
+	createSessionServiceSource,
+} from "@earendil-works/pi-coding-agent/experimental/services/connection";
+import { SessionManagement } from "@earendil-works/pi-coding-agent/experimental/services/sessions";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { type EndophasiaPresentationClientV0, openEndophasiaPresentationClientV0 } from "../presentation/client.ts";
@@ -141,6 +148,94 @@ describe("Endophasia browser server", () => {
 		await unix.dispose();
 		expect(errors).toEqual([]);
 		await expect.poll(() => server.workerPids.size, { timeout: 10_000 }).toBe(0);
+	});
+
+	it("delivers the live Mission Trace over the WebSocket while a separate client runs work", async () => {
+		// The worker's model is a local endpoint on a closed loopback port, so the real run fails locally and no
+		// request leaves the machine.
+		const agentDir = process.env.PI_CODING_AGENT_DIR;
+		if (agentDir === undefined) throw new Error("PI_CODING_AGENT_DIR is not set");
+		const closedPort = await new Promise<number>((resolve, reject) => {
+			const probe = createNetServer();
+			probe.once("error", reject);
+			probe.listen(0, "127.0.0.1", () => {
+				const address = probe.address();
+				probe.close(() => resolve(typeof address === "object" && address !== null ? address.port : 9));
+			});
+		});
+		await writeFile(
+			join(agentDir, "models.json"),
+			JSON.stringify({
+				providers: {
+					"closed-local": {
+						baseUrl: `http://127.0.0.1:${closedPort}/v1`,
+						api: "openai-completions",
+						apiKey: "unused",
+						models: [{ id: "closed-model" }],
+					},
+				},
+			}),
+		);
+		const server = await startEndophasiaBrowserServer({
+			provider: "closed-local",
+			model: "closed-model",
+			directory: await temporaryDirectory("endophasia-browser-trace-"),
+			browser: { allowedOrigins: [ORIGIN] },
+		});
+		servers.push(server);
+		const errors: Error[] = [];
+		const browser = await openPresentation(server.serverId, browserTransport(server.browser.url), errors);
+		await browser.attach("browser", BACKGROUND_CONTEXT);
+		expect(browser.missionTrace.value).toEqual({
+			schemaVersion: "mission-trace-observation.v0",
+			scope: "session-worker-lifetime",
+			events: [],
+		});
+		const revisions: number[] = [];
+		browser.missionTrace.subscribe((value) => revisions.push(value.events.length));
+
+		// A trusted, ordinary Pi client drives the Session; the presentation only observes.
+		const control = await Client.connect({
+			serverId: server.serverId,
+			transportFactory: createUnixTransportFactory({ path: server.socketPath }),
+		});
+		const serverSource = createServerServiceSource(control);
+		const sessionSource = createSessionServiceSource(control);
+		try {
+			const management = serverSource.open({ services: [SessionManagement], assertAccess() {}, onError() {} });
+			const agent = sessionSource.open({ services: [AgentController], assertAccess() {}, onError() {} });
+			await management.ready(BACKGROUND_CONTEXT);
+			await management.use(SessionManagement).attach("browser", BACKGROUND_CONTEXT);
+			await sessionSource.whenAttached("browser", BACKGROUND_CONTEXT);
+			await agent.ready(BACKGROUND_CONTEXT);
+			const response = await agent
+				.use(AgentController)
+				.prompt({ message: "user-prompt-sentinel", images: null }, BACKGROUND_CONTEXT);
+			expect(response).toMatchObject({ accepted: true });
+
+			// The provider refuses the connection, so the real run fails; its lifecycle still arrives live.
+			await expect
+				.poll(() => browser.missionTrace.value?.events.at(-1)?.kind, { timeout: 20_000 })
+				.toBe("mission.failed");
+			const events = browser.missionTrace.value?.events ?? [];
+			// The failure came from the local closed endpoint; its detail lives in the transcript, never in the trace.
+			expect(browser.transcript.value?.snapshot?.transcript.at(-1)).toMatchObject({
+				type: "message",
+				message: { role: "assistant", provider: "closed-local", stopReason: "error" },
+			});
+			expect(events[0]).toMatchObject({ kind: "mission.started", lane: "main", sequence: 1 });
+			expect(events.map(({ sequence }) => sequence)).toEqual(events.map((_, index) => index + 1));
+			expect(new Set(events.map(({ runId }) => runId))).toEqual(new Set([response.operationId]));
+			expect(JSON.stringify(browser.missionTrace.value)).not.toMatch(/user-prompt-sentinel|test-key|error/i);
+			// Revisions arrived one by one through state subscription, not as a single refresh.
+			expect(revisions.length).toBeGreaterThanOrEqual(2);
+			expect(revisions.at(-1)).toBe(events.length);
+		} finally {
+			await sessionSource.dispose(BACKGROUND_CONTEXT);
+			await serverSource.dispose(BACKGROUND_CONTEXT);
+			await control.dispose();
+		}
+		expect(errors).toEqual([]);
 	});
 
 	it("admits the transport by capability but still verifies the Pi server identity", async () => {

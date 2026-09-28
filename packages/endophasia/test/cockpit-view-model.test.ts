@@ -4,10 +4,13 @@ import {
 	boundText,
 	formatClock,
 	formatStructuredPreview,
+	MISSION_TRACE_ROW_LIMIT,
 	PREVIEW_LIMIT,
 	projectAttachment,
 	projectConnection,
 	projectMessage,
+	projectMissionTrace,
+	projectMissionTraceEvent,
 	projectModels,
 	projectOperation,
 	projectQueues,
@@ -427,5 +430,136 @@ describe("cockpit operation projections", () => {
 				{ entryId: "3", kind: "followUp", type: "message", message: {} },
 			]),
 		).toBe("3 queued · 1 steer, 2 followUp");
+	});
+});
+
+describe("cockpit Mission Trace projection", () => {
+	const RUN = "0192f3c4-aaaa-7bbb-8ccc-000000000001";
+	const TURN = "0192f3c4-dddd-7eee-8fff-000000000002";
+	const CALL = "toolu_01ABCDEFGHIJKLMNOPQRSTUV";
+	const base = { schemaVersion: "mission-trace.v0", lane: "main", runId: RUN };
+	const events = [
+		{ ...base, sequence: 1, kind: "mission.started" },
+		{ ...base, sequence: 2, kind: "turn.started", turnId: TURN },
+		{ ...base, sequence: 3, kind: "model.completed" },
+		{ ...base, sequence: 4, kind: "tool.started", turnId: TURN, toolCallId: CALL, toolName: "read" },
+		{ ...base, sequence: 5, kind: "tool.finished", turnId: TURN, toolCallId: CALL, toolName: "read", isError: false },
+		{ ...base, sequence: 6, kind: "tool.finished", turnId: TURN, toolCallId: CALL, toolName: "bash", isError: true },
+		{ ...base, sequence: 7, kind: "turn.finished", turnId: TURN },
+		{ ...base, sequence: 8, kind: "mission.suspended" },
+		{ ...base, sequence: 9, kind: "mission.resumed" },
+		{ ...base, sequence: 10, kind: "mission.completed" },
+		{ ...base, sequence: 11, kind: "mission.aborted" },
+		{ ...base, sequence: 12, kind: "mission.failed" },
+	];
+
+	it("labels every event kind in sequence order, with lane, compact IDs and tool outcome", () => {
+		const view = projectMissionTrace({ events });
+		expect(view.total).toBe(12);
+		expect(view.window).toBeUndefined();
+		expect(view.truncated).toBeUndefined();
+		expect(view.rows.map((row) => [row.sequence, row.label, row.family, row.depth, row.tone, row.subject])).toEqual([
+			["#1", "Mission started", "mission", 0, "live", "main"],
+			["#2", "Turn started", "turn", 1, "idle", "main"],
+			["#3", "Model completed", "model", 1, "idle", "main"],
+			["#4", "Tool started", "tool", 2, "pending", "read"],
+			["#5", "Tool finished", "tool", 2, "live", "read"],
+			["#6", "Tool finished", "tool", 2, "warn", "bash"],
+			["#7", "Turn finished", "turn", 1, "idle", "main"],
+			["#8", "Mission suspended", "mission", 0, "pending", "main"],
+			["#9", "Mission resumed", "mission", 0, "live", "main"],
+			["#10", "Mission completed", "mission", 0, "live", "main"],
+			["#11", "Mission aborted", "mission", 0, "warn", "main"],
+			["#12", "Mission failed", "mission", 0, "warn", "main"],
+		]);
+		expect(view.rows[0]!.meta).toEqual(["run 0192f3c4…"]);
+		expect(view.rows[1]!.meta).toEqual(["turn 0192f3c4…"]);
+		expect(view.rows[3]!.meta).toEqual(["main", "call toolu_01…"]);
+		expect(view.rows[4]!.meta).toEqual(["main", "call toolu_01…", "ok"]);
+		expect(view.rows[5]!.meta).toEqual(["main", "call toolu_01…", "error"]);
+		// The full identifiers stay available, secondary to the row.
+		expect(view.rows[3]!.title).toBe(`run ${RUN} · turn ${TURN} · call ${CALL}`);
+		expect(view.rows[2]!.title).toBe(`run ${RUN}`);
+	});
+
+	it("keeps the source order rather than sorting, and projects no payload or time fields", () => {
+		const shuffled = [events[4], events[0], events[2]];
+		const rows = projectMissionTrace({ events: shuffled }).rows;
+		expect(rows.map((row) => row.sequence)).toEqual(["#5", "#1", "#3"]);
+		const hostile = {
+			...events[4],
+			arguments: { secret: "tool-args-sentinel" },
+			result: "tool-result-sentinel",
+			text: "assistant-text-sentinel",
+			thinking: "private-reasoning-sentinel",
+			prompt: "user-prompt-sentinel",
+			error: "failure-detail-sentinel",
+			timestamp: 1_700_000_000_000,
+		};
+		const row = projectMissionTraceEvent(hostile);
+		expect(Object.keys(row).sort()).toEqual([
+			"depth",
+			"family",
+			"label",
+			"meta",
+			"sequence",
+			"subject",
+			"title",
+			"tone",
+		]);
+		expect(JSON.stringify(row)).not.toMatch(/sentinel|1700000000000|:\d\d/);
+	});
+
+	it("shows an unknown or malformed event neutrally without interpreting its fields", () => {
+		expect(projectMissionTraceEvent({ sequence: 13, kind: "mission.teleported", lane: "main", note: "x" })).toEqual({
+			sequence: "#13",
+			label: "Unknown trace event",
+			family: "unknown",
+			depth: 0,
+			tone: "idle",
+			subject: "",
+			meta: [],
+			title: "",
+		});
+		expect(projectMissionTraceEvent(null).label).toBe("Unknown trace event");
+		expect(projectMissionTraceEvent({ kind: "toString" }).label).toBe("Unknown trace event");
+		expect(projectMissionTraceEvent({ kind: "__proto__" }).label).toBe("Unknown trace event");
+	});
+
+	it("renders only the latest rows of the replicated window", () => {
+		const many = Array.from({ length: 312 }, (_, index) => ({
+			...base,
+			sequence: index + 1,
+			kind: "turn.started",
+			turnId: "t",
+		}));
+		const view = projectMissionTrace({ events: many });
+		expect(view.total).toBe(312);
+		expect(view.rows).toHaveLength(MISSION_TRACE_ROW_LIMIT);
+		expect(view.rows[0]!.sequence).toBe(`#${312 - MISSION_TRACE_ROW_LIMIT + 1}`);
+		expect(view.rows.at(-1)!.sequence).toBe("#312");
+		expect(view.window).toBe(`Showing latest ${MISSION_TRACE_ROW_LIMIT} of 312 replicated events`);
+		// The window still starts at sequence 1, so nothing was dropped.
+		expect(view.truncated).toBeUndefined();
+		expect(many).toHaveLength(312);
+	});
+
+	it("says when the replicated window no longer holds the start of the trace, without offering older events", () => {
+		const recent = Array.from({ length: 1024 }, (_, index) => ({
+			...base,
+			sequence: index + 2_001,
+			kind: "turn.started",
+			turnId: "t",
+		}));
+		const view = projectMissionTrace({ events: recent });
+		expect(view.truncated).toBe("Earlier worker-lifetime trace events are outside the replicated window.");
+		expect(view.window).toBe(`Showing latest ${MISSION_TRACE_ROW_LIMIT} of 1024 replicated events`);
+		expect(view.rows[0]!.sequence).toBe(`#${3_024 - MISSION_TRACE_ROW_LIMIT + 1}`);
+		expect(view.rows.at(-1)!.sequence).toBe("#3024");
+		// A short window that has already dropped its start is also marked, even when every row is shown.
+		const short = projectMissionTrace({ events: recent.slice(-3) });
+		expect(short.window).toBeUndefined();
+		expect(short.truncated).toBe("Earlier worker-lifetime trace events are outside the replicated window.");
+		expect(projectMissionTrace({ events: [] }).truncated).toBeUndefined();
 	});
 });

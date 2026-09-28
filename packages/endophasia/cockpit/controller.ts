@@ -5,15 +5,30 @@
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { EndophasiaPresentationClientV0 } from "../presentation/client.ts";
+import type { MissionTraceObservationV0 } from "../src/mission-trace-service.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 
 /** The part of Presentation Client v0 the cockpit uses. It never reaches below this API. */
 export type CockpitPresentation = Pick<
 	EndophasiaPresentationClientV0,
-	"connection" | "attachment" | "sessions" | "transcript" | "models" | "attach" | "detach" | "sessionOverview"
+	| "connection"
+	| "attachment"
+	| "sessions"
+	| "transcript"
+	| "models"
+	| "missionTrace"
+	| "attach"
+	| "detach"
+	| "sessionOverview"
 >;
 
-export type CockpitRegion = "status" | "sessions" | "transcript" | "inspector" | "diagnostics";
+/** Mission Trace has its own region: it can change far more often than the rest of the inspector. */
+export type CockpitRegion = "status" | "sessions" | "transcript" | "inspector" | "trace" | "diagnostics";
+
+/** Why the cockpit shows no Mission Trace, or the trace it may show. */
+export type MissionTraceVisibility =
+	| { readonly status: "visible"; readonly sessionId: string; readonly observation: MissionTraceObservationV0 }
+	| { readonly status: "hidden"; readonly reason: "detached" | "switching" | "attaching" | "degraded" | "hydrating" };
 
 export type OverviewCapture =
 	| { readonly status: "none" }
@@ -44,7 +59,7 @@ export interface CockpitControllerOptions {
 
 const MAX_DIAGNOSTICS = 5;
 const MAX_DIAGNOSTIC_LENGTH = 500;
-const ALL_REGIONS: readonly CockpitRegion[] = ["status", "sessions", "transcript", "inspector", "diagnostics"];
+const ALL_REGIONS: readonly CockpitRegion[] = ["status", "sessions", "transcript", "inspector", "trace", "diagnostics"];
 
 export class CockpitController {
 	readonly presentation: CockpitPresentation;
@@ -70,17 +85,18 @@ export class CockpitController {
 		this.schedule = options.schedule;
 		this.now = options.now ?? Date.now;
 		this.context = options.context ?? BACKGROUND_CONTEXT;
-		const { connection, attachment, sessions, transcript, models } = this.presentation;
+		const { connection, attachment, sessions, transcript, models, missionTrace } = this.presentation;
 		this.observedSessionId = attachedSessionId(this.presentation);
 		this.unsubscribes.push(
 			connection.subscribe(() => this.invalidate("status", "inspector")),
 			attachment.subscribe(() => {
 				this.followAttachment();
-				this.invalidate("status", "sessions", "transcript", "inspector");
+				this.invalidate("status", "sessions", "transcript", "inspector", "trace");
 			}),
 			sessions.subscribe(() => this.invalidate("sessions")),
 			transcript.subscribe(() => this.invalidate("transcript", "inspector")),
 			models.subscribe(() => this.invalidate("status", "inspector")),
+			missionTrace.subscribe(() => this.invalidate("trace")),
 		);
 		this.invalidate(...ALL_REGIONS);
 	}
@@ -110,6 +126,21 @@ export class CockpitController {
 		}
 		if (attachedSessionId(this.presentation) === sessionId) return;
 		void this.runSelection(sessionId);
+	}
+
+	/**
+	 * The Mission Trace to present, only while it belongs to the authoritative, healthy attachment. The replicated
+	 * value can briefly still hold the previous Session's trace while Pi rebinds services, so it is hidden whenever a
+	 * selection is pending or Pi does not report the Session attached.
+	 */
+	get missionTrace(): MissionTraceVisibility {
+		const attachment = this.presentation.attachment.value;
+		if (this.pending !== undefined) return { status: "hidden", reason: "switching" };
+		if (attachment === undefined || attachment.status === "detached") return { status: "hidden", reason: "detached" };
+		if (attachment.status !== "attached") return { status: "hidden", reason: attachment.status };
+		const observation = this.presentation.missionTrace.value;
+		if (observation === undefined) return { status: "hidden", reason: "hydrating" };
+		return { status: "visible", sessionId: attachment.sessionId, observation };
 	}
 
 	/**
@@ -177,7 +208,7 @@ export class CockpitController {
 	private async runSelection(sessionId: string): Promise<void> {
 		this.pending = sessionId;
 		// The inspector shows the pending request and whether Detach is available.
-		this.invalidate("sessions", "status", "inspector");
+		this.invalidate("sessions", "status", "inspector", "trace");
 		try {
 			await this.presentation.attach(sessionId, this.context);
 			if (this.queuedSelection === undefined) void this.refreshOverview();
@@ -185,7 +216,7 @@ export class CockpitController {
 			this.report(error);
 		} finally {
 			this.pending = undefined;
-			this.invalidate("sessions", "status", "inspector");
+			this.invalidate("sessions", "status", "inspector", "trace");
 		}
 		const next = this.queuedSelection;
 		this.queuedSelection = undefined;
