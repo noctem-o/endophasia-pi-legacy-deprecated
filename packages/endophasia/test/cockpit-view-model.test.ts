@@ -3,6 +3,7 @@ import type { EntryView, VisibleEntryCache } from "../cockpit/view-model.ts";
 import {
 	boundText,
 	formatClock,
+	formatExactNumber,
 	formatStructuredPreview,
 	MISSION_TRACE_ROW_LIMIT,
 	PREVIEW_LIMIT,
@@ -18,10 +19,14 @@ import {
 	projectSessionOverview,
 	projectSessions,
 	projectTranscriptEntry,
+	projectUsage,
+	projectUsageRow,
 	projectVisibleTranscript,
+	USAGE_ROW_LIMIT,
 } from "../cockpit/view-model.ts";
 import type { RuntimeMetricsV0 } from "../src/runtime-metrics.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
+import type { UsageLedgerRowV0 } from "../src/usage-ledger.ts";
 
 const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: {} };
 
@@ -665,5 +670,124 @@ describe("Session Accounting projection", () => {
 		expect(Number(value("Reported total")?.replaceAll(",", ""))).toBe(base.usage.totalTokens);
 		const text = JSON.stringify(view);
 		expect(text).not.toMatch(/[$£€%]|main|lane|context|invoice|bill/i);
+	});
+});
+
+describe("exact number formatting", () => {
+	it("keeps the reported value, grouping only the integer part of plain decimals", () => {
+		expect(formatExactNumber(154_800)).toBe("154,800");
+		expect(formatExactNumber(-1_280)).toBe("-1,280");
+		expect(formatExactNumber(1_234.5)).toBe("1,234.5");
+		expect(formatExactNumber(0)).toBe("0");
+		expect(formatExactNumber(999)).toBe("999");
+		expect(formatExactNumber(1e-21)).toBe("1e-21");
+		expect(formatExactNumber(-1e-21)).toBe("-1e-21");
+		expect(formatExactNumber(1e21)).toBe("1e+21");
+		expect(formatExactNumber(0.1 + 0.2)).toBe("0.30000000000000004");
+	});
+});
+
+describe("Usage Activity projection", () => {
+	const row = (sequence: number, overrides: Partial<UsageLedgerRowV0> = {}): UsageLedgerRowV0 => ({
+		id: `u${sequence}`,
+		sequence,
+		adjustment: false,
+		entryId: "entry-1",
+		usage: {
+			input: 6_500,
+			output: 800,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 7_300,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.0123 },
+		},
+		...overrides,
+	});
+
+	it("shows a neutral usage record with its sequence, reported total and currency-free cost", () => {
+		expect(projectUsageRow(row(3182))).toEqual({
+			sequence: "#3182",
+			label: "usage record",
+			totals: "7,300 total · 6,500 in · 800 out",
+			cost: "cost 0.0123",
+			detail: "0 cache read · 0 cache write",
+		});
+	});
+
+	it("labels an adjustment, and shows negative and tiny values exactly", () => {
+		const view = projectUsageRow(
+			row(3191, {
+				adjustment: true,
+				usage: {
+					input: -9,
+					output: -1e-21,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: -20,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: -15 },
+				},
+			}),
+		);
+		expect(view).toMatchObject({
+			sequence: "#3191",
+			label: "adjustment",
+			totals: "-20 total · -9 in · -1e-21 out",
+			cost: "cost -15",
+		});
+	});
+
+	it("shows reasoning and 1h cache write only when reported", () => {
+		const reported = projectUsageRow(
+			row(7, {
+				usage: { ...row(7).usage, cacheRead: 91_200, cacheWrite: 12_100, reasoning: 7_400, cacheWrite1h: 0 },
+			}),
+		);
+		expect(reported.detail).toBe("91,200 cache read · 12,100 cache write · 0 1h cache write · 7,400 reasoning");
+		expect(projectUsageRow(row(8)).detail).not.toMatch(/reasoning|1h/);
+	});
+
+	it("implies no time, model, provider, lane, run, operation, attempt, tool or cause, and no payload", () => {
+		const hostile = {
+			...row(9),
+			timestamp: 1_700_000_000_000,
+			model: "model-sentinel",
+			provider: "provider-sentinel",
+			lane: "main",
+			runId: "run-sentinel",
+			details: { note: "details-sentinel" },
+			prompt: "prompt-sentinel",
+		} as UsageLedgerRowV0;
+		const view = projectUsageRow(hostile);
+		expect(Object.keys(view).sort()).toEqual(["cost", "detail", "label", "sequence", "totals"]);
+		const text = JSON.stringify(view);
+		expect(text).not.toMatch(/sentinel|1700000000000|main|run|model|provider|lane|operation|attempt|tool|entry/i);
+		expect(text).not.toMatch(/[$£€]|:\d\d/);
+		expect(view.label).toBe("usage record");
+	});
+
+	it("renders the latest rows in ascending durable order, and says when earlier durable rows exist", () => {
+		const rows = Array.from({ length: 30 }, (_, index) => row(10 + 3 * index));
+		const view = projectUsage({
+			schemaVersion: "usage-observation.v0",
+			scope: "session",
+			hasEarlierRows: true,
+			rows,
+		});
+		expect(view.rows).toHaveLength(USAGE_ROW_LIMIT);
+		expect(view.rows[0]?.sequence).toBe(`#${10 + 3 * 10}`);
+		expect(view.rows.at(-1)?.sequence).toBe(`#${10 + 3 * 29}`);
+		expect(view.window).toBe(`Showing latest ${USAGE_ROW_LIMIT} of 30 rows in the live window`);
+		expect(view.earlier).toBe("Earlier durable usage rows are outside the live window.");
+
+		// A window starting after sequence 1 is complete unless the observation says otherwise.
+		const complete = projectUsage({
+			schemaVersion: "usage-observation.v0",
+			scope: "session",
+			hasEarlierRows: false,
+			rows: [row(3182)],
+		});
+		expect(complete.earlier).toBeUndefined();
+		expect(complete.window).toBeUndefined();
+		expect(JSON.stringify(complete)).not.toMatch(/lost|dropped/i);
 	});
 });

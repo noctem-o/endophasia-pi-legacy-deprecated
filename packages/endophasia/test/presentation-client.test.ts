@@ -11,7 +11,7 @@ import { type RunningServer, startServer } from "@earendil-works/pi-coding-agent
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { type EndophasiaPresentationClientV0, openEndophasiaPresentationClientV0 } from "../presentation/client.ts";
 import { startEndophasiaServer } from "../runtime/server.ts";
-import type { OperationOutcomeV0, RuntimeMetricsV0 } from "../src/index.ts";
+import type { OperationOutcomeV0, RuntimeMetricsV0, UsageLedgerPageV0, UsageLedgerQueryV0 } from "../src/index.ts";
 
 const directories: string[] = [];
 const servers: RunningServer[] = [];
@@ -115,6 +115,24 @@ describe("Endophasia Presentation Client v0", () => {
 				usage: { totalTokens: 0, cost: { total: 0 } },
 			});
 			expect(await presentation.operationOutcome("no-such-operation", BACKGROUND_CONTEXT)).toBeNull();
+			// A fresh Session's durable usage: an empty, complete observation, and an empty first page.
+			expect(presentation.usage.value).toEqual({
+				schemaVersion: "usage-observation.v0",
+				scope: "session",
+				hasEarlierRows: false,
+				rows: [],
+			});
+			expect(await presentation.usagePage(undefined, BACKGROUND_CONTEXT)).toEqual({
+				schemaVersion: "usage-ledger.v0",
+				scope: "session",
+				order: "ascending",
+				rows: [],
+				nextAfterSequence: 0,
+			});
+			expect(await presentation.usagePage({ afterSequence: 7, limit: 1 }, BACKGROUND_CONTEXT)).toMatchObject({
+				rows: [],
+				nextAfterSequence: 7,
+			});
 		};
 		await observe("observed");
 
@@ -125,6 +143,9 @@ describe("Endophasia Presentation Client v0", () => {
 		await expect(Promise.resolve().then(() => presentation.runtimeMetrics(BACKGROUND_CONTEXT))).rejects.toThrow();
 		await expect(
 			Promise.resolve().then(() => presentation.operationOutcome("no-such-operation", BACKGROUND_CONTEXT)),
+		).rejects.toThrow();
+		await expect(
+			Promise.resolve().then(() => presentation.usagePage(undefined, BACKGROUND_CONTEXT)),
 		).rejects.toThrow();
 
 		// Later attachment generations rebind every Session service, including the Inspector.
@@ -154,12 +175,19 @@ describe("Endophasia Presentation Client v0", () => {
 			| "transcript"
 			| "models"
 			| "missionTrace"
+			| "usage"
 			| "attach"
 			| "detach"
 			| "sessionOverview"
 			| "runtimeMetrics"
 			| "operationOutcome"
+			| "usagePage"
 			| "dispose"
+		>();
+		// Usage is read-only replicated state plus a durable page read, not the underlying service object.
+		expectTypeOf<keyof EndophasiaPresentationClientV0["usage"]>().toEqualTypeOf<"value" | "subscribe">();
+		expectTypeOf<EndophasiaPresentationClientV0["usagePage"]>().toEqualTypeOf<
+			(query: UsageLedgerQueryV0 | undefined, context: Context) => Promise<UsageLedgerPageV0>
 		>();
 		// Runtime Facts are read-only requests returning their schemas, not the underlying service object.
 		expectTypeOf<EndophasiaPresentationClientV0["runtimeMetrics"]>().toEqualTypeOf<
@@ -196,9 +224,9 @@ describe("Endophasia Presentation Client v0", () => {
 		});
 		servers.push(server);
 		const presentation = await open(server);
-		// The worker lacks both Mission Trace and Runtime Facts; either missing service degrades the attachment.
+		// The worker lacks Mission Trace, Runtime Facts and Usage; any missing service degrades the attachment.
 		await expect(presentation.attach("observed", BACKGROUND_CONTEXT)).rejects.toThrow(
-			/Remote service endophasia\.(mission-trace|runtime-facts)\.v0 is not allowlisted/,
+			/Remote service endophasia\.(mission-trace|runtime-facts|usage)\.v0 is not allowlisted/,
 		);
 		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
 		// A missing capability is not reported as a real trace with zero events.
@@ -213,14 +241,34 @@ describe("Endophasia Presentation Client v0", () => {
 		});
 		servers.push(server);
 		const presentation = await open(server);
+		// The worker lacks Runtime Facts and Usage; either missing service degrades the attachment.
 		await expect(presentation.attach("observed", BACKGROUND_CONTEXT)).rejects.toThrow(
-			"Remote service endophasia.runtime-facts.v0 is not allowlisted",
+			/Remote service endophasia\.(runtime-facts|usage)\.v0 is not allowlisted/,
 		);
 		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
 		// A missing capability is never reported as zero accounting or as "no durable result".
 		await expect(Promise.resolve().then(() => presentation.runtimeMetrics(BACKGROUND_CONTEXT))).rejects.toThrow();
 		await expect(
 			Promise.resolve().then(() => presentation.operationOutcome("any", BACKGROUND_CONTEXT)),
+		).rejects.toThrow();
+	});
+
+	it("requires Usage: a worker without it degrades instead of fabricating an empty usage history", async () => {
+		const server = await startServer({
+			...workerModel,
+			directory: await temporaryDirectory("endophasia-no-usage-"),
+			sessionWorkerEntryUrl: new URL("./fixtures/no-usage-session-worker.ts", import.meta.url),
+		});
+		servers.push(server);
+		const presentation = await open(server);
+		await expect(presentation.attach("observed", BACKGROUND_CONTEXT)).rejects.toThrow(
+			"Remote service endophasia.usage.v0 is not allowlisted",
+		);
+		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
+		// A missing capability is never reported as a Session with no usage rows.
+		expect(presentation.usage.value).toBeUndefined();
+		await expect(
+			Promise.resolve().then(() => presentation.usagePage(undefined, BACKGROUND_CONTEXT)),
 		).rejects.toThrow();
 	});
 
