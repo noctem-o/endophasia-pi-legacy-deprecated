@@ -38,7 +38,7 @@ if (binary === undefined) {
 }
 if (binary.command.includes("/") && !existsSync(binary.command)) fail(`Prime Agent not found at ${binary.command}`);
 
-const provenance = describePrimeV0(binary, process.env);
+const provenance = describePrimeV0(binary);
 if (provenance.version === "unknown") fail(`could not read a version from ${binary.description} --version`);
 process.stdout.write(`Prime Agent ${provenance.version}${provenance.commit ? ` @ ${provenance.commit}` : ""}\n`);
 
@@ -59,8 +59,19 @@ mkdirSync(artifactDir, { recursive: true });
 const reportPath = join(artifactDir, "report.json");
 writeFileSync(reportPath, `${JSON.stringify(report, null, "\t")}\n`);
 
+const problems = [
+	...report.privacyViolations.map((item) => `privacy: ${item}`),
+	...report.scenarios.flatMap((scenario) => [
+		...scenario.protocolErrors.map((item) => `${scenario.scenario}: protocol: ${item}`),
+		...scenario.identityProblems.map((item) => `${scenario.scenario}: identity: ${item}`),
+		...scenario.notes
+			.filter((item) => item.startsWith("scenario error"))
+			.map((item) => `${scenario.scenario}: ${item}`),
+	]),
+];
+// Fixtures are written only from a clean run: a failed or malformed live run must not replace committed evidence.
 if (args.includes("--write-fixtures")) {
-	if (report.privacyViolations.length > 0) fail("refusing to write fixtures that contain probe sentinels");
+	if (problems.length > 0) fail(`refusing to write fixtures from a run with problems:\n${problems.join("\n")}`);
 	writePrimeFixturesV0(join(fixtureRoot, provenance.version), evidence);
 	process.stdout.write(`fixtures written to ${join(fixtureRoot, provenance.version)}\n`);
 }
@@ -76,14 +87,4 @@ if (report.drift.stale) {
 }
 process.stdout.write(`report: ${reportPath}\n`);
 
-const problems = [
-	...report.privacyViolations.map((item) => `privacy: ${item}`),
-	...report.scenarios.flatMap((scenario) => [
-		...scenario.protocolErrors.map((item) => `${scenario.scenario}: protocol: ${item}`),
-		...scenario.identityProblems.map((item) => `${scenario.scenario}: identity: ${item}`),
-		...scenario.notes
-			.filter((item) => item.startsWith("scenario error"))
-			.map((item) => `${scenario.scenario}: ${item}`),
-	]),
-];
 if (problems.length > 0) fail(`\n${problems.join("\n")}`);

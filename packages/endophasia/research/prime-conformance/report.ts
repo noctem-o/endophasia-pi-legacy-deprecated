@@ -84,6 +84,17 @@ export function buildPrimeConformanceReportV0(
 	if (mismatched !== undefined) {
 		throw new Error(`Evidence mixes Prime versions (${provenance.version} and ${mismatched.provenance.version})`);
 	}
+	// Evidence from another probe revision may differ in sanitization or scenario logic, so it cannot be combined either.
+	const otherProbe = evidence.find(
+		(item) =>
+			item.provenance.generatedBy !== provenance.generatedBy ||
+			item.provenance.probeVersion !== provenance.probeVersion,
+	);
+	if (otherProbe !== undefined) {
+		throw new Error(
+			`Evidence mixes probe versions (${provenance.generatedBy} ${provenance.probeVersion} and ${otherProbe.provenance.generatedBy} ${otherProbe.provenance.probeVersion})`,
+		);
+	}
 	const traces = mapScenarioMissionTracesV0(evidence);
 	const facts = derivePrimeFactsV0(evidence);
 	const scenarios = evidence.map((item, index): PrimeScenarioReportV0 => {

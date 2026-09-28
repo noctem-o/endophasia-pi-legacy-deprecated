@@ -62,20 +62,21 @@ export class PrimeRpcClientV0 {
 		});
 		this.#child.stdin.on("error", () => {});
 		this.exited = new Promise((resolve) => {
-			this.#child.on("exit", (code, signal) => {
-				this.#exit = { code, signal };
-				for (const [id, pending] of this.#pending) {
-					clearTimeout(pending.timer);
-					pending.reject(new PrimeRpcExitError(pending.command, this.#exit));
-					this.#pending.delete(id);
-				}
-				resolve(this.#exit);
-			});
-			this.#child.on("error", () => {
-				this.#exit ??= { code: null, signal: null };
-				resolve(this.#exit);
-			});
+			this.#child.on("exit", (code, signal) => resolve(this.#settle({ code, signal })));
+			// A spawn failure never emits exit; pending requests must fail now, not at their timeout.
+			this.#child.on("error", () => resolve(this.#settle({ code: null, signal: null })));
 		});
+	}
+
+	/** Record the first exit and reject every pending request with it. */
+	#settle(exit: PrimeRpcExitV0): PrimeRpcExitV0 {
+		this.#exit ??= exit;
+		for (const [id, pending] of this.#pending) {
+			clearTimeout(pending.timer);
+			pending.reject(new PrimeRpcExitError(pending.command, this.#exit));
+			this.#pending.delete(id);
+		}
+		return this.#exit;
 	}
 
 	get pid(): number | undefined {

@@ -49,6 +49,8 @@ export interface PrimeBinaryV0 {
 	readonly command: string;
 	readonly leadingArgs: readonly string[];
 	readonly description: string;
+	/** The source checkout the command runs from, when it was selected through PRIME_AGENT_ROOT. */
+	readonly checkout?: string;
 }
 
 /** Resolve the Prime executable: PRIME_AGENT_BIN, else PRIME_AGENT_ROOT's documented source launcher. */
@@ -58,7 +60,7 @@ export function resolvePrimeBinaryV0(env: NodeJS.ProcessEnv): PrimeBinaryV0 | un
 	}
 	if (env.PRIME_AGENT_ROOT !== undefined && env.PRIME_AGENT_ROOT.length > 0) {
 		const launcher = join(env.PRIME_AGENT_ROOT, "prime-agent.sh");
-		return { command: launcher, leadingArgs: [], description: launcher };
+		return { command: launcher, leadingArgs: [], description: launcher, checkout: env.PRIME_AGENT_ROOT };
 	}
 	return undefined;
 }

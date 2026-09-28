@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { resolvePrimeBinaryV0 } from "../research/prime-conformance/environment.ts";
 import { sanitizeCommandV0, sanitizeSessionEntryV0 } from "../research/prime-conformance/evidence.ts";
 import { SENTINEL_PATTERN, SENTINELS } from "../research/prime-conformance/fake-provider.ts";
 import { encodeJsonlRecordV0, JsonlDecoderV0, type JsonlRecordV0 } from "../research/prime-conformance/jsonl.ts";
@@ -134,6 +135,19 @@ describe("PrimeRpcClientV0", () => {
 		await rpc.close();
 	});
 
+	it("rejects a pending request at once when the process cannot be spawned", async () => {
+		const rpc = new PrimeRpcClientV0({
+			command: "/nonexistent/prime-agent",
+			args: [],
+			env: { PATH: process.env.PATH },
+			cwd: process.cwd(),
+		});
+		const started = Date.now();
+		await expect(rpc.request({ type: "get_state" }, 30_000)).rejects.toBeInstanceOf(PrimeRpcExitError);
+		expect(Date.now() - started).toBeLessThan(5_000);
+		expect(await rpc.exited).toEqual({ code: null, signal: null });
+	});
+
 	it("rejects a pending request when the process exits", async () => {
 		const rpc = client("exit");
 		await expect(rpc.request({ type: "prompt", message: "x" })).rejects.toBeInstanceOf(PrimeRpcExitError);
@@ -220,5 +234,18 @@ describe("isolation", () => {
 	it("is not exported from @endophasia/core", () => {
 		const index = readFileSync(fileURLToPath(new URL("../src/index.ts", import.meta.url)), "utf8");
 		expect(index).not.toMatch(/research|prime/i);
+	});
+
+	it("attributes a commit only to the source checkout it actually runs", () => {
+		expect(resolvePrimeBinaryV0({ PRIME_AGENT_BIN: "/bin/prime-agent", PRIME_AGENT_ROOT: "/src/prime" })).toEqual({
+			command: "/bin/prime-agent",
+			leadingArgs: [],
+			description: "/bin/prime-agent",
+		});
+		expect(resolvePrimeBinaryV0({ PRIME_AGENT_ROOT: "/src/prime" })).toMatchObject({
+			command: "/src/prime/prime-agent.sh",
+			checkout: "/src/prime",
+		});
+		expect(resolvePrimeBinaryV0({})).toBeUndefined();
 	});
 });

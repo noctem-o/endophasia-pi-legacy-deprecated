@@ -75,16 +75,26 @@ class ProbeSession {
 			...(options.streamingBehavior === undefined ? {} : { streamingBehavior: options.streamingBehavior }),
 		});
 		if (!response.success) return false;
-		await Promise.race([
-			ended,
-			new Promise<void>((_, reject) => setTimeout(() => reject(new Error(`${scenario} did not end`)), 60_000)),
-		]);
-		this.#agentEnd = undefined;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			await Promise.race([
+				ended,
+				new Promise<void>((_, reject) => {
+					timer = setTimeout(() => reject(new Error(`${scenario} did not end`)), 60_000);
+				}),
+			]);
+		} finally {
+			// A pending timer would keep the probe process alive after the last scenario.
+			clearTimeout(timer);
+			this.#agentEnd = undefined;
+		}
 		return true;
 	}
 
 	async stats(label: string): Promise<void> {
 		const response = await this.command({ type: "get_session_stats" });
+		// A failed read has no stats; recording it would turn absent data into NaN evidence.
+		if (!response.success) throw new Error(`get_session_stats failed for ${label}`);
 		this.#run.stats.push(sanitizeStatsV0(label, response.data));
 	}
 
@@ -447,7 +457,7 @@ export async function runPrimeProbeV0(options: PrimeProbeOptionsV0): Promise<Pri
 }
 
 /** Identify the Prime under test: its reported version and, for a source checkout, its commit. */
-export function describePrimeV0(binary: PrimeBinaryV0, env: NodeJS.ProcessEnv): PrimeProvenanceV0 {
+export function describePrimeV0(binary: PrimeBinaryV0): PrimeProvenanceV0 {
 	// Even --version runs in a disposable environment, so no user state is touched.
 	const environment = createPrimeEnvironmentV0({ providerBaseUrl: "http://127.0.0.1:9/v1" });
 	let version: string;
@@ -464,9 +474,10 @@ export function describePrimeV0(binary: PrimeBinaryV0, env: NodeJS.ProcessEnv): 
 		environment.dispose(binary);
 	}
 	let commit: string | undefined;
-	if (env.PRIME_AGENT_ROOT !== undefined) {
+	// Only a source checkout the probe actually runs has a commit; PRIME_AGENT_BIN is attributed to none.
+	if (binary.checkout !== undefined) {
 		try {
-			commit = execFileSync("git", ["-C", env.PRIME_AGENT_ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+			commit = execFileSync("git", ["-C", binary.checkout, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 		} catch {}
 	}
 	return {

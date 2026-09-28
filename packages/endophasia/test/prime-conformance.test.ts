@@ -212,6 +212,12 @@ describe("conformance report", () => {
 				{ ...fixture("tool-run"), provenance: { ...fixture("tool-run").provenance, version: "0.9.7" } },
 			]),
 		).toThrow("mixes Prime versions");
+		expect(() =>
+			buildPrimeConformanceReportV0([
+				fixture("simple"),
+				{ ...fixture("tool-run"), provenance: { ...fixture("tool-run").provenance, probeVersion: "0.2.0" } },
+			]),
+		).toThrow("mixes probe versions");
 	});
 
 	it("reports a leaked sentinel instead of hiding it", () => {
