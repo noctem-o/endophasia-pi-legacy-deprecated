@@ -11,7 +11,7 @@ The code under `packages/endophasia/research/prime-conformance/` is experimental
 | Endophasia base | `main` at `f82e0020740d6b78621244703ee0ddb659c0877a` |
 | Prime Agent | `PrimeIntellect-ai/prime-agent` `main` at `2d24ad4e6b2d1ee8e6919af6f108e980a14d550e`, version 0.9.6 |
 | Boundary | `prime-agent --mode rpc`, JSONL over stdio |
-| Probe | `prime-conformance-v0`, probe version 0.1.0 |
+| Probe | `prime-conformance-v0`, probe version 0.2.0 |
 | Platform of the committed evidence | linux-x64, Node v22.22.2 |
 
 Citations use two forms:
@@ -66,7 +66,8 @@ The fake provider plants these sentinels in every payload class: `PROMPT_SENTINE
 
 - Live: `PRIME_AGENT_BIN=/path/to/prime-agent npm run check:prime-conformance` or `PRIME_AGENT_ROOT=/path/to/prime-agent npm run check:prime-conformance`. It writes `.artifacts/prime-conformance/report.json`, which is ignored by git.
 - Refresh fixtures: add `--write-fixtures`.
-- Drift: when the installed Prime's version or commit differs from the committed fixtures, the run prints `STALE` and sets `drift.stale`.
+- Drift: when the installed Prime's version or commit differs from the committed fixtures, the run prints `STALE` and sets `drift.stale`. A `PRIME_AGENT_BIN` binary reports no commit, so a same-version run against the commit-pinned fixtures prints `UNVERIFIED` and sets `drift.unverified` instead of claiming a match.
+- Refresh safety: `--write-fixtures` refuses a run with any problem: a sentinel leak, a protocol error, an adapter-identity problem, or a scenario error (including an unexpected command refusal or a malformed stats response). A full refresh also removes fixtures of scenarios that no longer exist.
 - Missing binary: the command exits 1 with a clear message.
 - CI: the live probe is not part of CI. The offline tests in `packages/endophasia/test/prime-conformance.test.ts` need no Prime.
 

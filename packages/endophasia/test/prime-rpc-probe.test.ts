@@ -4,7 +4,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { resolvePrimeBinaryV0 } from "../research/prime-conformance/environment.ts";
-import { sanitizeCommandV0, sanitizeSessionEntryV0 } from "../research/prime-conformance/evidence.ts";
+import {
+	invalidStatsFieldsV0,
+	sanitizeCommandV0,
+	sanitizeSessionEntryV0,
+	sanitizeStatsV0,
+} from "../research/prime-conformance/evidence.ts";
 import { SENTINEL_PATTERN, SENTINELS } from "../research/prime-conformance/fake-provider.ts";
 import { encodeJsonlRecordV0, JsonlDecoderV0, type JsonlRecordV0 } from "../research/prime-conformance/jsonl.ts";
 import { classifyPrimeRecordV0, sanitizePrimeEventV0 } from "../research/prime-conformance/protocol.ts";
@@ -135,6 +140,20 @@ describe("PrimeRpcClientV0", () => {
 		await rpc.close();
 	});
 
+	it("rejects a response that echoes a different command", async () => {
+		const rpc = client("wrong-command");
+		await expect(rpc.request({ type: "get_session_stats" })).rejects.toThrow("echoes get_messages");
+		await rpc.close();
+		expect(rpc.protocolErrors).toEqual(["Response for probe-1 echoes get_messages, expected get_session_stats"]);
+	});
+
+	it("counts records written just before exit once close completes", async () => {
+		const rpc = client("trailing-exit");
+		await rpc.request({ type: "get_state" });
+		await rpc.close();
+		expect(rpc.protocolErrors).toEqual(["Malformed JSON (9 characters)"]);
+	});
+
 	it("rejects a pending request at once when the process cannot be spawned", async () => {
 		const rpc = new PrimeRpcClientV0({
 			command: "/nonexistent/prime-agent",
@@ -191,6 +210,26 @@ describe("sanitization", () => {
 			assistant: { toolCalls: [{ id: "call_1", name: "probe_tool" }], hasErrorMessage: true },
 		});
 		expect(events[0]).toMatchObject({ assistant: { usage: { extraKeys: ["reasoning"] } } });
+	});
+
+	it("names every stats field a changed or partial response left without a number", () => {
+		const complete = {
+			userMessages: 1,
+			assistantMessages: 1,
+			toolCalls: 0,
+			toolResults: 0,
+			totalMessages: 2,
+			tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2 },
+			cost: 3,
+			contextUsage: null,
+		};
+		expect(invalidStatsFieldsV0(sanitizeStatsV0("ok", complete))).toEqual([]);
+		expect(
+			invalidStatsFieldsV0(
+				sanitizeStatsV0("partial", { ...complete, cost: "3", tokens: { ...complete.tokens, total: undefined } }),
+			),
+		).toEqual(["tokens.total", "cost"]);
+		expect(invalidStatsFieldsV0(sanitizeStatsV0("absent", undefined))).toHaveLength(11);
 	});
 
 	it("drops streaming deltas and keeps unknown events by name only", () => {

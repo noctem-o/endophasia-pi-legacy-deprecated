@@ -5,7 +5,7 @@
 		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.1.0",
+		"probeVersion": "0.2.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "child-usage-replay"
@@ -170,7 +170,7 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "c0a22e92",
+			"id": "2e21056d",
 			"parentId": "a0000003",
 			"keys": [
 				"id",
@@ -182,8 +182,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "89debce4",
-			"parentId": "c0a22e92",
+			"id": "e02658e2",
+			"parentId": "2e21056d",
 			"keys": [
 				"id",
 				"parentId",
@@ -194,8 +194,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "30d9eb29",
-			"parentId": "89debce4",
+			"id": "d41d7904",
+			"parentId": "e02658e2",
 			"keys": [
 				"content",
 				"customType",

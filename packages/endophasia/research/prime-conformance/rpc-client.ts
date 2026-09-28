@@ -34,6 +34,9 @@ interface Pending {
 	readonly timer: ReturnType<typeof setTimeout>;
 }
 
+/** How long `exited` waits after process exit for stdout to finish draining. */
+const STDOUT_DRAIN_GRACE_MS = 2_000;
+
 export class PrimeRpcClientV0 {
 	/** Protocol violations observed: malformed records, responses without or with unknown/duplicate ids. */
 	readonly protocolErrors: string[] = [];
@@ -62,7 +65,14 @@ export class PrimeRpcClientV0 {
 		});
 		this.#child.stdin.on("error", () => {});
 		this.exited = new Promise((resolve) => {
-			this.#child.on("exit", (code, signal) => resolve(this.#settle({ code, signal })));
+			// Pending requests fail as soon as the process exits, but `exited` settles only once stdout has drained
+			// ("close"), so records written just before exit are decoded and any protocol errors in them are counted.
+			// A descendant that inherited stdout could hold it open, so the wait after exit is bounded.
+			this.#child.on("exit", (code, signal) => {
+				const exit = this.#settle({ code, signal });
+				setTimeout(() => resolve(exit), STDOUT_DRAIN_GRACE_MS).unref();
+			});
+			this.#child.on("close", (code, signal) => resolve(this.#settle({ code, signal })));
 			// A spawn failure never emits exit; pending requests must fail now, not at their timeout.
 			this.#child.on("error", () => resolve(this.#settle({ code: null, signal: null })));
 		});
@@ -145,6 +155,13 @@ export class PrimeRpcClientV0 {
 			clearTimeout(pending.timer);
 			this.#pending.delete(id);
 			this.#settledIds.add(id);
+			// The right id with another command's response would hand the caller a different data shape.
+			if (record.response.command !== pending.command) {
+				const error = `Response for ${id} echoes ${record.response.command}, expected ${pending.command}`;
+				this.protocolErrors.push(error);
+				pending.reject(new Error(error));
+				continue;
+			}
 			pending.resolve(record.response);
 		}
 	}

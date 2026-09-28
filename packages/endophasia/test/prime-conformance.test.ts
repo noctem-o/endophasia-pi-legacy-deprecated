@@ -2,7 +2,8 @@
 // the conformance report, provenance, drift and privacy. They run on the committed sanitized fixtures; no Prime
 // installation is needed.
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -18,6 +19,7 @@ import {
 	buildPrimeConformanceReportV0,
 	checkPrimeDriftV0,
 	readPrimeFixturesV0,
+	writePrimeFixturesV0,
 } from "../research/prime-conformance/report.ts";
 
 const fixtureDir = fileURLToPath(new URL("./fixtures/prime/0.9.6", import.meta.url));
@@ -188,6 +190,53 @@ describe("conformance report", () => {
 		}
 	});
 
+	it("detects a rebuild mismatch in any shared usage dimension", () => {
+		const reopen = fixture("multi-turn-reopen");
+		const skewed = {
+			...reopen,
+			stats: reopen.stats.map((item) =>
+				item.label === "after-reopen"
+					? { ...item, tokens: { ...item.tokens, cacheRead: item.tokens.cacheRead + 1 } }
+					: item,
+			),
+		};
+		expect(derivePrimeFactsV0([reopen]).rebuildMatchesStatsOnSinglePath).toBe(true);
+		expect(derivePrimeFactsV0([skewed]).rebuildMatchesStatsOnSinglePath).toBe(false);
+	});
+
+	it("decides compaction summary accounting from the kept path, not the pre-compaction total", () => {
+		const run = fixture("compaction");
+		const after = run.stats.find((item) => item.label === "after-compaction")!;
+		const summary = run.sessionEntries.find((entry) => entry.type === "compaction")!.usage!.cost.total;
+		expect(derivePrimeFactsV0([run]).compactionUsageInStats).toBe(false);
+		// Had stats counted the summary, the kept path plus the summary is what they would show.
+		const counted = {
+			...run,
+			stats: run.stats.map((item) =>
+				item.label === "after-compaction" ? { ...item, cost: after.cost + summary } : item,
+			),
+		};
+		expect(derivePrimeFactsV0([counted]).compactionUsageInStats).toBe(true);
+		const other = {
+			...run,
+			stats: run.stats.map((item) => (item.label === "after-compaction" ? { ...item, cost: after.cost + 1 } : item)),
+		};
+		expect(derivePrimeFactsV0([other]).compactionUsageInStats).toBeUndefined();
+	});
+
+	it("prunes fixtures of vanished scenarios only on a full refresh", () => {
+		const directory = mkdtempSync(join(tmpdir(), "prime-fixtures-"));
+		try {
+			writeFileSync(join(directory, "renamed-away.json"), "{}");
+			writePrimeFixturesV0(directory, [fixture("simple")]);
+			expect(readdirSync(directory).sort()).toEqual(["renamed-away.json", "simple.json"]);
+			writePrimeFixturesV0(directory, [fixture("simple")], { prune: true });
+			expect(readdirSync(directory)).toEqual(["simple.json"]);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
 	it("says unverified instead of guessing when a scenario did not run", () => {
 		const facts = derivePrimeFactsV0([fixture("simple")]);
 		expect(facts.statsDropAfterCompaction).toBeUndefined();
@@ -206,6 +255,10 @@ describe("conformance report", () => {
 			referenceVersion: "0.9.6",
 		});
 		expect(checkPrimeDriftV0({ ...current, commit: "0".repeat(40) }, current).stale).toBe(true);
+		// A same-version binary without a commit is not a verified match against a commit-pinned reference.
+		const { commit: _commit, ...binaryRun } = current;
+		expect(checkPrimeDriftV0(binaryRun, current)).toMatchObject({ stale: false, unverified: true });
+		expect(checkPrimeDriftV0(current, current).unverified).toBe(false);
 		expect(() =>
 			buildPrimeConformanceReportV0([
 				fixture("simple"),
@@ -215,7 +268,7 @@ describe("conformance report", () => {
 		expect(() =>
 			buildPrimeConformanceReportV0([
 				fixture("simple"),
-				{ ...fixture("tool-run"), provenance: { ...fixture("tool-run").provenance, probeVersion: "0.2.0" } },
+				{ ...fixture("tool-run"), provenance: { ...fixture("tool-run").provenance, probeVersion: "9.9.9" } },
 			]),
 		).toThrow("mixes probe versions");
 	});

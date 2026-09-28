@@ -1,6 +1,6 @@
 // Research-only (Prime Runtime Conformance v0). Assembles the machine-readable conformance report from sanitized
 // evidence, checks it for leaked probe payloads, and reads and writes the committed fixtures.
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	checkAdapterIdentitiesV0,
@@ -21,6 +21,11 @@ export const REPORT_SCHEMA_VERSION = "prime-conformance-report.v0";
 export interface PrimeDriftV0 {
 	/** True when the evidence was produced by a different Prime than the reference (e.g. the committed fixtures). */
 	readonly stale: boolean;
+	/**
+	 * True when the reference is pinned to a commit but the evidence has none (a PRIME_AGENT_BIN run): the version
+	 * matches, but whether it is the same build cannot be verified. Never reported as a match.
+	 */
+	readonly unverified: boolean;
 	readonly evidenceVersion: string;
 	readonly evidenceCommit?: string;
 	readonly referenceVersion?: string;
@@ -57,6 +62,11 @@ export function checkPrimeDriftV0(evidence: PrimeProvenanceV0, reference: PrimeP
 			reference !== undefined &&
 			(reference.version !== evidence.version ||
 				(reference.commit !== undefined && evidence.commit !== undefined && reference.commit !== evidence.commit)),
+		unverified:
+			reference !== undefined &&
+			reference.version === evidence.version &&
+			reference.commit !== undefined &&
+			evidence.commit === undefined,
 		evidenceVersion: evidence.version,
 		...(evidence.commit === undefined ? {} : { evidenceCommit: evidence.commit }),
 		...(reference === undefined ? {} : { referenceVersion: reference.version }),
@@ -139,9 +149,22 @@ export function buildPrimeConformanceReportV0(
 	return leaked.length === 0 ? report : { ...report, privacyViolations: [...privacyViolations, ...leaked] };
 }
 
-/** Write one fixture per scenario: `<dir>/<scenario>.json`, each carrying its own provenance. */
-export function writePrimeFixturesV0(directory: string, evidence: readonly PrimeScenarioEvidenceV0[]): void {
+/**
+ * Write one fixture per scenario: `<dir>/<scenario>.json`, each carrying its own provenance. With `prune` (a full
+ * refresh), fixtures of scenarios this run did not produce are removed, so stale evidence cannot outlive its scenario.
+ */
+export function writePrimeFixturesV0(
+	directory: string,
+	evidence: readonly PrimeScenarioEvidenceV0[],
+	options: { readonly prune?: boolean } = {},
+): void {
 	mkdirSync(directory, { recursive: true });
+	if (options.prune === true) {
+		const produced = new Set(evidence.map((item) => `${item.provenance.scenario}.json`));
+		for (const name of readdirSync(directory)) {
+			if (name.endsWith(".json") && !produced.has(name)) rmSync(join(directory, name));
+		}
+	}
 	for (const item of evidence) {
 		writeFileSync(join(directory, `${item.provenance.scenario}.json`), `${JSON.stringify(item, null, "\t")}\n`);
 	}

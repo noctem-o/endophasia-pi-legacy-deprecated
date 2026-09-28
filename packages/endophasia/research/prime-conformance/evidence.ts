@@ -4,7 +4,7 @@ import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 import { sanitizeUsageV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.1.0";
+export const PROBE_VERSION = "0.2.0";
 
 export interface PrimeProvenanceV0 {
 	readonly source: "prime-agent";
@@ -54,6 +54,8 @@ export interface PrimeSessionEntryEvidenceV0 {
 	readonly role?: string;
 	readonly stopReason?: string;
 	readonly usage?: PrimeUsageEvidenceV0;
+	/** For compaction: the first entry kept on the context path. */
+	readonly firstKeptEntryId?: string;
 	/** For child_usage_attributed: the assistant entry the usage was folded into. */
 	readonly targetId?: string;
 	readonly childUsage?: PrimeUsageEvidenceV0;
@@ -124,6 +126,24 @@ export function sanitizeStatsV0(label: string, data: unknown): PrimeStatsEvidenc
 	};
 }
 
+/** Stats fields that did not hold a finite number. `contextUsageTokens` may legitimately be null and is not checked. */
+export function invalidStatsFieldsV0(stats: PrimeStatsEvidenceV0): string[] {
+	const fields: Record<string, number> = {
+		userMessages: stats.userMessages,
+		assistantMessages: stats.assistantMessages,
+		toolCalls: stats.toolCalls,
+		toolResults: stats.toolResults,
+		totalMessages: stats.totalMessages,
+		"tokens.input": stats.tokens.input,
+		"tokens.output": stats.tokens.output,
+		"tokens.cacheRead": stats.tokens.cacheRead,
+		"tokens.cacheWrite": stats.tokens.cacheWrite,
+		"tokens.total": stats.tokens.total,
+		cost: stats.cost,
+	};
+	return Object.entries(fields).flatMap(([name, value]) => (Number.isFinite(value) ? [] : [name]));
+}
+
 export function sanitizeCommandV0(response: {
 	command: string;
 	success: boolean;
@@ -168,6 +188,9 @@ export function sanitizeSessionEntryV0(value: unknown): PrimeSessionEntryEvidenc
 		...(typeof message?.role === "string" ? { role: message.role } : {}),
 		...(typeof message?.stopReason === "string" ? { stopReason: message.stopReason } : {}),
 		...(usage === undefined ? {} : { usage }),
+		...(entry.type === "compaction" && typeof entry.firstKeptEntryId === "string"
+			? { firstKeptEntryId: entry.firstKeptEntryId }
+			: {}),
 		...(typeof entry.targetId === "string" && entry.type === "child_usage_attributed"
 			? { targetId: entry.targetId }
 			: {}),

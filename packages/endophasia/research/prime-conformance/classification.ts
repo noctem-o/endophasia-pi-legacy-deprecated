@@ -1,6 +1,6 @@
 // Research-only (Prime Runtime Conformance v0). Derives conformance facts from sanitized probe evidence and classifies
 // each Endophasia v0 contract on two axes. Nothing here is an Endophasia contract or runtime interface.
-import type { PrimeScenarioEvidenceV0, PrimeStatsEvidenceV0 } from "./evidence.ts";
+import type { PrimeScenarioEvidenceV0, PrimeSessionEntryEvidenceV0, PrimeStatsEvidenceV0 } from "./evidence.ts";
 import { type MissionTraceMappingV0, mapPrimeMissionTraceV0 } from "./mission-trace.ts";
 import { rebuildPrimeRuntimeMetricsV0 } from "./projection.ts";
 import type { PrimeEvidenceEventV0 } from "./protocol.ts";
@@ -105,6 +105,34 @@ function firstRunStop(run: PrimeScenarioEvidenceV0 | undefined): string | undefi
 	return end?.type === "agent_end" ? end.assistantStopReasons.at(-1) : undefined;
 }
 
+/**
+ * Whether get_session_stats counts the compaction summary, judged right after compaction on a single linear path: the
+ * path then holds only the kept entries (from firstKeptEntryId up to the compaction entry), so stats equal their
+ * assistant cost if the summary is excluded, and that plus the summary cost if it is counted. Anything else is
+ * undecided rather than guessed.
+ */
+function compactionSummaryCounted(
+	entries: readonly PrimeSessionEntryEvidenceV0[] | undefined,
+	afterCompaction: PrimeStatsEvidenceV0 | undefined,
+): boolean | undefined {
+	if (entries === undefined || afterCompaction === undefined) return undefined;
+	const compactionIndex = entries.findIndex((entry) => entry.type === "compaction");
+	const compaction = entries[compactionIndex];
+	if (compaction?.usage === undefined || compaction.firstKeptEntryId === undefined) return undefined;
+	const firstKept = entries.findIndex((entry) => entry.id === compaction.firstKeptEntryId);
+	if (firstKept === -1 || firstKept > compactionIndex) return undefined;
+	const keptCost = entries
+		.slice(firstKept, compactionIndex)
+		.reduce(
+			(sum, entry) =>
+				sum + (entry.type === "message" && entry.role === "assistant" ? (entry.usage?.cost.total ?? 0) : 0),
+			0,
+		);
+	if (afterCompaction.cost === keptCost + compaction.usage.cost.total) return true;
+	if (afterCompaction.cost === keptCost) return false;
+	return undefined;
+}
+
 const DOCUMENTED_EVENT_TYPES = new Set([
 	"agent_start",
 	"agent_end",
@@ -199,11 +227,7 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 				? undefined
 				: afterCompaction.tokens.total < beforeCompaction.tokens.total,
 		compactionUsageDurable: compaction === undefined ? undefined : compactionEntry?.usage !== undefined,
-		// Counted would mean the stats cost grew by at least the summary's cost across the compaction.
-		compactionUsageInStats:
-			beforeCompaction === undefined || afterCompaction === undefined || compactionEntry?.usage === undefined
-				? undefined
-				: afterCompaction.cost >= beforeCompaction.cost + compactionEntry.usage.cost.total,
+		compactionUsageInStats: compactionSummaryCounted(compaction?.sessionEntries, afterCompaction),
 		statsDropAfterFork:
 			beforeFork === undefined || afterFork === undefined
 				? undefined
@@ -223,11 +247,16 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 			reopen === undefined || afterReopen === undefined
 				? undefined
 				: (() => {
-						const rebuilt = rebuildPrimeRuntimeMetricsV0(reopen.sessionEntries);
+						// Every dimension both sides report; stats carry no per-component cost.
+						const { usage } = rebuildPrimeRuntimeMetricsV0(reopen.sessionEntries);
+						const { tokens } = afterReopen;
 						return (
-							rebuilt.usage.input === afterReopen.tokens.input &&
-							rebuilt.usage.output === afterReopen.tokens.output &&
-							rebuilt.usage.cost.total === afterReopen.cost
+							usage.input === tokens.input &&
+							usage.output === tokens.output &&
+							usage.cacheRead === tokens.cacheRead &&
+							usage.cacheWrite === tokens.cacheWrite &&
+							usage.totalTokens === tokens.total &&
+							usage.cost.total === afterReopen.cost
 						);
 					})(),
 		rebuildIncludesCompactionUsage:

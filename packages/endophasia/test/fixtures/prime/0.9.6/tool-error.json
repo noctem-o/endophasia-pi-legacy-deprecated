@@ -5,7 +5,7 @@
 		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.1.0",
+		"probeVersion": "0.2.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "tool-error"
@@ -257,7 +257,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0e8b3-ccf1-739c-8d5a-868792aa90ab",
+			"id": "01a0e8d9-f693-70fb-8382-59d22ad791e5",
 			"keys": [
 				"cwd",
 				"id",
@@ -269,7 +269,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "7e733df1",
+			"id": "612b4248",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -282,8 +282,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "871adb59",
-			"parentId": "7e733df1",
+			"id": "c96b55e3",
+			"parentId": "612b4248",
 			"keys": [
 				"id",
 				"parentId",
@@ -294,8 +294,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "ff27696d",
-			"parentId": "871adb59",
+			"id": "52b31f69",
+			"parentId": "c96b55e3",
 			"keys": [
 				"id",
 				"parentId",
@@ -306,8 +306,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "f03c87f2",
-			"parentId": "ff27696d",
+			"id": "e40727bf",
+			"parentId": "52b31f69",
 			"keys": [
 				"id",
 				"parentId",
@@ -318,8 +318,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "ac36d54c",
-			"parentId": "f03c87f2",
+			"id": "c1ffe30a",
+			"parentId": "e40727bf",
 			"keys": [
 				"content",
 				"customType",
@@ -333,8 +333,8 @@
 		},
 		{
 			"type": "message",
-			"id": "24bd5a74",
-			"parentId": "ac36d54c",
+			"id": "d124b672",
+			"parentId": "c1ffe30a",
 			"role": "user",
 			"keys": [
 				"id",
@@ -346,8 +346,8 @@
 		},
 		{
 			"type": "message",
-			"id": "9dd4d995",
-			"parentId": "24bd5a74",
+			"id": "ff6dcd89",
+			"parentId": "d124b672",
 			"role": "assistant",
 			"stopReason": "toolUse",
 			"usage": {
@@ -375,8 +375,8 @@
 		},
 		{
 			"type": "message",
-			"id": "7555250f",
-			"parentId": "9dd4d995",
+			"id": "dc04ec32",
+			"parentId": "ff6dcd89",
 			"role": "toolResult",
 			"keys": [
 				"id",
@@ -388,8 +388,8 @@
 		},
 		{
 			"type": "message",
-			"id": "255f1ffb",
-			"parentId": "7555250f",
+			"id": "703b167b",
+			"parentId": "dc04ec32",
 			"role": "assistant",
 			"stopReason": "stop",
 			"usage": {

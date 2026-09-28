@@ -46,6 +46,14 @@ function handle(command) {
 			process.stdout.write("[1,2]\n");
 			write(respond(command));
 			return;
+		case "wrong-command":
+			write({ ...respond(command), command: "get_messages" });
+			return;
+		case "trailing-exit":
+			// Answer, then emit a malformed record and exit at once: the record must still be counted.
+			write(respond(command));
+			process.stdout.write("{not json\n", () => process.exit(0));
+			return;
 		case "exit":
 			process.exit(3);
 			return;

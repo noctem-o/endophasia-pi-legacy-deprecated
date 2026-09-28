@@ -72,7 +72,8 @@ const problems = [
 // Fixtures are written only from a clean run: a failed or malformed live run must not replace committed evidence.
 if (args.includes("--write-fixtures")) {
 	if (problems.length > 0) fail(`refusing to write fixtures from a run with problems:\n${problems.join("\n")}`);
-	writePrimeFixturesV0(join(fixtureRoot, provenance.version), evidence);
+	// A full run replaces the directory's contents; a --scenario run refreshes only its own fixtures.
+	writePrimeFixturesV0(join(fixtureRoot, provenance.version), evidence, { prune: only.length === 0 });
 	process.stdout.write(`fixtures written to ${join(fixtureRoot, provenance.version)}\n`);
 }
 
@@ -83,6 +84,12 @@ if (report.drift.stale) {
 	process.stdout.write(
 		`STALE: committed fixtures are from Prime ${report.drift.referenceVersion}${report.drift.referenceCommit ? ` @ ${report.drift.referenceCommit}` : ""}; ` +
 			`this run used ${report.drift.evidenceVersion}. Review the findings and refresh with --write-fixtures.\n`,
+	);
+}
+if (report.drift.unverified) {
+	process.stdout.write(
+		`UNVERIFIED: committed fixtures are pinned to Prime ${report.drift.referenceVersion} @ ${report.drift.referenceCommit}; ` +
+			"this binary reports the same version but no commit, so the build cannot be confirmed.\n",
 	);
 }
 process.stdout.write(`report: ${reportPath}\n`);

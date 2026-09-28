@@ -5,7 +5,7 @@
 		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.1.0",
+		"probeVersion": "0.2.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "abort-stream"
@@ -303,7 +303,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0e8b4-2b8e-71e4-87e7-f04a670cd156",
+			"id": "01a0e8da-4eea-72a8-a9fc-4b96a85fc717",
 			"keys": [
 				"cwd",
 				"id",
@@ -315,7 +315,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "fc40b78a",
+			"id": "adeda86a",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -328,8 +328,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "9df2fa15",
-			"parentId": "fc40b78a",
+			"id": "dd47d426",
+			"parentId": "adeda86a",
 			"keys": [
 				"id",
 				"parentId",
@@ -340,8 +340,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "8b924437",
-			"parentId": "9df2fa15",
+			"id": "f92b2951",
+			"parentId": "dd47d426",
 			"keys": [
 				"id",
 				"parentId",
@@ -352,8 +352,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "73ea00ca",
-			"parentId": "8b924437",
+			"id": "d9a5a94f",
+			"parentId": "f92b2951",
 			"keys": [
 				"id",
 				"parentId",
@@ -364,8 +364,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "d0baa99d",
-			"parentId": "73ea00ca",
+			"id": "cc791b38",
+			"parentId": "d9a5a94f",
 			"keys": [
 				"content",
 				"customType",
@@ -379,8 +379,8 @@
 		},
 		{
 			"type": "message",
-			"id": "7e0e17d8",
-			"parentId": "d0baa99d",
+			"id": "d993dbe5",
+			"parentId": "cc791b38",
 			"role": "user",
 			"keys": [
 				"id",
@@ -392,8 +392,8 @@
 		},
 		{
 			"type": "message",
-			"id": "77ceca2a",
-			"parentId": "7e0e17d8",
+			"id": "cddae4b2",
+			"parentId": "d993dbe5",
 			"role": "assistant",
 			"stopReason": "aborted",
 			"usage": {
@@ -421,8 +421,8 @@
 		},
 		{
 			"type": "message",
-			"id": "3b851d81",
-			"parentId": "77ceca2a",
+			"id": "eba70f73",
+			"parentId": "cddae4b2",
 			"role": "user",
 			"keys": [
 				"id",
@@ -434,8 +434,8 @@
 		},
 		{
 			"type": "message",
-			"id": "15dc0cfc",
-			"parentId": "3b851d81",
+			"id": "2b82de82",
+			"parentId": "eba70f73",
 			"role": "assistant",
 			"stopReason": "stop",
 			"usage": {

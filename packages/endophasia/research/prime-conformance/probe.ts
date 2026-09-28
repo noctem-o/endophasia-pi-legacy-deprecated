@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createPrimeEnvironmentV0, type PrimeBinaryV0, type PrimeEnvironmentV0 } from "./environment.ts";
 import {
+	invalidStatsFieldsV0,
 	PROBE_NAME,
 	PROBE_VERSION,
 	type PrimeCommandEvidenceV0,
@@ -44,16 +45,21 @@ class ProbeSession {
 				if (this.#abortOn?.(type, event) === true) {
 					this.#abortOn = undefined;
 					run.abortRequestedAfter.push(run.events.length - 1);
-					void this.command({ type: "abort" });
+					// Detached from the scenario's control flow: a failure is recorded, never left unhandled.
+					this.command({ type: "abort" }).catch(() => {
+						run.notes.push("scenario error: abort request failed");
+					});
 				}
 				if (type === "agent_end") this.#agentEnd?.();
 			},
 		});
 	}
 
-	async command(command: { readonly type: string } & Record<string, unknown>) {
+	/** Send a command and record it. A refusal fails the scenario unless the scenario expects it (`mayFail`). */
+	async command(command: { readonly type: string } & Record<string, unknown>, options: { mayFail?: boolean } = {}) {
 		const response = await this.client.request(command);
 		this.#run.commands.push(sanitizeCommandV0(response));
+		if (!response.success && options.mayFail !== true) throw new Error(`${command.type} failed unexpectedly`);
 		return response;
 	}
 
@@ -63,17 +69,20 @@ class ProbeSession {
 	 */
 	async prompt(
 		scenario: string,
-		options: { abortOn?: Trigger; streamingBehavior?: "followUp" } = {},
+		options: { abortOn?: Trigger; streamingBehavior?: "followUp"; mayBeRefused?: boolean } = {},
 	): Promise<boolean> {
 		this.#abortOn = options.abortOn;
 		const ended = new Promise<void>((resolve) => {
 			this.#agentEnd = resolve;
 		});
-		const response = await this.command({
-			type: "prompt",
-			message: `SCENARIO:${scenario} ${SENTINELS.prompt}`,
-			...(options.streamingBehavior === undefined ? {} : { streamingBehavior: options.streamingBehavior }),
-		});
+		const response = await this.command(
+			{
+				type: "prompt",
+				message: `SCENARIO:${scenario} ${SENTINELS.prompt}`,
+				...(options.streamingBehavior === undefined ? {} : { streamingBehavior: options.streamingBehavior }),
+			},
+			{ mayFail: options.mayBeRefused === true },
+		);
 		if (!response.success) return false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		try {
@@ -93,9 +102,11 @@ class ProbeSession {
 
 	async stats(label: string): Promise<void> {
 		const response = await this.command({ type: "get_session_stats" });
-		// A failed read has no stats; recording it would turn absent data into NaN evidence.
-		if (!response.success) throw new Error(`get_session_stats failed for ${label}`);
-		this.#run.stats.push(sanitizeStatsV0(label, response.data));
+		const stats = sanitizeStatsV0(label, response.data);
+		// A changed or partial stats shape must fail the scenario, not become NaN (serialized as null) evidence.
+		const invalid = invalidStatsFieldsV0(stats);
+		if (invalid.length > 0) throw new Error(`get_session_stats for ${label} lacks ${invalid.join(", ")}`);
+		this.#run.stats.push(stats);
 	}
 
 	/** The current session file path, used in memory only to read the durable entries. */
@@ -259,7 +270,9 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			await session.prompt("abort-stream", { abortOn: assistantStarted });
 			await session.stats("after");
 			// An RPC abort suspends Prime's input queue; a plain prompt is refused until a prompt that may queue resumes it.
-			run.notes.push(`plain prompt after abort admitted: ${await session.prompt("multi-a")}`);
+			run.notes.push(
+				`plain prompt after abort admitted: ${await session.prompt("multi-a", { mayBeRefused: true })}`,
+			);
 			run.notes.push(
 				`followUp prompt after abort admitted: ${await session.prompt("multi-b", { streamingBehavior: "followUp" })}`,
 			);
@@ -343,7 +356,9 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			await session.stats("after-compaction");
 			// Manual compaction aborts first (compact -> abort -> requestAbort), which suspends the input queue. Record the
 			// plain refusal, then resume with a prompt that may queue.
-			run.notes.push(`plain prompt after compaction admitted: ${await session.prompt("multi-c")}`);
+			run.notes.push(
+				`plain prompt after compaction admitted: ${await session.prompt("multi-c", { mayBeRefused: true })}`,
+			);
 			run.notes.push(
 				`followUp prompt after compaction admitted: ${await session.prompt("multi-c", { streamingBehavior: "followUp" })}`,
 			);

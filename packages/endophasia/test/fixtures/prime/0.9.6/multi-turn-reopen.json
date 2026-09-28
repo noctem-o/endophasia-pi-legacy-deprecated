@@ -5,7 +5,7 @@
 		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.1.0",
+		"probeVersion": "0.2.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "multi-turn-reopen"
@@ -479,7 +479,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0e8b4-e785-72b8-a823-57e3801fd1d4",
+			"id": "01a0e8da-fe1e-7603-a405-4f121f4b8121",
 			"keys": [
 				"cwd",
 				"id",
@@ -491,7 +491,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "e10f3125",
+			"id": "8cadb6e0",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -504,8 +504,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "b09f5902",
-			"parentId": "e10f3125",
+			"id": "326aceaa",
+			"parentId": "8cadb6e0",
 			"keys": [
 				"id",
 				"parentId",
@@ -516,8 +516,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "88b4eb15",
-			"parentId": "b09f5902",
+			"id": "0686d345",
+			"parentId": "326aceaa",
 			"keys": [
 				"id",
 				"parentId",
@@ -528,8 +528,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "d93afb79",
-			"parentId": "88b4eb15",
+			"id": "12ac66d2",
+			"parentId": "0686d345",
 			"keys": [
 				"id",
 				"parentId",
@@ -540,8 +540,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "601a165a",
-			"parentId": "d93afb79",
+			"id": "2d176ac1",
+			"parentId": "12ac66d2",
 			"keys": [
 				"content",
 				"customType",
@@ -555,8 +555,8 @@
 		},
 		{
 			"type": "message",
-			"id": "ed11291b",
-			"parentId": "601a165a",
+			"id": "3a768758",
+			"parentId": "2d176ac1",
 			"role": "user",
 			"keys": [
 				"id",
@@ -568,8 +568,8 @@
 		},
 		{
 			"type": "message",
-			"id": "ba68a501",
-			"parentId": "ed11291b",
+			"id": "ec8a7d74",
+			"parentId": "3a768758",
 			"role": "assistant",
 			"stopReason": "stop",
 			"usage": {
@@ -597,8 +597,8 @@
 		},
 		{
 			"type": "message",
-			"id": "5452697c",
-			"parentId": "ba68a501",
+			"id": "3c0bb89d",
+			"parentId": "ec8a7d74",
 			"role": "user",
 			"keys": [
 				"id",
@@ -610,8 +610,8 @@
 		},
 		{
 			"type": "message",
-			"id": "0b282632",
-			"parentId": "5452697c",
+			"id": "00da82ae",
+			"parentId": "3c0bb89d",
 			"role": "assistant",
 			"stopReason": "stop",
 			"usage": {
@@ -639,8 +639,8 @@
 		},
 		{
 			"type": "message",
-			"id": "8dc2f9ca",
-			"parentId": "0b282632",
+			"id": "abcef376",
+			"parentId": "00da82ae",
 			"role": "user",
 			"keys": [
 				"id",
@@ -652,8 +652,8 @@
 		},
 		{
 			"type": "message",
-			"id": "b9268dfd",
-			"parentId": "8dc2f9ca",
+			"id": "71769c00",
+			"parentId": "abcef376",
 			"role": "assistant",
 			"stopReason": "stop",
 			"usage": {

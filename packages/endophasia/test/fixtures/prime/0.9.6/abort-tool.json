@@ -5,7 +5,7 @@
 		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.1.0",
+		"probeVersion": "0.2.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "abort-tool"
@@ -203,7 +203,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0e8b4-5baf-76bc-951f-b06077f6d594",
+			"id": "01a0e8da-7986-71dd-98d9-fb2c786ca7f8",
 			"keys": [
 				"cwd",
 				"id",
@@ -215,7 +215,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "28dd72fc",
+			"id": "a121930e",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -228,8 +228,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "330b6caf",
-			"parentId": "28dd72fc",
+			"id": "944d8a61",
+			"parentId": "a121930e",
 			"keys": [
 				"id",
 				"parentId",
@@ -240,8 +240,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "4c5e1bb8",
-			"parentId": "330b6caf",
+			"id": "ad58041b",
+			"parentId": "944d8a61",
 			"keys": [
 				"id",
 				"parentId",
@@ -252,8 +252,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "e9947373",
-			"parentId": "4c5e1bb8",
+			"id": "bf5cba94",
+			"parentId": "ad58041b",
 			"keys": [
 				"id",
 				"parentId",
@@ -264,8 +264,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "82516c41",
-			"parentId": "e9947373",
+			"id": "9503d522",
+			"parentId": "bf5cba94",
 			"keys": [
 				"content",
 				"customType",
@@ -279,8 +279,8 @@
 		},
 		{
 			"type": "message",
-			"id": "90d9abb7",
-			"parentId": "82516c41",
+			"id": "ca6212d0",
+			"parentId": "9503d522",
 			"role": "user",
 			"keys": [
 				"id",
@@ -292,8 +292,8 @@
 		},
 		{
 			"type": "message",
-			"id": "4cc215e4",
-			"parentId": "90d9abb7",
+			"id": "4ebfe85c",
+			"parentId": "ca6212d0",
 			"role": "assistant",
 			"stopReason": "toolUse",
 			"usage": {
@@ -321,8 +321,8 @@
 		},
 		{
 			"type": "message",
-			"id": "23310fd1",
-			"parentId": "4cc215e4",
+			"id": "30a8399a",
+			"parentId": "4ebfe85c",
 			"role": "toolResult",
 			"keys": [
 				"id",

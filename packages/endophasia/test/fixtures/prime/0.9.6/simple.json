@@ -5,7 +5,7 @@
 		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.1.0",
+		"probeVersion": "0.2.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "simple"
@@ -160,7 +160,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0e8b3-73de-76fd-a4c4-7feff61c4403",
+			"id": "01a0e8d9-9e70-7349-997b-9e317ce8a924",
 			"keys": [
 				"cwd",
 				"id",
@@ -172,7 +172,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "2db0c171",
+			"id": "3fb43c07",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -185,8 +185,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "699b7678",
-			"parentId": "2db0c171",
+			"id": "5144a7c8",
+			"parentId": "3fb43c07",
 			"keys": [
 				"id",
 				"parentId",
@@ -197,8 +197,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "3db6d0b4",
-			"parentId": "699b7678",
+			"id": "dfb55a04",
+			"parentId": "5144a7c8",
 			"keys": [
 				"id",
 				"parentId",
@@ -209,8 +209,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "67ec6186",
-			"parentId": "3db6d0b4",
+			"id": "4f11c48c",
+			"parentId": "dfb55a04",
 			"keys": [
 				"id",
 				"parentId",
@@ -221,8 +221,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "b5a85057",
-			"parentId": "67ec6186",
+			"id": "ec5b3f61",
+			"parentId": "4f11c48c",
 			"keys": [
 				"content",
 				"customType",
@@ -236,8 +236,8 @@
 		},
 		{
 			"type": "message",
-			"id": "5a4538f9",
-			"parentId": "b5a85057",
+			"id": "2ec53c6c",
+			"parentId": "ec5b3f61",
 			"role": "user",
 			"keys": [
 				"id",
@@ -249,8 +249,8 @@
 		},
 		{
 			"type": "message",
-			"id": "9deadc43",
-			"parentId": "5a4538f9",
+			"id": "01a502fe",
+			"parentId": "2ec53c6c",
 			"role": "assistant",
 			"stopReason": "stop",
 			"usage": {
