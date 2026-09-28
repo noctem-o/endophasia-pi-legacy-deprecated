@@ -341,6 +341,46 @@ describe("classification", () => {
 		expect(report.findings.find((finding) => finding.contract === "UsageLedgerRowV0")!.basis).toBe("contradicted");
 	});
 
+	it("binds the persisted compaction usage to the summary requests served", () => {
+		const run = fixture("compaction");
+		const double = (entries: typeof run.sessionEntries) =>
+			entries.map((entry) =>
+				entry.type === "compaction" && entry.usage !== undefined
+					? {
+							...entry,
+							usage: {
+								...entry.usage,
+								input: entry.usage.input * 2,
+								totalTokens: entry.usage.totalTokens * 2,
+							},
+						}
+					: entry,
+			);
+		const doubled = {
+			...run,
+			sessionEntries: double(run.sessionEntries),
+			entrySnapshots: run.entrySnapshots.map((s) => ({ ...s, entries: double(s.entries) })),
+		};
+		expect(buildPrimeConformanceReportV0(withScenario(doubled)).facts.providerUsageDecodedExactly).toBe(false);
+		const miscounted = { ...run, observations: { ...run.observations, summaryRequests: 1 } };
+		expect(buildPrimeConformanceReportV0(withScenario(miscounted)).facts.providerUsageDecodedExactly).toBe(false);
+	});
+
+	it("does not call usage exact when Prime reports a usage field the projections would drop", () => {
+		const run = fixture("simple");
+		const events = run.events.map((event) =>
+			(event.type === "message_end" || event.type === "turn_end") && event.assistant !== undefined
+				? {
+						...event,
+						assistant: { ...event.assistant, usage: { ...event.assistant.usage, extraKeys: ["billableTokens"] } },
+					}
+				: event,
+		);
+		const report = buildPrimeConformanceReportV0(withScenario({ ...run, events }));
+		expect(report.facts.providerUsageDecodedExactly).toBe(false);
+		expect(report.findings.find((finding) => finding.contract === "UsageLedgerRowV0")!.basis).toBe("contradicted");
+	});
+
 	it("rejects a full audited run whose facts stay unresolved", () => {
 		const compaction = fixture("compaction");
 		const odd = withStats(compaction, "after-compaction", (stats) => ({ ...stats, cost: stats.cost + 1 }));
@@ -698,6 +738,50 @@ describe("publication gate", () => {
 				const [moved] = events.splice(end, 1);
 				events.splice(turnEnd, 0, moved!);
 				return withScenario({ ...run, events });
+			},
+			"invalid",
+		],
+		[
+			"a tool completion without its start",
+			() => {
+				const run = fixture("tool-run");
+				return withScenario({
+					...run,
+					events: run.events.filter((event) => event.type !== "tool_execution_start"),
+				});
+			},
+			"invalid",
+		],
+		[
+			"a turn_start inside an active turn",
+			() => {
+				const run = fixture("simple");
+				const start = run.events.findIndex((event) => event.type === "turn_start");
+				const events = [...run.events];
+				events.splice(start + 1, 0, { type: "turn_start" });
+				return withScenario({ ...run, events });
+			},
+			"invalid",
+		],
+		[
+			"an agent_end whose final stop reason disagrees with the completed assistant",
+			() => {
+				const run = fixture("provider-failure");
+				const events = run.events.map((event) =>
+					(event.type === "message_end" || event.type === "turn_end") && event.assistant !== undefined
+						? { ...event, assistant: { ...event.assistant, stopReason: "stop" } }
+						: event,
+				);
+				return withScenario({ ...run, events });
+			},
+			"invalid",
+		],
+		[
+			"a second session header",
+			() => {
+				const run = fixture("simple");
+				const header = { ...run.sessionEntries[0]!, id: "second-header" };
+				return withScenario({ ...run, sessionEntries: [...run.sessionEntries, header] });
 			},
 			"invalid",
 		],

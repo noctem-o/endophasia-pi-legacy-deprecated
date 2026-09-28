@@ -7,7 +7,7 @@
 		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.5.0",
+		"probeVersion": "0.6.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "abort-tool"
@@ -205,7 +205,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0e9e7-47d1-75ff-880c-1c3e97d7c64f",
+			"id": "01a0ea1f-2df8-742a-8d13-d7db5aa1ed7a",
 			"keys": [
 				"cwd",
 				"id",
@@ -217,7 +217,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "b2d94e16",
+			"id": "9061291f",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -230,8 +230,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "9bd47f5c",
-			"parentId": "b2d94e16",
+			"id": "5b4229d6",
+			"parentId": "9061291f",
 			"keys": [
 				"id",
 				"parentId",
@@ -242,8 +242,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "3f0ecd60",
-			"parentId": "9bd47f5c",
+			"id": "836657cb",
+			"parentId": "5b4229d6",
 			"keys": [
 				"id",
 				"parentId",
@@ -254,8 +254,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "db054035",
-			"parentId": "3f0ecd60",
+			"id": "9c5f1d87",
+			"parentId": "836657cb",
 			"keys": [
 				"id",
 				"parentId",
@@ -266,8 +266,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "a36a54a3",
-			"parentId": "db054035",
+			"id": "ef1bd8ee",
+			"parentId": "9c5f1d87",
 			"keys": [
 				"content",
 				"customType",
@@ -281,8 +281,8 @@
 		},
 		{
 			"type": "message",
-			"id": "8b3e0f07",
-			"parentId": "a36a54a3",
+			"id": "7a4e32c6",
+			"parentId": "ef1bd8ee",
 			"keys": [
 				"id",
 				"message",
@@ -294,8 +294,8 @@
 		},
 		{
 			"type": "message",
-			"id": "fb92acb5",
-			"parentId": "8b3e0f07",
+			"id": "9d3cc1fc",
+			"parentId": "7a4e32c6",
 			"keys": [
 				"id",
 				"message",
@@ -323,8 +323,8 @@
 		},
 		{
 			"type": "message",
-			"id": "4c8757a5",
-			"parentId": "fb92acb5",
+			"id": "f278bb88",
+			"parentId": "9d3cc1fc",
 			"keys": [
 				"id",
 				"message",
@@ -351,7 +351,8 @@
 		"thinkingLevel"
 	],
 	"observations": {
-		"providerRequests": 1
+		"providerRequests": 1,
+		"summaryRequests": 0
 	},
 	"protocolErrors": [],
 	"failures": []

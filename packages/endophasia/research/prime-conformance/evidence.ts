@@ -5,7 +5,7 @@
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.5.0";
+export const PROBE_VERSION = "0.6.0";
 
 /**
  * How the Prime that ran is known:
@@ -111,6 +111,8 @@ export interface PrimeObservationsV0 {
 	/** Every entry the fork file shares by id with the original is identical to it (a copy, not a reused id). */
 	readonly forkSharedEntriesIdentical?: boolean;
 	readonly providerRequests?: number;
+	/** Summarization requests the fake served (all during compaction); what a compaction entry's usage must sum. */
+	readonly summaryRequests?: number;
 }
 
 /** The session file at a named moment, e.g. immediately before and after compaction, before later prompts add rows. */
@@ -208,6 +210,24 @@ export function isCountV0(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
+/**
+ * The terminal is classified from agent_end's final assistant stop reason, so it must repeat the stop reason of the
+ * run's last assistant message_end; evidence where they disagree contradicts itself.
+ */
+function runAgreementProblems(events: readonly PrimeEvidenceEventV0[]): string[] {
+	let last: string | undefined;
+	return events.flatMap((event, index) => {
+		if (event.type === "agent_start") last = undefined;
+		if (event.type === "message_end" && event.role === "assistant") last = event.assistant?.stopReason;
+		if (event.type !== "agent_end") return [];
+		const agrees = event.assistantStopReasons.at(-1) === last;
+		last = undefined;
+		return agrees
+			? []
+			: [`event ${index} (agent_end): its final stop reason does not match the run's last assistant message_end`];
+	});
+}
+
 /** Stats fields that do not hold a non-negative finite number. `contextUsageTokens` may be null or absent. */
 export function invalidStatsFieldsV0(stats: PrimeStatsEvidenceV0): string[] {
 	const fields: Record<string, unknown> = {
@@ -231,6 +251,11 @@ function entryProblems(where: string, entries: readonly PrimeSessionEntryEvidenc
 	const duplicates = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
 	return [
 		...duplicates.map(() => `${where}: an entry id repeats within one session file`),
+		...entries.flatMap((entry, index) =>
+			(entry.type === "session") === (index === 0)
+				? []
+				: [`${where} entry ${index}: the session header must be the first entry and only the first`],
+		),
 		...entries.flatMap((entry, index) => {
 			const label = `${where} entry ${index} (${entry.type})`;
 			return [
@@ -355,6 +380,7 @@ export function evidenceProblemsV0(run: PrimeScenarioEvidenceV0): string[] {
 	return [
 		...events,
 		...assistantAgreementProblems(run.events),
+		...runAgreementProblems(run.events),
 		...commandProblems(run.commands),
 		...entryProblems("final", run.sessionEntries),
 		...run.entrySnapshots.flatMap((snapshot) => entryProblems(`snapshot ${snapshot.label}`, snapshot.entries)),

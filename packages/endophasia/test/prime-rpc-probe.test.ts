@@ -455,6 +455,9 @@ describe("strict session-file decoding", () => {
 		expectDecodeError(() => decodePrimeSessionFileV0(`${file(header, lines.user)}\n\n`));
 		expectDecodeError(() => decodePrimeSessionFileV0(`${JSON.stringify(header)}\n\n${JSON.stringify(lines.user)}\n`));
 		expectDecodeError(() => decodePrimeSessionFileV0(`${file(header, lines.user, lines.user)}\n`));
+		// Exactly one header, on line 1: a concatenated file carries a second one.
+		expectDecodeError(() => decodePrimeSessionFileV0(`${file(header, lines.user, { ...header, id: "s2" })}\n`));
+		expectDecodeError(() => decodePrimeSessionFileV0(`${file(lines.user)}\n`));
 		expectDecodeError(() => decodePrimeSessionLineV0(JSON.stringify(mutate(lines.assistant!, ["parentId"], "")), 2));
 		const accounting = { type: "future_entry", id: "f1", parentId: "a2", timestamp: "t", usage };
 		expect(() => decodePrimeSessionLineV0(JSON.stringify(accounting), 3)).toThrow(

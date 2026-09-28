@@ -564,6 +564,7 @@ export async function runPrimeProbeV0(options: PrimeProbeOptionsV0): Promise<Pri
 			await fake.close();
 		}
 		run.observations.providerRequests = fake.requests.length;
+		run.observations.summaryRequests = fake.requests.filter((request) => request.kind === "summary").length;
 		for (const request of fake.requests) {
 			if (request.kind === "malformed") run.failures.push("provider received a malformed request");
 			if (request.kind === "unexpected")

@@ -389,6 +389,11 @@ export function decodePrimeSessionFileV0(content: string): PrimeSessionEntryEvid
 		if (raw.length === 0) throw new PrimeDecodeError(`session line ${index + 1} is empty`);
 		return decodePrimeSessionLineV0(raw, index + 1);
 	});
+	// Exactly one header, on line 1: a second header means a concatenated or corrupted file.
+	for (const [index, entry] of entries.entries()) {
+		if ((entry.type === "session") !== (index === 0))
+			throw new PrimeDecodeError(`session line ${index + 1}: the session header must be line 1 and only line 1`);
+	}
 	const seen = new Set<string>();
 	for (const [index, entry] of entries.entries()) {
 		if (seen.has(entry.id)) throw new PrimeDecodeError(`session line ${index + 1} repeats an entry id`);

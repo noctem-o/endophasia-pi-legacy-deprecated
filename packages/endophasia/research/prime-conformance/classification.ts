@@ -250,9 +250,31 @@ function providerUsageDecodedExactly(evidence: readonly PrimeScenarioEvidenceV0[
 				? { ...zero, cost: noCost, extraKeys: [] }
 				: { ...expectedPrimeUsageV0(name, PROBE_MODEL_COST), extraKeys: [] },
 		);
+	// A usage field Prime added (extraKeys) is an accounting dimension the projections would drop: not exact.
 	const matches = (observed: readonly (PrimeUsageEvidenceV0 | undefined)[], expected: PrimeUsageEvidenceV0[]) =>
 		observed.length === expected.length &&
-		observed.every((usage, index) => usage !== undefined && usageEqual(usage, expected[index]!));
+		observed.every(
+			(usage, index) => usage !== undefined && usage.extraKeys.length === 0 && usageEqual(usage, expected[index]!),
+		);
+	// Prime sums its summary calls into the compaction entry, and the fake serves each the same scripted summary.
+	const summaries = (count: number): PrimeUsageEvidenceV0 => {
+		const one = expectedPrimeUsageV0("summary", PROBE_MODEL_COST);
+		return {
+			input: one.input * count,
+			output: one.output * count,
+			cacheRead: one.cacheRead * count,
+			cacheWrite: one.cacheWrite * count,
+			totalTokens: one.totalTokens * count,
+			cost: {
+				input: one.cost.input * count,
+				output: one.cost.output * count,
+				cacheRead: one.cost.cacheRead * count,
+				cacheWrite: one.cost.cacheWrite * count,
+				total: one.cost.total * count,
+			},
+			extraKeys: [],
+		};
+	};
 	return checked.every((run) => {
 		const live = run.events.flatMap((event) =>
 			event.type === "message_end" && event.assistant !== undefined ? [event.assistant.usage] : [],
@@ -261,9 +283,15 @@ function providerUsageDecodedExactly(evidence: readonly PrimeScenarioEvidenceV0[
 		const persisted = run.sessionEntries.flatMap((entry) =>
 			entry.type === "message" && entry.role === "assistant" ? [entry.usage] : [],
 		);
+		const compactions = run.sessionEntries.filter((entry) => entry.type === "compaction");
 		return (
 			matches(live, script(EXPECTED_ASSISTANT_USAGE[run.provenance.scenario]!)) &&
-			(persistedScript === undefined || matches(persisted, script(persistedScript)))
+			(persistedScript === undefined || matches(persisted, script(persistedScript))) &&
+			(compactions.length === 0 ||
+				matches(
+					compactions.map((entry) => entry.usage),
+					compactions.map(() => summaries(run.observations.summaryRequests ?? 0)),
+				))
 		);
 	});
 }

@@ -72,7 +72,9 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 	const abortAfter = [...(input.abortRequestedAfter ?? [])];
 	let sequence = 0;
 	let runCount = 0;
-	let run: { id: string; turns: number; turnId: string | undefined; abortRequested: boolean } | undefined;
+	let run:
+		| { id: string; turns: number; turnId: string | undefined; abortRequested: boolean; tools: Set<string> }
+		| undefined;
 	const lane = PRIME_ROOT_LANE_LABEL;
 	const push = (event: TraceInputV0): void => {
 		events.push({ ...event, schemaVersion: "mission-trace.v0", sequence: ++sequence } as MissionTraceEventV0);
@@ -85,7 +87,13 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 		switch (item.type) {
 			case "agent_start": {
 				runCount += 1;
-				run = { id: `${ADAPTER_ID_PREFIX}run-${runCount}`, turns: 0, turnId: undefined, abortRequested: false };
+				run = {
+					id: `${ADAPTER_ID_PREFIX}run-${runCount}`,
+					turns: 0,
+					turnId: undefined,
+					abortRequested: false,
+					tools: new Set(),
+				};
 				// Abort requests before this run belong to earlier runs.
 				for (let i = abortAfter.length - 1; i >= 0; i--) if (abortAfter[i]! < index) abortAfter.splice(i, 1);
 				push({ kind: "mission.started", lane, runId: run.id });
@@ -94,6 +102,11 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 			case "turn_start": {
 				if (run === undefined) {
 					misplace(`turn_start outside a run at ${index}`);
+					continue;
+				}
+				// A turn never nests: replacing the active turn would leave it unfinished.
+				if (run.turnId !== undefined) {
+					misplace(`turn_start inside an active turn at ${index}`);
 					continue;
 				}
 				run.turns += 1;
@@ -116,6 +129,11 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 					continue;
 				}
 				const { toolCallId, toolName } = item;
+				if (run.tools.has(toolCallId)) {
+					misplace(`tool_execution_start repeated for an active tool call at ${index}`);
+					continue;
+				}
+				run.tools.add(toolCallId);
 				push({ kind: "tool.started", lane, runId: run.id, turnId: run.turnId, toolCallId, toolName });
 				continue;
 			}
@@ -125,6 +143,11 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 					continue;
 				}
 				const { toolCallId, toolName, isError } = item;
+				// A completion is mapped only for a call that started: an end alone would claim a lifecycle never seen.
+				if (!run.tools.delete(toolCallId)) {
+					misplace(`tool_execution_end without its tool_execution_start at ${index}`);
+					continue;
+				}
 				push({ kind: "tool.finished", lane, runId: run.id, turnId: run.turnId, toolCallId, toolName, isError });
 				continue;
 			}

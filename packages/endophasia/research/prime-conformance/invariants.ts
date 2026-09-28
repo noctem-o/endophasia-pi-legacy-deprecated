@@ -140,7 +140,7 @@ function probeModel(): Invariant {
 			: [];
 }
 
-const COMMON: Invariant[] = [sessionFileRead(), observed("providerRequests"), probeModel()];
+const COMMON: Invariant[] = [sessionFileRead(), observed("providerRequests", "summaryRequests"), probeModel()];
 
 const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 	simple: [runs(1), stats("after"), refusals(0)],
@@ -179,6 +179,7 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		stats("before-compaction", "after-compaction", "after-next-prompt"),
 		succeeded("compact"),
 		compactionSnapshots(),
+		(run) => ((run.observations.summaryRequests ?? 0) >= 1 ? [] : ["the compaction made no summary request"]),
 		observed("plainPromptAfterCompactionAdmitted", "followUpAfterCompactionAdmitted"),
 		refusals(1),
 	],
