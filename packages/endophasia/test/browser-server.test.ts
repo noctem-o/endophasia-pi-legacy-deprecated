@@ -18,6 +18,7 @@ import {
 import { SessionManagement } from "@earendil-works/pi-coding-agent/experimental/services/sessions";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
+import { CockpitController } from "../cockpit/controller.ts";
 import { type EndophasiaPresentationClientV0, openEndophasiaPresentationClientV0 } from "../presentation/client.ts";
 import { type BrowserWebSocket, createBrowserWebSocketTransportFactory } from "../presentation/websocket-transport.ts";
 import { type RunningEndophasiaBrowserServer, startEndophasiaBrowserServer } from "../runtime/browser-server.ts";
@@ -310,6 +311,61 @@ describe("Endophasia browser server", () => {
 			expect(JSON.stringify(outcome)).not.toMatch(/message|details|stack/);
 		} finally {
 			await control.dispose();
+		}
+		expect(errors).toEqual([]);
+	});
+
+	it("delivers durable usage rows live over the WebSocket, readable again as a durable page", async () => {
+		const server = await startClosedLocalServer("endophasia-browser-usage-");
+		const errors: Error[] = [];
+		const browser = await openPresentation(server.serverId, browserTransport(server.browser.url), errors);
+		await browser.attach("browser", BACKGROUND_CONTEXT);
+		expect(browser.usage.value).toEqual({
+			schemaVersion: "usage-observation.v0",
+			scope: "session",
+			hasEarlierRows: false,
+			rows: [],
+		});
+		const revisions: number[] = [];
+		browser.usage.subscribe((value) => revisions.push(value.rows.length));
+
+		const control = await promptFromControlClient(server, "browser", "user-prompt-sentinel");
+		try {
+			// The failed request's accounted usage arrives as a durable row, live, with no reload.
+			await expect.poll(() => browser.usage.value?.rows.length ?? 0, { timeout: 20_000 }).toBeGreaterThan(0);
+			const live = browser.usage.value?.rows ?? [];
+			const page = await browser.usagePage(undefined, BACKGROUND_CONTEXT);
+			expect(page.rows).toEqual(live);
+			expect(page).toMatchObject({ schemaVersion: "usage-ledger.v0", scope: "session", order: "ascending" });
+			expect(revisions.length).toBeGreaterThanOrEqual(1);
+			for (const value of [browser.usage.value, page]) {
+				expect(JSON.stringify(value)).not.toMatch(/user-prompt-sentinel|test-key|closed-local|127\.0\.0\.1|error/i);
+			}
+		} finally {
+			await control.dispose();
+		}
+
+		// Switching Sessions through the Standard Cockpit controller never shows the previous Session's usage.
+		const controller = new CockpitController({
+			presentation: browser,
+			render: () => {},
+			schedule: (callback) => queueMicrotask(callback),
+		});
+		try {
+			expect(controller.usage).toMatchObject({ status: "visible", sessionId: "browser" });
+			controller.select("unix");
+			// The browser Session's rows are still hydrated underneath, but hidden at once.
+			expect(browser.usage.value?.rows.length).toBeGreaterThan(0);
+			expect(controller.usage).toEqual({ status: "hidden", reason: "switching" });
+			await expect.poll(() => controller.pendingSelection, { timeout: 20_000 }).toBeUndefined();
+			expect(browser.attachment.value).toEqual({ status: "attached", sessionId: "unix" });
+			expect(controller.usage).toMatchObject({
+				status: "visible",
+				sessionId: "unix",
+				observation: { hasEarlierRows: false, rows: [] },
+			});
+		} finally {
+			controller.dispose();
 		}
 		expect(errors).toEqual([]);
 	});

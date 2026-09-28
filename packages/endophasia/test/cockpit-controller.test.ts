@@ -10,7 +10,13 @@ import type { TranscriptState } from "@earendil-works/pi-coding-agent/experiment
 import { describe, expect, it } from "vitest";
 import { CockpitController, type CockpitPresentation, type CockpitRegion } from "../cockpit/controller.ts";
 import { projectAttachment, projectSessions } from "../cockpit/view-model.ts";
-import type { MissionTraceEventV0, MissionTraceObservationV0, RuntimeMetricsV0 } from "../src/index.ts";
+import type {
+	MissionTraceEventV0,
+	MissionTraceObservationV0,
+	RuntimeMetricsV0,
+	UsageLedgerRowV0,
+	UsageObservationV0,
+} from "../src/index.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 
 type Listener<T> = Parameters<ReplicatedState<T>["subscribe"]>[0];
@@ -85,6 +91,26 @@ function observation(...events: MissionTraceEventV0[]): MissionTraceObservationV
 	return { schemaVersion: "mission-trace-observation.v0", scope: "session-worker-lifetime", events };
 }
 
+function usageRow(sequence: number, totalTokens: number): UsageLedgerRowV0 {
+	return {
+		id: `u${sequence}`,
+		sequence,
+		adjustment: false,
+		usage: {
+			input: totalTokens,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+	};
+}
+
+function usageObservation(...rows: UsageLedgerRowV0[]): UsageObservationV0 {
+	return { schemaVersion: "usage-observation.v0", scope: "session", hasEarlierRows: false, rows };
+}
+
 function fixture() {
 	const connection = new FakeState<ServerConnectionState>({ status: "connected", since: "2026-01-01T00:00:00.000Z" });
 	const attachment = new FakeState<SessionAttachmentState>({ status: "detached" });
@@ -92,6 +118,7 @@ function fixture() {
 	const transcript = new FakeState<TranscriptState>();
 	const models = new FakeState<ModelsState>();
 	const missionTrace = new FakeState<MissionTraceObservationV0>();
+	const usage = new FakeState<UsageObservationV0>();
 	const attachCalls: string[] = [];
 	const attaches: Deferred<void>[] = [];
 	const overviews: Deferred<SessionOverviewV0>[] = [];
@@ -103,6 +130,7 @@ function fixture() {
 		transcript,
 		models,
 		missionTrace,
+		usage,
 		attach(sessionId) {
 			attachCalls.push(sessionId);
 			const next = deferred<void>();
@@ -148,6 +176,7 @@ function fixture() {
 		transcript,
 		models,
 		missionTrace,
+		usage,
 		attachCalls,
 		attaches,
 		overviews,
@@ -330,7 +359,7 @@ describe("Standard Cockpit controller", () => {
 	});
 
 	it("contains render failures and bounds diagnostics without breaking the lifecycle", () => {
-		const { connection, attachment, sessions, transcript, models, missionTrace } = fixture();
+		const { connection, attachment, sessions, transcript, models, missionTrace, usage } = fixture();
 		const scheduled: (() => void)[] = [];
 		let calls = 0;
 		const controller = new CockpitController({
@@ -341,6 +370,7 @@ describe("Standard Cockpit controller", () => {
 				transcript,
 				models,
 				missionTrace,
+				usage,
 				attach: async () => {},
 				detach: async () => {},
 				sessionOverview: async () => overview("x"),
@@ -541,6 +571,66 @@ describe("Standard Cockpit controller", () => {
 			await corrected;
 			expect(controller.accounting).toMatchObject({ status: "captured", metrics: metrics(-80, -15) });
 			controller.dispose();
+		});
+	});
+
+	describe("Usage Activity", () => {
+		it("redraws only the usage region for a usage row, and never captures accounting", async () => {
+			const { controller, attachment, usage, accounting, renders, flush } = fixture();
+			attachment.set({ status: "attached", sessionId: "a" });
+			flush();
+			renders.length = 0;
+			usage.set(usageObservation(usageRow(3, 10)));
+			usage.set(usageObservation(usageRow(3, 10), usageRow(8, 20)));
+			flush();
+			expect(renders).toEqual([new Set(["usage"])]);
+			await settle();
+			// Session Accounting stays an explicit capture: usage rows never request it.
+			expect(accounting).toHaveLength(0);
+			expect(controller.accounting).toEqual({ status: "none" });
+			controller.dispose();
+		});
+
+		it("never presents Session A's usage while Session B is being selected or attached", async () => {
+			const { controller, attachment, usage, completeAttach } = fixture();
+			attachment.set({ status: "attached", sessionId: "a" });
+			usage.set(usageObservation(usageRow(3, 10)));
+			expect(controller.usage).toMatchObject({ status: "visible", sessionId: "a" });
+
+			// B is requested while A's usage is still hydrated underneath: it disappears at once.
+			controller.select("b");
+			expect(usage.value?.rows[0]?.id).toBe("u3");
+			expect(controller.usage).toEqual({ status: "hidden", reason: "switching" });
+			attachment.set({ status: "attaching", sessionId: "b" });
+			expect(controller.usage).toEqual({ status: "hidden", reason: "switching" });
+			await completeAttach(0, "b");
+			// Pi's rebinding delivers B's observation; only then, with B attached, is anything shown.
+			usage.set(usageObservation(usageRow(5, 99)));
+			const visible = controller.usage;
+			expect(visible).toMatchObject({ status: "visible", sessionId: "b" });
+			expect(visible.status === "visible" && visible.observation.rows[0]?.id).toBe("u5");
+			controller.dispose();
+		});
+
+		it("hides lingering usage for attaching, degraded, detached and unhydrated states", () => {
+			const { controller, attachment, usage } = fixture();
+			usage.set(usageObservation(usageRow(3, 10)));
+			expect(controller.usage).toEqual({ status: "hidden", reason: "detached" });
+			attachment.set({ status: "attaching", sessionId: "x" });
+			expect(controller.usage).toEqual({ status: "hidden", reason: "attaching" });
+			attachment.set({ status: "degraded", sessionId: "x" });
+			expect(controller.usage).toEqual({ status: "hidden", reason: "degraded" });
+			attachment.set({ status: "detached" });
+			expect(controller.usage).toEqual({ status: "hidden", reason: "detached" });
+
+			const unhydrated = fixture();
+			unhydrated.attachment.set({ status: "attached", sessionId: "y" });
+			expect(unhydrated.controller.usage).toEqual({ status: "hidden", reason: "hydrating" });
+			// A real observation with no rows is shown as such, not confused with an absent service.
+			unhydrated.usage.set(usageObservation());
+			expect(unhydrated.controller.usage).toMatchObject({ status: "visible", observation: { rows: [] } });
+			controller.dispose();
+			unhydrated.controller.dispose();
 		});
 	});
 });

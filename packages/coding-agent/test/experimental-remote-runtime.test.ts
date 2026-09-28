@@ -785,7 +785,12 @@ describe("experimental durable server composition", () => {
 		} finally {
 			await services.dispose(BACKGROUND_CONTEXT);
 		}
-		expect(readHostWorkerLog(log)).toEqual([{ pid: firstPid, event: "host-facets", keys: ["harness"] }]);
+		// The host receives the harness and a frozen, scanUsage-only reader of the same Session: never the Session itself.
+		const hostRuntime = {
+			keys: ["harness", "usageReader"],
+			usageReader: { keys: ["scanUsage"], frozen: true, rows: 0 },
+		};
+		expect(readHostWorkerLog(log)).toEqual([{ pid: firstPid, event: "host-facets", ...hostRuntime }]);
 
 		// A replacement worker builds its own host facets.
 		process.kill(firstPid!, "SIGKILL");
@@ -794,8 +799,8 @@ describe("experimental durable server composition", () => {
 		const secondPid = runtime.workerPids.get("demo-1");
 		expect(secondPid).not.toBe(firstPid);
 		expect(readHostWorkerLog(log).filter((entry) => entry.event === "host-facets")).toEqual([
-			{ pid: firstPid, event: "host-facets", keys: ["harness"] },
-			{ pid: secondPid, event: "host-facets", keys: ["harness"] },
+			{ pid: firstPid, event: "host-facets", ...hostRuntime },
+			{ pid: secondPid, event: "host-facets", ...hostRuntime },
 		]);
 	});
 

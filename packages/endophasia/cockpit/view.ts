@@ -17,6 +17,7 @@ import {
 	projectRuntimeMetrics,
 	projectSessionOverview,
 	projectSessions,
+	projectUsage,
 	projectVisibleTranscript,
 	type StatusView,
 	type VisibleEntryCache,
@@ -173,6 +174,20 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 	const traceNote = el("p", "trace-note", "Recent events of this Session worker · ordered by sequence, not time");
 	const traceBody = el("div", "trace-body");
 	traceSection.append(traceHeader, traceNote, traceBody);
+	const usageSection = el("section", "inspector-section usage");
+	usageSection.setAttribute("aria-label", "Usage Activity");
+	const usageHeader = el("div", "section-header");
+	usageHeader.append(
+		el("h3", "section-title", "Usage Activity"),
+		el("span", "chip", "Live · durable Session records"),
+	);
+	const usageNote = el(
+		"p",
+		"trace-note",
+		"Ordered by #sequence, the Session's accounting order shared with its other records · no times",
+	);
+	const usageBody = el("div", "usage-body");
+	usageSection.append(usageHeader, usageNote, usageBody);
 	const overviewSection = el("section", "inspector-section overview");
 	const accountingSection = el("section", "inspector-section accounting");
 	accountingSection.setAttribute("aria-label", "Session Accounting");
@@ -182,6 +197,7 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 		modelSection,
 		laneSection,
 		traceSection,
+		usageSection,
 		overviewSection,
 		accountingSection,
 	);
@@ -528,6 +544,43 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 		traceBody.replaceChildren(...parts);
 	};
 
+	const renderUsage = (controller: CockpitController): void => {
+		const usage = controller.usage;
+		if (usage.status === "hidden") {
+			const message = {
+				detached: "Attach a Session to observe its usage records.",
+				switching: "Hidden while the observed Session changes.",
+				attaching: "Hidden until the Session is attached.",
+				degraded: "Unavailable: the Session attachment is degraded.",
+				hydrating: "Waiting for the usage records to hydrate.",
+			}[usage.reason];
+			usageBody.replaceChildren(el("p", "muted", message));
+			return;
+		}
+		const view = projectUsage(usage.observation);
+		const parts: HTMLElement[] = [];
+		if (view.rows.length === 0) {
+			parts.push(el("p", "muted", "No usage records yet."));
+		} else {
+			const list = el("ol", "usage-list");
+			for (const row of view.rows) {
+				const item = el("li", `usage-row${row.label === "adjustment" ? " adjustment" : ""}`);
+				const head = el("div", "usage-row-head");
+				head.append(el("span", "trace-sequence", row.sequence), el("span", "usage-label", row.label));
+				item.append(
+					head,
+					el("div", "usage-totals mono", row.totals),
+					el("div", "usage-detail mono", `${row.cost} · ${row.detail}`),
+				);
+				list.append(item);
+			}
+			parts.push(list);
+		}
+		if (view.window !== undefined) parts.push(el("p", "trace-window", view.window));
+		if (view.earlier !== undefined) parts.push(el("p", "trace-window", view.earlier));
+		usageBody.replaceChildren(...parts);
+	};
+
 	const renderDiagnostics = (controller: CockpitController): void => {
 		const latest = controller.diagnostics[0];
 		const diagnostic = el("div", "diagnostic");
@@ -553,6 +606,7 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 			if (regions.has("transcript")) renderTranscript(controller);
 			if (regions.has("inspector")) renderInspector(controller);
 			if (regions.has("trace")) renderTrace(controller);
+			if (regions.has("usage")) renderUsage(controller);
 			if (regions.has("diagnostics")) renderDiagnostics(controller);
 		},
 	};

@@ -3,8 +3,9 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { JsonlSessionRepo } from "@earendil-works/pi-agent-core";
+import { AgentHarness, JsonlSessionRepo } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import { createModels, fauxProvider } from "@earendil-works/pi-ai";
 import { Client } from "@earendil-works/pi-client";
 import { createUnixTransportFactory } from "@earendil-works/pi-client/unix";
 import { type RunningServer, startServer } from "@earendil-works/pi-coding-agent/experimental/server";
@@ -19,7 +20,13 @@ import { SessionManagement } from "@earendil-works/pi-coding-agent/experimental/
 import { Transcript } from "@earendil-works/pi-coding-agent/experimental/services/transcript";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type EndophasiaServerOptions, startEndophasiaServer } from "../runtime/server.ts";
-import { EndophasiaInspectorV0, EndophasiaMissionTraceV0, EndophasiaRuntimeFactsV0 } from "../src/index.ts";
+import {
+	EndophasiaInspectorV0,
+	EndophasiaMissionTraceV0,
+	EndophasiaRuntimeFactsV0,
+	EndophasiaUsageV0,
+	type UsageObservationV0,
+} from "../src/index.ts";
 
 const directories: string[] = [];
 const servers: RunningServer[] = [];
@@ -91,6 +98,55 @@ async function sessionCatalogue(client: Client): Promise<string[]> {
 	}
 }
 
+/** Record usage rows durably in a stored Session through a short-lived local harness, while no worker holds it. */
+async function recordDurableUsage(agentDir: string, sessionId: string, totals: readonly number[]): Promise<void> {
+	const fileSystem = new NodeExecutionEnv({ cwd: process.cwd() });
+	const repo = new JsonlSessionRepo({ fileSystem, sessionsRoot: join(agentDir, "experimental", "sessions") });
+	try {
+		const metadata = (await repo.list({ cwd: process.cwd() }, BACKGROUND_CONTEXT)).find(({ id }) => id === sessionId);
+		if (metadata === undefined) throw new Error(`Unknown Session ${sessionId}`);
+		const session = await repo.open(metadata, BACKGROUND_CONTEXT);
+		const faux = fauxProvider();
+		const models = createModels();
+		models.setProvider(faux.provider);
+		const { harness } = await AgentHarness.create({ session, models, model: faux.getModel() }, BACKGROUND_CONTEXT);
+		try {
+			const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+			for (const totalTokens of totals) {
+				const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+				const recorded = await lane.recordUsage(
+					{ input: totalTokens, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens, cost },
+					undefined,
+					BACKGROUND_CONTEXT,
+				);
+				if (!recorded.ok) throw recorded.error;
+			}
+		} finally {
+			await harness.close(BACKGROUND_CONTEXT);
+			await session.close(BACKGROUND_CONTEXT);
+		}
+	} finally {
+		await repo.close(BACKGROUND_CONTEXT);
+		await fileSystem.cleanup(BACKGROUND_CONTEXT);
+	}
+}
+
+/** Read the attached Session's hydrated Usage observation through an ordinary Pi client. */
+async function usageObservation(client: Client, sessionId: string): Promise<UsageObservationV0 | undefined> {
+	const source = createSessionServiceSource(client);
+	const services = source.open({ services: [EndophasiaUsageV0], assertAccess() {}, onError() {} });
+	try {
+		await services.ready(BACKGROUND_CONTEXT);
+		await source.whenAttached(sessionId, BACKGROUND_CONTEXT);
+		const state = services.use(EndophasiaUsageV0).state;
+		await expect.poll(() => state.value, { timeout: 10_000 }).toBeDefined();
+		return state.value;
+	} finally {
+		await services.dispose(BACKGROUND_CONTEXT);
+		await source.dispose(BACKGROUND_CONTEXT);
+	}
+}
+
 describe("Endophasia runtime v0", () => {
 	it("serves endophasia.inspector.v0 from a real Endophasia Session worker process", async () => {
 		// An untyped caller cannot replace the Endophasia worker entry: this module does not exist.
@@ -108,6 +164,7 @@ describe("Endophasia runtime v0", () => {
 		expect(catalogue.filter((id) => id === EndophasiaInspectorV0.id)).toHaveLength(1);
 		expect(catalogue.filter((id) => id === EndophasiaMissionTraceV0.id)).toHaveLength(1);
 		expect(catalogue.filter((id) => id === EndophasiaRuntimeFactsV0.id)).toHaveLength(1);
+		expect(catalogue.filter((id) => id === EndophasiaUsageV0.id)).toHaveLength(1);
 		for (const service of [AgentController, Models, Transcript, SessionPlugins]) {
 			expect(catalogue).toContain(service.id);
 		}
@@ -152,19 +209,54 @@ describe("Endophasia runtime v0", () => {
 			await source.dispose(BACKGROUND_CONTEXT);
 		}
 
-		// Compared with a plain Pi server's worker, the Endophasia worker adds exactly Inspector, Mission Trace and
-		// Runtime Facts.
+		// Compared with a plain Pi server's worker, the Endophasia worker adds exactly Inspector, Mission Trace, Runtime
+		// Facts and Usage.
 		const plain = await startServer({ ...workerModel, directory: await temporaryDirectory("endophasia-plain-") });
 		servers.push(plain);
 		const plainCatalogue = await sessionCatalogue(await attach(plain, "plain"));
 		expect(plainCatalogue).not.toContain(EndophasiaInspectorV0.id);
 		expect(plainCatalogue).not.toContain(EndophasiaMissionTraceV0.id);
 		expect(plainCatalogue).not.toContain(EndophasiaRuntimeFactsV0.id);
-		// The Endophasia worker adds exactly its three trusted host services, no more and no less.
+		expect(plainCatalogue).not.toContain(EndophasiaUsageV0.id);
+		// The Endophasia worker adds exactly its four trusted host services, no more and no less.
 		expect(catalogue.filter((id) => !plainCatalogue.includes(id)).sort()).toEqual(
-			[EndophasiaInspectorV0.id, EndophasiaMissionTraceV0.id, EndophasiaRuntimeFactsV0.id].sort(),
+			[
+				EndophasiaInspectorV0.id,
+				EndophasiaMissionTraceV0.id,
+				EndophasiaRuntimeFactsV0.id,
+				EndophasiaUsageV0.id,
+			].sort(),
 		);
 		expect(plainCatalogue.filter((id) => !catalogue.includes(id))).toEqual([]);
+	});
+
+	it("reseeds a new worker's Usage observation from the durable ledger, not from worker memory", async () => {
+		const agentDir = process.env.PI_CODING_AGENT_DIR;
+		if (agentDir === undefined) throw new Error("PI_CODING_AGENT_DIR is not set");
+		await recordDurableUsage(agentDir, "endophasia", [3, 5]);
+		const server = await startEndophasiaServer({
+			...workerModel,
+			directory: await temporaryDirectory("endophasia-usage-restart-"),
+		});
+		servers.push(server);
+
+		const first = await attach(server, "endophasia");
+		const firstPid = server.workerPids.get("endophasia");
+		const seededByA = await usageObservation(first, "endophasia");
+		expect(seededByA?.rows.map((row) => row.usage.totalTokens)).toEqual([3, 5]);
+		expect(seededByA?.hasEarlierRows).toBe(false);
+		clients.splice(clients.indexOf(first), 1);
+		await first.dispose();
+		await expect.poll(() => server.workerPids.size, { timeout: 10_000 }).toBe(0);
+
+		// Written while no worker runs: only the durable ledger can carry it to the next worker.
+		await recordDurableUsage(agentDir, "endophasia", [8]);
+		const second = await attach(server, "endophasia");
+		expect(server.workerPids.get("endophasia")).not.toBe(firstPid);
+		const seededByB = await usageObservation(second, "endophasia");
+		expect(seededByB?.rows.map((row) => row.usage.totalTokens)).toEqual([3, 5, 8]);
+		expect(seededByB?.rows.slice(0, 2)).toEqual(seededByA?.rows);
+		expect(seededByB?.hasEarlierRows).toBe(false);
 	});
 
 	it("loads in plain Node with coding-agent's source resolver preloaded, without Vitest aliases", async () => {

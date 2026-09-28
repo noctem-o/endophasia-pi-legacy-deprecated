@@ -804,13 +804,31 @@ export async function runSessionWorkerWithHarness(
 	}
 }
 
+/** Durable usage reads of the worker's Session, and nothing else of it. */
+export type SessionUsageReader = Pick<Session, "scanUsage">;
+
+/** What trusted host code receives from the worker: its harness, and a read-only view of the same Session's usage. */
+export interface CodingAgentSessionWorkerHostRuntime {
+	readonly harness: AgentHarnessInstance;
+	/** Belongs to the same Session as `harness`, so its usage events and durable usage rows describe one ledger. */
+	readonly usageReader: SessionUsageReader;
+}
+
 /** Trusted application code that runs inside a coding-agent Session worker process. */
 export interface CodingAgentSessionWorkerHost {
 	/**
 	 * Build host-owned facets once the worker's harness exists. Runs once per worker process, before any Session plugin
 	 * loads; the facets share the worker's lifetime and are never part of plugin reload. Throwing fails worker startup.
 	 */
-	createHostFacets?(runtime: { readonly harness: AgentHarnessInstance }): readonly Facet[] | Promise<readonly Facet[]>;
+	createHostFacets?(runtime: CodingAgentSessionWorkerHostRuntime): readonly Facet[] | Promise<readonly Facet[]>;
+}
+
+/**
+ * A frozen capability that forwards only scanUsage to the Session. The Session object itself is never exposed, so a
+ * holder cannot reach its mutation or other read methods, even by casting.
+ */
+export function createSessionUsageReader(session: SessionUsageReader): SessionUsageReader {
+	return Object.freeze({ scanUsage: (query, context) => session.scanUsage(query, context) });
 }
 
 /** Run the standard coding-agent Session worker, optionally with trusted host facets. */
@@ -876,7 +894,9 @@ async function createCodingAgentHarness(
 		) {
 			await lane.setActiveTools(activeToolNames, TODO_CONTEXT);
 		}
-		const hostFacets = await host.createHostFacets?.(Object.freeze({ harness }));
+		const hostFacets = await host.createHostFacets?.(
+			Object.freeze({ harness, usageReader: createSessionUsageReader(session) }),
+		);
 		return {
 			harness,
 			lane,

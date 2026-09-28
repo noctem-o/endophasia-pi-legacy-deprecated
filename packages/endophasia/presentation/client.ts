@@ -23,6 +23,8 @@ import { EndophasiaMissionTraceV0, type MissionTraceObservationV0 } from "../src
 import { EndophasiaRuntimeFactsV0 } from "../src/runtime-facts-service.ts";
 import type { RuntimeMetricsV0 } from "../src/runtime-metrics.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
+import type { UsageLedgerPageV0, UsageLedgerQueryV0 } from "../src/usage-ledger.ts";
+import { EndophasiaUsageV0, type UsageObservationV0 } from "../src/usage-service.ts";
 
 /**
  * Read-only presentation view of one Endophasia server. Each state is Pi's own replicated state with its own
@@ -45,8 +47,14 @@ export interface EndophasiaPresentationClientV0 {
 	 */
 	readonly missionTrace: ReplicatedState<MissionTraceObservationV0>;
 	/**
-	 * Attach a Session and wait until its services, including the Endophasia Inspector, Mission Trace and Runtime Facts,
-	 * hydrate. A worker missing any of them attaches degraded.
+	 * The attached Session's most recent durable usage records, live. This is durable Session history, bounded to a
+	 * trailing window: hasEarlierRows says older rows exist, which usagePage() still reads. Like every Session state, a
+	 * value may briefly belong to the previous attachment while the Session changes.
+	 */
+	readonly usage: ReplicatedState<UsageObservationV0>;
+	/**
+	 * Attach a Session and wait until its services, including the Endophasia Inspector, Mission Trace, Runtime Facts and
+	 * Usage, hydrate. A worker missing any of them attaches degraded.
 	 */
 	attach(sessionId: string, context: Context): Promise<void>;
 	/** Detach the current Session and wait until its services are released. */
@@ -63,6 +71,11 @@ export interface EndophasiaPresentationClientV0 {
 	 * durable result exists for this ID at this read.
 	 */
 	operationOutcome(operationId: string, context: Context): Promise<OperationOutcomeV0 | null>;
+	/**
+	 * A forward page of the attached Session's durable usage rows after an exclusive sequence cursor, read on every call.
+	 * Without a query it reads from the start with the default limit. Not an atomic snapshot of the ledger.
+	 */
+	usagePage(query: UsageLedgerQueryV0 | undefined, context: Context): Promise<UsageLedgerPageV0>;
 	/** Dispose the service bindings and the Pi client. Every call returns the same disposal promise. */
 	dispose(): Promise<void>;
 }
@@ -118,13 +131,21 @@ export async function openEndophasiaPresentationClientV0(
 			onError,
 		});
 		const sessionServices = session.open({
-			services: [Transcript, Models, EndophasiaInspectorV0, EndophasiaMissionTraceV0, EndophasiaRuntimeFactsV0],
+			services: [
+				Transcript,
+				Models,
+				EndophasiaInspectorV0,
+				EndophasiaMissionTraceV0,
+				EndophasiaRuntimeFactsV0,
+				EndophasiaUsageV0,
+			],
 			assertAccess() {},
 			onError,
 		});
 		const management = serverServices.use(SessionManagement);
 		const inspector = sessionServices.use(EndophasiaInspectorV0);
 		const runtimeFacts = sessionServices.use(EndophasiaRuntimeFactsV0);
+		const usage = sessionServices.use(EndophasiaUsageV0);
 		const presentation: EndophasiaPresentationClientV0 = {
 			connection: server.connection,
 			attachment: session.attachment,
@@ -132,6 +153,7 @@ export async function openEndophasiaPresentationClientV0(
 			transcript: sessionServices.use(Transcript).state,
 			models: sessionServices.use(Models).state,
 			missionTrace: sessionServices.use(EndophasiaMissionTraceV0).state,
+			usage: usage.state,
 			async attach(sessionId, context) {
 				await management.attach(sessionId, context);
 				await session.whenAttached(sessionId, context);
@@ -143,6 +165,8 @@ export async function openEndophasiaPresentationClientV0(
 			sessionOverview: (context) => inspector.sessionOverview(context),
 			runtimeMetrics: (context) => runtimeFacts.runtimeMetrics(context),
 			operationOutcome: (operationId, context) => runtimeFacts.operationOutcome(operationId, context),
+			// A remote argument cannot be undefined: the default query crosses as an empty object.
+			usagePage: (query, context) => usage.page(query ?? {}, context),
 			dispose,
 		};
 		await Promise.all([serverServices.ready(BACKGROUND_CONTEXT), sessionServices.ready(BACKGROUND_CONTEXT)]);

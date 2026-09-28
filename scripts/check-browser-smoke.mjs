@@ -155,6 +155,7 @@ try {
 				"packages/endophasia/cockpit/controller.ts",
 				"packages/endophasia/src/mission-trace-service.ts",
 				"packages/endophasia/src/runtime-facts-service.ts",
+				"packages/endophasia/src/usage-service.ts",
 				"packages/endophasia/presentation/websocket-transport.ts",
 				"packages/endophasia/presentation/client.ts",
 				"packages/client/src/client.ts",
@@ -186,6 +187,10 @@ try {
 				normalized.includes("node_modules/esbuild/") ||
 				normalized.includes("packages/endophasia/runtime/") ||
 				normalized.includes("packages/agent/src/") ||
+				// The Usage contract is bundled; the durable ledger, feed and host facet stay on the host.
+				normalized.endsWith("packages/endophasia/src/usage-facet.ts") ||
+				normalized.endsWith("packages/endophasia/src/usage-feed.ts") ||
+				normalized.endsWith("packages/endophasia/src/usage-ledger.ts") ||
 				normalized.includes("packages/server/") ||
 				normalized.endsWith("packages/client/src/unix.ts") ||
 				normalized.endsWith("packages/coding-agent/src/experimental/server.ts")

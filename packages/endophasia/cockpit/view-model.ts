@@ -10,6 +10,8 @@ import type { ModelsState } from "@earendil-works/pi-coding-agent/experimental/s
 import type { SessionDirectoryState } from "@earendil-works/pi-coding-agent/experimental/services/sessions";
 import type { RuntimeMetricsV0 } from "../src/runtime-metrics.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
+import type { UsageLedgerRowV0 } from "../src/usage-ledger.ts";
+import type { UsageObservationV0 } from "../src/usage-service.ts";
 
 /** Upper bound for tool arguments, tool output and custom payload previews. */
 export const PREVIEW_LIMIT = 2_000;
@@ -553,10 +555,10 @@ export interface AccountingView {
 }
 
 /**
- * A count exactly as reported: JavaScript's round-trippable form, with en-US grouping added only to the integer part of
- * a plain decimal. Exponent forms such as 1e-21 are kept as they are, so no value is rounded.
+ * A number exactly as reported: JavaScript's round-trippable form, with en-US grouping added only to the integer part
+ * of a plain decimal. Exponent forms such as 1e-21 are kept as they are, so no value is rounded.
  */
-function formatCount(value: number): string {
+export function formatExactNumber(value: number): string {
 	const text = String(value);
 	const plain = /^(-?)(\d+)(\.\d+)?$/.exec(text);
 	if (plain === null) return text;
@@ -574,16 +576,16 @@ export function projectRuntimeMetrics(metrics: RuntimeMetricsV0, capturedAt: num
 	return {
 		capturedAt: formatClock(capturedAt),
 		rows: [
-			{ label: "Persisted messages", value: formatCount(metrics.messageCount) },
-			{ label: "Input tokens", value: formatCount(usage.input) },
-			{ label: "Output tokens", value: formatCount(usage.output) },
-			{ label: "Cache read", value: formatCount(usage.cacheRead) },
-			{ label: "Cache write", value: formatCount(usage.cacheWrite) },
-			...(usage.reasoning === undefined ? [] : [{ label: "Reasoning", value: formatCount(usage.reasoning) }]),
+			{ label: "Persisted messages", value: formatExactNumber(metrics.messageCount) },
+			{ label: "Input tokens", value: formatExactNumber(usage.input) },
+			{ label: "Output tokens", value: formatExactNumber(usage.output) },
+			{ label: "Cache read", value: formatExactNumber(usage.cacheRead) },
+			{ label: "Cache write", value: formatExactNumber(usage.cacheWrite) },
+			...(usage.reasoning === undefined ? [] : [{ label: "Reasoning", value: formatExactNumber(usage.reasoning) }]),
 			...(usage.cacheWrite1h === undefined
 				? []
-				: [{ label: "1h cache write", value: formatCount(usage.cacheWrite1h) }]),
-			{ label: "Reported total", value: formatCount(usage.totalTokens) },
+				: [{ label: "1h cache write", value: formatExactNumber(usage.cacheWrite1h) }]),
+			{ label: "Reported total", value: formatExactNumber(usage.totalTokens) },
 			{ label: "Accounted cost", value: String(usage.cost.total) },
 		],
 	};
@@ -720,5 +722,62 @@ export function projectMissionTrace(
 		...(firstSequence !== undefined && firstSequence > 1
 			? { truncated: "Earlier worker-lifetime trace events are outside the replicated window." }
 			: {}),
+	};
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Usage Activity (Usage Observation v0)
+
+/** Usage rows the cockpit renders at most; the replicated observation holds a larger trailing window. */
+export const USAGE_ROW_LIMIT = 20;
+
+export interface UsageRowView {
+	/** The durable, session-global accounting sequence: an order, not a time. */
+	readonly sequence: string;
+	/** "adjustment" only when the row was recorded as one; otherwise a neutral "usage record". */
+	readonly label: "usage record" | "adjustment";
+	readonly totals: string;
+	readonly cost: string;
+	/** Cache counts, and reasoning and 1h cache write only when reported. */
+	readonly detail: string;
+}
+
+export interface UsageView {
+	readonly rows: readonly UsageRowView[];
+	/** Present when only the latest rows of the observation are shown. */
+	readonly window?: string;
+	/** Present when durable rows exist before the observation's window; they stay readable as durable pages. */
+	readonly earlier?: string;
+}
+
+/**
+ * Project one durable usage row. Only its own fields are shown: a usage row establishes no time, model, provider,
+ * lane, run, operation, attempt, tool or cause, so none is implied. The reported total is shown, never recomputed.
+ */
+export function projectUsageRow(row: UsageLedgerRowV0): UsageRowView {
+	const { usage } = row;
+	const detail = [
+		`${formatExactNumber(usage.cacheRead)} cache read`,
+		`${formatExactNumber(usage.cacheWrite)} cache write`,
+		...(usage.cacheWrite1h === undefined ? [] : [`${formatExactNumber(usage.cacheWrite1h)} 1h cache write`]),
+		...(usage.reasoning === undefined ? [] : [`${formatExactNumber(usage.reasoning)} reasoning`]),
+	];
+	return {
+		sequence: `#${row.sequence}`,
+		label: row.adjustment ? "adjustment" : "usage record",
+		totals: `${formatExactNumber(usage.totalTokens)} total · ${formatExactNumber(usage.input)} in · ${formatExactNumber(usage.output)} out`,
+		cost: `cost ${String(usage.cost.total)}`,
+		detail: detail.join(" · "),
+	};
+}
+
+/** The latest rows of a usage observation, in its ascending durable order. */
+export function projectUsage(observation: UsageObservationV0, limit = USAGE_ROW_LIMIT): UsageView {
+	const total = observation.rows.length;
+	const shown = total > limit ? observation.rows.slice(total - limit) : observation.rows;
+	return {
+		rows: shown.map(projectUsageRow),
+		...(total > limit ? { window: `Showing latest ${limit} of ${total} rows in the live window` } : {}),
+		...(observation.hasEarlierRows ? { earlier: "Earlier durable usage rows are outside the live window." } : {}),
 	};
 }

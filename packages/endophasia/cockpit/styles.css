@@ -596,6 +596,55 @@ pre {
 	cursor: default;
 }
 
+/* Usage Activity: recent durable usage records, ordered by their accounting sequence. No times, no charts. */
+
+.usage-body {
+	width: 100%;
+}
+
+.usage-list {
+	list-style: none;
+	margin: 0;
+	padding: 2px 0;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.usage-row {
+	padding: 4px 0 4px 8px;
+	border-left: 2px solid var(--line-strong);
+	font-size: 12px;
+}
+
+.usage-row.adjustment {
+	border-left-color: var(--accent-amber);
+}
+
+.usage-row-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+}
+
+.usage-label {
+	color: var(--text-soft);
+}
+
+.usage-row.adjustment .usage-label {
+	color: var(--accent-amber);
+}
+
+.usage-totals {
+	color: var(--text);
+}
+
+.usage-detail {
+	font-size: 11px;
+	color: var(--text-faint);
+	overflow-wrap: anywhere;
+}
+
 /* Mission Trace: an ordered lifecycle spine. Nesting is illustrative; the sequence is the only order. */
 
 .trace-note,
