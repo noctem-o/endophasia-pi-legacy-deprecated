@@ -5,6 +5,7 @@
 //
 // Invariants check that an operation occurred, never what Prime answered: a valid observation of unexpected Prime
 // behavior (e.g. a tool error Prime does not flag) is conformance evidence, not an invalid run.
+import { PROBE_MODEL, PROBE_PROVIDER } from "./environment.ts";
 import type { PrimeScenarioEvidenceV0 } from "./evidence.ts";
 
 type Invariant = (run: PrimeScenarioEvidenceV0) => string[];
@@ -16,7 +17,7 @@ function stats(...labels: string[]): Invariant {
 
 function succeeded(command: string, times = 1): Invariant {
 	return (run) => {
-		const count = run.commands.filter((item) => item.command === command && item.success).length;
+		const count = run.commands.filter((item) => item.command === command && item.success === true).length;
 		return count === times ? [] : [`expected ${times} successful ${command}, observed ${count}`];
 	};
 }
@@ -57,7 +58,7 @@ function abortRequested(after: "assistant-start" | "tool-start"): Invariant {
 /** Only the explicitly expected refusal may appear, and only with the queued-input category. */
 function refusals(expected: number): Invariant {
 	return (run) => {
-		const failed = run.commands.filter((item) => !item.success);
+		const failed = run.commands.filter((item) => item.success !== true);
 		return [
 			...(failed.length === expected ? [] : [`expected ${expected} refused command(s), observed ${failed.length}`]),
 			...failed.flatMap((item) =>
@@ -83,11 +84,14 @@ function compactionSnapshots(): Invariant {
 			(entry, index) => JSON.stringify(after.entries[index]) === JSON.stringify(entry),
 		);
 		const added = after.entries.slice(before.entries.length);
-		const compactions = added.filter((entry) => entry.type === "compaction").length;
 		const end = run.events.find((event) => event.type === "compaction_end");
 		return [
 			...(prefixKept ? [] : ["pre-compaction entries changed across compaction"]),
-			...(compactions === 1 ? [] : [`expected one new compaction entry, observed ${compactions}`]),
+			...(added.length === 1 && added[0]?.type === "compaction"
+				? []
+				: [
+						`expected exactly one new entry, a compaction, observed ${added.map((entry) => entry.type).join(", ") || "none"}`,
+					]),
 			...(end?.type === "compaction_end" && end.succeeded && !end.aborted
 				? []
 				: ["no successful compaction_end was observed"]),
@@ -95,7 +99,20 @@ function compactionSnapshots(): Invariant {
 	};
 }
 
-const COMMON: Invariant[] = [sessionFileRead(), observed("providerRequests")];
+/** Every assistant message came from the probe's deterministic model, never another provider or model. */
+function probeModel(): Invariant {
+	return (run) =>
+		run.events.some(
+			(event) =>
+				(event.type === "message_end" || event.type === "turn_end") &&
+				event.assistant !== undefined &&
+				(event.assistant.provider !== PROBE_PROVIDER || event.assistant.model !== PROBE_MODEL),
+		)
+			? ["an assistant message came from another provider or model"]
+			: [];
+}
+
+const COMMON: Invariant[] = [sessionFileRead(), observed("providerRequests"), probeModel()];
 
 const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 	simple: [runs(1), stats("after"), refusals(0)],

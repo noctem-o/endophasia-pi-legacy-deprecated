@@ -236,7 +236,14 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 					const called = toolRun.events.flatMap((event) =>
 						event.type === "message_end" ? (event.assistant?.toolCalls ?? []) : [],
 					);
-					const executed = toolRun.events.flatMap((event) => (event.type === "tool_execution_end" ? [event] : []));
+					// Every execution phase (start, update, end) must name a tool call the assistant made.
+					const executed = toolRun.events.flatMap((event) =>
+						event.type === "tool_execution_start" ||
+						event.type === "tool_execution_update" ||
+						event.type === "tool_execution_end"
+							? [event]
+							: [],
+					);
 					// The (id, name) pair must match; a missing id ("") never counts, even when both sides lack one.
 					return (
 						executed.length > 0 &&

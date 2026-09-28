@@ -91,7 +91,8 @@ export type UnexpectedProviderRequestV0 =
 	| "unknown-marker"
 	| "marker-not-expected"
 	| "beyond-script"
-	| "summary-not-allowed";
+	| "summary-not-allowed"
+	| "wrong-model";
 
 /** One request the fake received, classified. Only `scripted` and `summary` requests are answered with a completion. */
 export type FakeProviderRequestV0 =
@@ -103,6 +104,8 @@ export type FakeProviderRequestV0 =
 /** What one scenario is allowed to ask for: its prompt markers, and summaries only while explicitly allowed. */
 export interface FakeProviderExpectationsV0 {
 	readonly markers: readonly string[];
+	/** The only model the probe configured; a request for any other (or none) is refused. */
+	readonly model: string;
 }
 
 /**
@@ -184,6 +187,11 @@ export async function startFakeProviderV0(expectations: FakeProviderExpectations
 				refuse("malformed probe request");
 				return;
 			}
+			if (body.model !== expectations.model) {
+				requests.push({ kind: "unexpected", reason: "wrong-model" });
+				refuse("unexpected probe model");
+				return;
+			}
 			const { request: classified, step } = selectStepV0(
 				body.messages as ChatMessage[],
 				expectations,
@@ -195,7 +203,7 @@ export async function startFakeProviderV0(expectations: FakeProviderExpectations
 				return;
 			}
 			const scenario = classified.kind === "scripted" ? classified.marker : "summary";
-			const model = typeof body.model === "string" ? body.model : "probe-model";
+			const model = expectations.model;
 			if (step.kind === "http-error") {
 				response.writeHead(400, { "content-type": "application/json" });
 				response.end(

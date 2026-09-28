@@ -5,7 +5,7 @@
 //   -> privacy violation: persist nothing, print only surfaces and counts, fail
 //   -> write the report -> publication gate -> fixtures only when publishable
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { PrimeBinaryV0 } from "./environment.ts";
 import type { PrimeProvenanceV0, PrimeScenarioEvidenceV0 } from "./evidence.ts";
 import type { PrimeProbeOptionsV0 } from "./probe.ts";
@@ -82,7 +82,7 @@ export async function runPrimeConformanceCommandV0(
 				"prime-agent source checkout. The probe never downloads Prime.",
 		);
 	}
-	if (binary.command.includes("/") && !existsSync(binary.command))
+	if (isAbsolute(binary.command) && !existsSync(binary.command))
 		return fail(`Prime Agent not found at ${binary.command}`);
 	const provenance = deps.describe(binary);
 	if (provenance.version === "unknown") return fail(`could not read a version from ${binary.description} --version`);

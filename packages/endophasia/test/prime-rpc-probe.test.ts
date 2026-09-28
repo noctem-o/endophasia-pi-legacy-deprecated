@@ -28,7 +28,7 @@ import {
 	startFakeProviderV0,
 } from "../research/prime-conformance/fake-provider.ts";
 import { encodeJsonlRecordV0, JsonlDecoderV0, type JsonlRecordV0 } from "../research/prime-conformance/jsonl.ts";
-import { failureTextV0, PrimeProbeFailureV0 } from "../research/prime-conformance/probe.ts";
+import { abnormalExitV0, failureTextV0, PrimeProbeFailureV0 } from "../research/prime-conformance/probe.ts";
 import { classifyPrimeRecordV0, type PrimeRpcResponseV0 } from "../research/prime-conformance/protocol.ts";
 import { PrimeRpcClientV0, PrimeRpcError, PrimeRpcExitError } from "../research/prime-conformance/rpc-client.ts";
 
@@ -136,6 +136,19 @@ describe("JsonlDecoderV0", () => {
 		expect(leaks(records)).toEqual([]);
 	});
 
+	it("invalidates a record with malformed UTF-8 instead of substituting U+FFFD", () => {
+		const decoder = new JsonlDecoderV0();
+		const bad = Buffer.concat([
+			Buffer.from('{"id":"call_'),
+			Buffer.from([0xc3, 0x28]),
+			Buffer.from('"}\n{"ok":true}\n'),
+		]);
+		expect(decoder.push(bad)).toEqual([
+			{ kind: "invalid", error: "Malformed UTF-8", length: 16 },
+			{ kind: "object", value: { ok: true } },
+		]);
+	});
+
 	it("encodes one command as exactly one line", () => {
 		const line = encodeJsonlRecordV0({ type: "prompt", message: "a\nb\r " });
 		expect(line.indexOf("\n")).toBe(line.length - 1);
@@ -152,6 +165,7 @@ describe("JsonlDecoderV0", () => {
 			type: "brand_new_event",
 		});
 		expect(classifyPrimeRecordV0({ kind: "no type" }).kind).toBe("invalid");
+		expect(classifyPrimeRecordV0({ type: "" }).kind).toBe("invalid");
 	});
 });
 
@@ -408,6 +422,20 @@ describe("strict session-file decoding", () => {
 		expectDecodeError(() => decodePrimeSessionLineV0(JSON.stringify(mutate(lines[name]!, path, value)), 2));
 	});
 
+	it("rejects blank lines, a missing final newline, repeated ids, empty parents and unknown accounting", () => {
+		const file = (...entries: unknown[]) => entries.map((entry) => JSON.stringify(entry)).join("\n");
+		expect(decodePrimeSessionFileV0(`${file(header, lines.user)}\n`)).toHaveLength(2);
+		expectDecodeError(() => decodePrimeSessionFileV0(`${file(header, lines.user)}`));
+		expectDecodeError(() => decodePrimeSessionFileV0(`${file(header, lines.user)}\n\n`));
+		expectDecodeError(() => decodePrimeSessionFileV0(`${JSON.stringify(header)}\n\n${JSON.stringify(lines.user)}\n`));
+		expectDecodeError(() => decodePrimeSessionFileV0(`${file(header, lines.user, lines.user)}\n`));
+		expectDecodeError(() => decodePrimeSessionLineV0(JSON.stringify(mutate(lines.assistant!, ["parentId"], "")), 2));
+		const accounting = { type: "future_entry", id: "f1", parentId: "a2", timestamp: "t", usage };
+		expect(() => decodePrimeSessionLineV0(JSON.stringify(accounting), 3)).toThrow(
+			"unknown entry type carrying accounting",
+		);
+	});
+
 	it("rejects malformed and non-object lines without quoting them", () => {
 		for (const raw of [`{"type":"message","note":"${SENTINELS.prompt}"`, "[1,2]", "null", '"text"']) {
 			try {
@@ -527,7 +555,7 @@ describe("fake provider expectations", () => {
 	const user = (content: string) => ({ role: "user", content });
 
 	it("serves only the scenario's scripted requests, and summaries only while allowed", async () => {
-		const fake = await startFakeProviderV0({ markers: ["simple"] });
+		const fake = await startFakeProviderV0({ markers: ["simple"], model: "probe-model" });
 		try {
 			const post = async (body: string) => {
 				const reply = await fetch(`${fake.baseUrl}/chat/completions`, {
@@ -538,24 +566,37 @@ describe("fake provider expectations", () => {
 				await reply.text();
 				return reply.status;
 			};
-			expect(await post(JSON.stringify({ messages: [user("SCENARIO:simple x")] }))).toBe(200);
+			expect(await post(JSON.stringify({ model: "probe-model", messages: [user("SCENARIO:simple x")] }))).toBe(200);
 			expect(await post("{not json")).toBe(400);
 			expect(await post(JSON.stringify({ model: "probe-model" }))).toBe(400);
-			expect(await post(JSON.stringify({ messages: [user("SCENARIO:no-such-scenario x")] }))).toBe(400);
-			expect(await post(JSON.stringify({ messages: [user("SCENARIO:multi-a x")] }))).toBe(400);
+			expect(await post(JSON.stringify({ model: "other-model", messages: [user("SCENARIO:simple x")] }))).toBe(400);
+			expect(await post(JSON.stringify({ messages: [user("SCENARIO:simple x")] }))).toBe(400);
+			expect(
+				await post(JSON.stringify({ model: "probe-model", messages: [user("SCENARIO:no-such-scenario x")] })),
+			).toBe(400);
+			expect(await post(JSON.stringify({ model: "probe-model", messages: [user("SCENARIO:multi-a x")] }))).toBe(400);
 			expect(
 				await post(
-					JSON.stringify({ messages: [user("SCENARIO:simple x"), { role: "assistant", content: "done" }] }),
+					JSON.stringify({
+						model: "probe-model",
+						messages: [user("SCENARIO:simple x"), { role: "assistant", content: "done" }],
+					}),
 				),
 			).toBe(400);
-			expect(await post(JSON.stringify({ messages: [user("summarize the conversation")] }))).toBe(400);
+			expect(
+				await post(JSON.stringify({ model: "probe-model", messages: [user("summarize the conversation")] })),
+			).toBe(400);
 			fake.allowSummaries(true);
-			expect(await post(JSON.stringify({ messages: [user("summarize the conversation")] }))).toBe(200);
+			expect(
+				await post(JSON.stringify({ model: "probe-model", messages: [user("summarize the conversation")] })),
+			).toBe(200);
 			fake.allowSummaries(false);
 			expect(fake.requests).toEqual<FakeProviderRequestV0[]>([
 				{ kind: "scripted", marker: "simple", reply: 0 },
 				{ kind: "malformed" },
 				{ kind: "malformed" },
+				{ kind: "unexpected", reason: "wrong-model" },
+				{ kind: "unexpected", reason: "wrong-model" },
 				{ kind: "unexpected", reason: "unknown-marker" },
 				{ kind: "unexpected", reason: "marker-not-expected" },
 				{ kind: "unexpected", reason: "beyond-script" },
@@ -581,6 +622,13 @@ describe("executable resolution", () => {
 			resolve("./bin/prime-agent"),
 		);
 		expect(resolvePrimeBinaryV0({ PRIME_AGENT_BIN: "prime-agent" })?.command).toBe("prime-agent");
+		// Windows forms are paths too, never PATH lookups.
+		expect(resolvePrimeBinaryV0({ PRIME_AGENT_BIN: ".\\bin\\prime-agent.exe" })?.command).toBe(
+			resolve(".\\bin\\prime-agent.exe"),
+		);
+		expect(resolvePrimeBinaryV0({ PRIME_AGENT_BIN: "C:\\bin\\prime-agent.exe" })?.command).toBe(
+			resolve("C:\\bin\\prime-agent.exe"),
+		);
 		expect(resolvePrimeBinaryV0({ PRIME_AGENT_ROOT: "../prime-agent" })).toMatchObject({
 			command: resolve("../prime-agent", "prime-agent.sh"),
 			checkout: resolve("../prime-agent"),
@@ -590,6 +638,17 @@ describe("executable resolution", () => {
 			checkout: "/src/prime",
 		});
 		expect(resolvePrimeBinaryV0({})).toBeUndefined();
+	});
+});
+
+describe("process exit", () => {
+	it("accepts only a clean exit after Prime's input ends", () => {
+		expect(abnormalExitV0({ code: 0, signal: null })).toBeUndefined();
+		expect(abnormalExitV0({ code: 1, signal: null })).toBe(
+			"Prime RPC process exited abnormally (code 1, signal null)",
+		);
+		expect(abnormalExitV0({ code: null, signal: "SIGKILL" })).toContain("SIGKILL");
+		expect(abnormalExitV0({ code: null, signal: null })).toBeDefined();
 	});
 });
 

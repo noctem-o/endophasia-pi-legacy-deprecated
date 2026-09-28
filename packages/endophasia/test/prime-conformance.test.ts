@@ -252,6 +252,17 @@ describe("classification", () => {
 		);
 	});
 
+	it("checks every tool execution phase, not only the end", () => {
+		const run = fixture("tool-run");
+		const wrongStart = {
+			...run,
+			events: run.events.map((event) =>
+				event.type === "tool_execution_start" ? { ...event, toolName: "other_tool" } : event,
+			),
+		};
+		expect(derivePrimeFactsV0([wrongStart]).toolCallIdentityNative).toBe(false);
+	});
+
 	it("matches tool identity on the (id, name) pair", () => {
 		const run = fixture("tool-run");
 		const renamed = {
@@ -388,6 +399,40 @@ const INVARIANT_MUTATIONS: readonly Mutation[] = [
 		}),
 	],
 	["abort-stream", "abort never requested", (r) => ({ ...r, abortRequestedAfter: [] })],
+	[
+		"compaction",
+		"an extra row besides the compaction entry",
+		(r) => ({
+			...r,
+			entrySnapshots: r.entrySnapshots.map((s) =>
+				s.label === "after-compaction"
+					? { ...s, entries: [...s.entries, { type: "session_state", id: "extra001", parentId: null, keys: [] }] }
+					: s,
+			),
+		}),
+	],
+	[
+		"simple",
+		"an assistant from another model",
+		(r) => ({
+			...r,
+			events: r.events.map((e) =>
+				e.type === "message_end" && e.assistant !== undefined
+					? { ...e, assistant: { ...e.assistant, model: "other" } }
+					: e,
+			),
+		}),
+	],
+	[
+		"fork",
+		"a fork whose success is not a boolean",
+		(r) => ({
+			...r,
+			commands: r.commands.map((c) =>
+				c.command === "fork" ? ({ ...c, success: "true" } as unknown as typeof c) : c,
+			),
+		}),
+	],
 	["abort-tool", "abort not at a tool start", (r) => ({ ...r, abortRequestedAfter: [0] })],
 	[
 		"tool-run",
@@ -465,6 +510,25 @@ describe("publication gate", () => {
 			"invalid",
 		],
 		["a probe sentinel", () => withScenario({ ...fixture("simple"), stateKeys: [SENTINELS.prompt] }), "invalid"],
+		[
+			"a repeated entry id",
+			() => {
+				const run = fixture("simple");
+				return withScenario({ ...run, sessionEntries: [...run.sessionEntries, run.sessionEntries.at(-1)!] });
+			},
+			"invalid",
+		],
+		[
+			"an empty parent id",
+			() => {
+				const run = fixture("simple");
+				return withScenario({
+					...run,
+					sessionEntries: run.sessionEntries.map((e, i) => (i === 2 ? { ...e, parentId: "" } : e)),
+				});
+			},
+			"invalid",
+		],
 		["a missing requested scenario", () => fixtures.filter((run) => run.provenance.scenario !== "fork"), "invalid"],
 		["binary provenance", () => withProvenance(fixtures, { build: "binary", commit: undefined }), "unpublishable"],
 		["a dirty checkout", () => withProvenance(fixtures, { build: "dirty-checkout" }), "unpublishable"],

@@ -18,7 +18,7 @@ export type PrimeRpcRecordV0 =
 /** Classify one decoded record without trusting its shape. */
 export function classifyPrimeRecordV0(value: Record<string, unknown>): PrimeRpcRecordV0 {
 	const type = value.type;
-	if (typeof type !== "string") return { kind: "invalid", reason: "Record has no string type" };
+	if (typeof type !== "string" || type.length === 0) return { kind: "invalid", reason: "Record has no event type" };
 	if (type === "response") {
 		if (typeof value.command !== "string" || typeof value.success !== "boolean") {
 			return { kind: "invalid", reason: "Response lacks command or success" };

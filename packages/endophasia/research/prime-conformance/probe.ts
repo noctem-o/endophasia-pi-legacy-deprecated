@@ -20,7 +20,7 @@ import {
 	PrimeDecodeError,
 	requirePrimeNotCancelledV0,
 } from "./decode.ts";
-import { createPrimeEnvironmentV0, type PrimeBinaryV0, type PrimeEnvironmentV0 } from "./environment.ts";
+import { createPrimeEnvironmentV0, PROBE_MODEL, type PrimeBinaryV0, type PrimeEnvironmentV0 } from "./environment.ts";
 import {
 	PROBE_NAME,
 	PROBE_VERSION,
@@ -37,7 +37,7 @@ import {
 import { type FakeProviderV0, SENTINELS, startFakeProviderV0 } from "./fake-provider.ts";
 import { scenarioInvariantProblemsV0 } from "./invariants.ts";
 import type { PrimeEvidenceEventV0, PrimeRpcResponseV0 } from "./protocol.ts";
-import { PrimeRpcClientV0, PrimeRpcError } from "./rpc-client.ts";
+import { PrimeRpcClientV0, PrimeRpcError, type PrimeRpcExitV0 } from "./rpc-client.ts";
 
 /** A probe-authored failure: its message never contains Prime payloads, so it is safe to keep as evidence. */
 export class PrimeProbeFailureV0 extends Error {
@@ -56,6 +56,13 @@ export function failureTextV0(error: unknown): string {
 		return error.message;
 	}
 	return error instanceof Error ? `unexpected ${error.name}` : "unexpected non-error exception";
+}
+
+/** Prime exits 0 when its RPC input ends; any other exit (a crash, a kill after the close timeout, a signal) fails. */
+export function abnormalExitV0(exit: PrimeRpcExitV0): string | undefined {
+	return exit.code === 0 && exit.signal === null
+		? undefined
+		: `Prime RPC process exited abnormally (code ${exit.code}, signal ${exit.signal})`;
 }
 
 type Trigger = (type: string, event: Record<string, unknown>) => boolean;
@@ -189,11 +196,16 @@ class ProbeSession {
 		return state.sessionFile;
 	}
 
-	/** Close once; the client's protocol errors are recorded after its stdout has drained. */
+	/**
+	 * Close once; the client's protocol errors are recorded after its stdout has drained. Prime exits 0 when its RPC
+	 * input ends; any other exit (a crash during shutdown, a kill after the close timeout, a signal) fails the scenario.
+	 */
 	close(): Promise<void> {
 		this.#closed ??= (async () => {
-			await this.client.close();
+			const exit = await this.client.close();
 			this.#run.protocolErrors.push(...this.client.protocolErrors);
+			const abnormal = abnormalExitV0(exit);
+			if (abnormal !== undefined) this.#run.failures.push(abnormal);
 		})();
 		return this.#closed;
 	}
@@ -482,7 +494,7 @@ export async function runPrimeProbeV0(options: PrimeProbeOptionsV0): Promise<Pri
 	for (const scenario of SCENARIOS) {
 		if (options.only !== undefined && !options.only.includes(scenario.name)) continue;
 		options.log?.(`scenario ${scenario.name}`);
-		const fake = await startFakeProviderV0({ markers: scenario.markers });
+		const fake = await startFakeProviderV0({ markers: scenario.markers, model: PROBE_MODEL });
 		const environment = createPrimeEnvironmentV0({ providerBaseUrl: fake.baseUrl, retain: options.retain });
 		const run: ScenarioRecorder = {
 			events: [],

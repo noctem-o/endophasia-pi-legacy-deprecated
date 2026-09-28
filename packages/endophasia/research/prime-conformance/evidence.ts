@@ -201,26 +201,52 @@ export function invalidStatsFieldsV0(stats: PrimeStatsEvidenceV0): string[] {
 }
 
 function entryProblems(where: string, entries: readonly PrimeSessionEntryEvidenceV0[]): string[] {
-	return entries.flatMap((entry, index) => {
-		const label = `${where} entry ${index} (${entry.type})`;
+	const ids = entries.map((entry) => entry.id);
+	const duplicates = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
+	return [
+		...duplicates.map(() => `${where}: an entry id repeats within one session file`),
+		...entries.flatMap((entry, index) => {
+			const label = `${where} entry ${index} (${entry.type})`;
+			return [
+				...(missingText(entry.type) || missingText(entry.id) ? [`${label}: entry without type or id`] : []),
+				...(entry.type !== "session" && entry.parentId !== null && missingText(entry.parentId)
+					? [`${label}: parentId is neither a non-empty string nor null`]
+					: []),
+				// Prime's AssistantMessage and child attribution always carry usage; compaction and branch summaries may not.
+				...(entry.type === "message" && entry.role === "assistant"
+					? [
+							...(missingText(entry.stopReason) ? [`${label}: assistant entry has no stop reason`] : []),
+							...usageProblems(label, entry.usage, true),
+						]
+					: usageProblems(label, entry.usage, false)),
+				...(entry.type === "child_usage_attributed"
+					? [
+							...(missingText(entry.targetId) ? [`${label}: child attribution without targetId`] : []),
+							...usageProblems(`${label} childUsage`, entry.childUsage, true),
+							...usageProblems(`${label} aggregateUsage`, entry.aggregateUsage, true),
+						]
+					: []),
+				...(entry.type === "compaction" && missingText(entry.firstKeptEntryId)
+					? [`${label}: compaction without firstKeptEntryId`]
+					: []),
+			];
+		}),
+	];
+}
+
+const ERROR_KINDS = new Set<unknown>(["queued-input-suspended", "input-admission-paused", "other"]);
+
+function commandProblems(commands: readonly PrimeCommandEvidenceV0[]): string[] {
+	return commands.flatMap((command, index) => {
+		const label = `command ${index}`;
 		return [
-			...(missingText(entry.type) || missingText(entry.id) ? [`${label}: entry without type or id`] : []),
-			// Prime's AssistantMessage and child attribution always carry usage; compaction and branch summaries may not.
-			...(entry.type === "message" && entry.role === "assistant"
-				? [
-						...(missingText(entry.stopReason) ? [`${label}: assistant entry has no stop reason`] : []),
-						...usageProblems(label, entry.usage, true),
-					]
-				: usageProblems(label, entry.usage, false)),
-			...(entry.type === "child_usage_attributed"
-				? [
-						...(missingText(entry.targetId) ? [`${label}: child attribution without targetId`] : []),
-						...usageProblems(`${label} childUsage`, entry.childUsage, true),
-						...usageProblems(`${label} aggregateUsage`, entry.aggregateUsage, true),
-					]
+			...(missingText(command.command) ? [`${label}: no command name`] : []),
+			...booleanProblem(label, command.success, "success"),
+			...(command.success === false && !ERROR_KINDS.has(command.errorKind)
+				? [`${label}: refusal without a category`]
 				: []),
-			...(entry.type === "compaction" && missingText(entry.firstKeptEntryId)
-				? [`${label}: compaction without firstKeptEntryId`]
+			...(command.success === true && command.errorKind !== undefined
+				? [`${label}: success with a refusal category`]
 				: []),
 		];
 	});
@@ -283,6 +309,7 @@ export function evidenceProblemsV0(run: PrimeScenarioEvidenceV0): string[] {
 	);
 	return [
 		...events,
+		...commandProblems(run.commands),
 		...entryProblems("final", run.sessionEntries),
 		...run.entrySnapshots.flatMap((snapshot) => entryProblems(`snapshot ${snapshot.label}`, snapshot.entries)),
 		...stats,

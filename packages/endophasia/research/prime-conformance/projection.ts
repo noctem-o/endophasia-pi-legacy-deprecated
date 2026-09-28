@@ -26,7 +26,6 @@ function rowUsage(usage: PrimeUsageEvidenceV0): UsageLedgerRowV0["usage"] {
 export function projectPrimeUsageRowsV0(entries: readonly PrimeSessionEntryEvidenceV0[]): UsageLedgerRowV0[] {
 	const rows: UsageLedgerRowV0[] = [];
 	entries.forEach((entry, index) => {
-		if (entry.id === undefined) return;
 		const usage = entry.type === "child_usage_attributed" ? entry.childUsage : entry.usage;
 		if (usage === undefined) return;
 		rows.push({

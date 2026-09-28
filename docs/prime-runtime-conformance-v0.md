@@ -31,7 +31,7 @@ Citations use two forms:
 
 **Framing.** `JsonlDecoderV0` does not use `readline`. Its rules:
 
-- UTF-8 is decoded incrementally.
+- Bytes are buffered and each complete record is decoded as UTF-8 on its own, with a fatal decoder: malformed UTF-8 invalidates the record rather than being replaced with U+FFFD.
 - Records split on LF only, with one trailing CR stripped.
 - Partial bytes and text stay buffered between chunks.
 - Each record must be exactly one JSON object.
@@ -43,7 +43,10 @@ Citations use two forms:
    - Types checked: `AgentEvent`, `AssistantMessage`, `ToolResultMessage`, `Usage`, `SessionStats` and `SessionEntryBase`.
    - Failures: a missing required field, a non-boolean flag, a non-finite number or an empty identity throws `PrimeDecodeError`. Its message names the field path, never the value.
    - `fork` and `switch_session` must answer `cancelled: false`, because both can report success when an extension cancelled them.
-   - Session lines: malformed JSON, a missing type or a malformed `id`/`parentId` fails. A structurally valid entry of an unknown type is kept by identity and field names, as evidence of a new Prime surface.
+   - Session lines: malformed JSON, a missing type, a malformed `id`, or a `parentId` that is neither a non-empty string nor null fails.
+   - Session files: a blank line, a missing final newline or an entry id repeated within one file fails.
+   - An unknown entry type is kept by identity and field names, as evidence of a new Prime surface. The exception is an unknown entry carrying accounting fields: it fails, because dropping its usage would undercount.
+   - Framing: an RPC record with an empty event type is a protocol error.
    - Unknown event types are kept by name. `message_update` deltas are dropped deliberately, since they carry only payload fragments.
 2. **Payload-minimal evidence.** Only identities, kinds, flags and numbers survive. Command errors become categories such as `queued-input-suspended`, and raw transcripts are never kept.
 3. **Scenario invariants** (`invariants.ts`). Completing without an exception is not enough: each scenario must show that its operation actually happened.
@@ -52,10 +55,13 @@ Citations use two forms:
    - compaction: `compact` succeeded, a successful `compaction_end` was seen, and the snapshot shows the unchanged pre-compaction rows plus one compaction entry.
    - aborts: the abort was requested at the intended moment and acknowledged.
    - refusals: only the two expected refusals, and only with the queued-input category.
+   - every scenario: every assistant message comes from the probe's provider and model.
+   - every scenario: each Prime process exits 0 once its RPC input ends. A crash, a timeout kill or a signal fails the scenario.
 
    Invariants check that an operation occurred, not what Prime answered. A valid observation of unexpected Prime behavior is conformance evidence.
-4. **Provider expectations.** Each scenario declares its prompt markers, and its fake provider refuses anything else with HTTP 400, which fails the run: an unreadable body, an unknown or foreign marker, or a reply beyond the script. Summarization requests are accepted only while `compact` runs. This rule is what exposed auto-refine: in probe 0.2.0 its request was quietly answered as a summary.
+4. **Provider expectations.** Each scenario declares its prompt markers, and its fake provider refuses anything else with HTTP 400, which fails the run: an unreadable body, a request for any model other than the probe's, an unknown or foreign marker, or a reply beyond the script. Summarization requests are accepted only while `compact` runs. This rule is what exposed auto-refine: in probe 0.2.0 its request was quietly answered as a summary.
 5. **Exact predicates** (`classification.ts`). A positive fact requires every dimension both surfaces report to agree.
+   - Tool identity checks every execution phase (start, update and end) against the assistant's tool calls.
    - Compaction retention is proved from the session file snapshotted immediately before and after `compact`, so a later prompt cannot make up for a loss.
    - An undecidable fact is left undefined and reported as unverified, never guessed.
 6. **Publication gate** (`publication.ts`). This is the only path to the committed reference. It separates three cases:

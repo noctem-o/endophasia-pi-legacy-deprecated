@@ -336,8 +336,8 @@ export function decodePrimeSessionLineV0(raw: string, line: number): PrimeSessio
 	// The header carries the session id; every other entry extends SessionEntryBase (id, parentId).
 	if (type === "session") return { type, id: text(entry.id, `${path}.id`), keys };
 	const id = text(entry.id, `${path}.id`);
-	if (entry.parentId !== null && typeof entry.parentId !== "string") {
-		throw new PrimeDecodeError(`${path}.parentId is neither a string nor null`);
+	if (entry.parentId !== null && (typeof entry.parentId !== "string" || entry.parentId.length === 0)) {
+		throw new PrimeDecodeError(`${path}.parentId is neither a non-empty string nor null`);
 	}
 	const base = { type, id, parentId: entry.parentId, keys };
 	switch (type) {
@@ -364,13 +364,34 @@ export function decodePrimeSessionLineV0(raw: string, line: number): PrimeSessio
 				aggregateUsage: decodePrimeUsageV0(entry.aggregateUsage, `${path}.aggregateUsage`),
 			};
 		default:
+			// An unknown entry is kept for forward compatibility only when it carries no accounting: dropping a usage the
+			// probe cannot decode would silently undercount every usage projection and rebuilt metric.
+			if (ACCOUNTING_KEYS.some((key) => key in entry)) {
+				throw new PrimeDecodeError(`${path} is an unknown entry type carrying accounting fields`);
+			}
 			return base;
 	}
 }
 
-/** Decode a whole session file's text; empty lines (the trailing newline) are the only lines skipped. */
+/** Field names that carry usage on any known entry; an unknown entry with one of them cannot be read safely. */
+const ACCOUNTING_KEYS = ["usage", "childUsage", "aggregateUsage", "cost"] as const;
+
+/**
+ * Decode a whole session file's text. Only the single empty element after the final newline is skipped: a blank line
+ * anywhere else, or a missing final newline, is a malformed file. Entry ids must be unique within one file (a fork's
+ * copied ids live in another file).
+ */
 export function decodePrimeSessionFileV0(content: string): PrimeSessionEntryEvidenceV0[] {
-	return content
-		.split("\n")
-		.flatMap((raw, index) => (raw.length === 0 ? [] : [decodePrimeSessionLineV0(raw, index + 1)]));
+	const lines = content.split("\n");
+	if (lines.at(-1) !== "") throw new PrimeDecodeError("session file does not end with a newline");
+	const entries = lines.slice(0, -1).map((raw, index) => {
+		if (raw.length === 0) throw new PrimeDecodeError(`session line ${index + 1} is empty`);
+		return decodePrimeSessionLineV0(raw, index + 1);
+	});
+	const seen = new Set<string>();
+	for (const [index, entry] of entries.entries()) {
+		if (seen.has(entry.id)) throw new PrimeDecodeError(`session line ${index + 1} repeats an entry id`);
+		seen.add(entry.id);
+	}
+	return entries;
 }

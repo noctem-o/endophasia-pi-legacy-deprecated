@@ -4,7 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve, win32 } from "node:path";
 
 export const PROBE_PROVIDER = "probe-local";
 export const PROBE_MODEL = "probe-model";
@@ -55,10 +55,11 @@ export interface PrimeBinaryV0 {
 
 /** Resolve the Prime executable: PRIME_AGENT_BIN, else PRIME_AGENT_ROOT's documented source launcher. */
 export function resolvePrimeBinaryV0(env: NodeJS.ProcessEnv): PrimeBinaryV0 | undefined {
-	// Prime is spawned from a disposable cwd, so a relative path is resolved against the invocation directory now.
-	// A bare command name (no "/") is left to PATH.
+	// Prime is spawned from a disposable cwd, so a path is resolved against the invocation directory now. A path has a
+	// separator of either platform or is absolute (C:\bin\prime-agent.exe); only a bare command name is left to PATH.
 	if (env.PRIME_AGENT_BIN !== undefined && env.PRIME_AGENT_BIN.length > 0) {
-		const command = env.PRIME_AGENT_BIN.includes("/") ? resolve(env.PRIME_AGENT_BIN) : env.PRIME_AGENT_BIN;
+		const bin = env.PRIME_AGENT_BIN;
+		const command = isAbsolute(bin) || win32.isAbsolute(bin) || /[\\/]/.test(bin) ? resolve(bin) : bin;
 		return { command, leadingArgs: [], description: command };
 	}
 	if (env.PRIME_AGENT_ROOT !== undefined && env.PRIME_AGENT_ROOT.length > 0) {

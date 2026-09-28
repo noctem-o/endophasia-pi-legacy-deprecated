@@ -6,49 +6,55 @@ export type JsonlRecordV0 =
 	| { readonly kind: "invalid"; readonly error: string; readonly length: number };
 
 /**
- * Strict JSONL decoder for Prime's RPC framing: UTF-8 is decoded incrementally, records are split on LF only, one
- * trailing CR is stripped, and each record must be one JSON object. U+2028 and U+2029 are ordinary characters here,
- * unlike Node's readline, which would split valid JSON strings on them. Incomplete bytes and text stay buffered
- * between chunks. Empty records are skipped.
+ * Strict JSONL decoder for Prime's RPC framing: bytes are buffered and split on LF only, one trailing CR is stripped,
+ * and each complete record is decoded as UTF-8 on its own with a fatal decoder, so malformed UTF-8 invalidates that
+ * record instead of being replaced with U+FFFD. Each record must be one JSON object. U+2028 and U+2029 are ordinary
+ * characters here, unlike Node's readline, which would split valid JSON strings on them. Incomplete bytes stay
+ * buffered between chunks. Empty records are skipped.
  */
 export class JsonlDecoderV0 {
-	readonly #decoder = new TextDecoder("utf-8", { fatal: false });
-	#buffer = "";
+	#pending: Uint8Array = new Uint8Array(0);
 
-	/** Decode one chunk and return every complete record it finished. */
+	/** Buffer one chunk and return every complete record it finished. */
 	push(chunk: Uint8Array): JsonlRecordV0[] {
-		this.#buffer += this.#decoder.decode(chunk, { stream: true });
-		return this.#drain(false);
+		const joined = new Uint8Array(this.#pending.length + chunk.length);
+		joined.set(this.#pending);
+		joined.set(chunk, this.#pending.length);
+		const records: JsonlRecordV0[] = [];
+		let start = 0;
+		let newline = joined.indexOf(0x0a, start);
+		while (newline !== -1) {
+			const record = decodeRecord(joined.subarray(start, newline));
+			if (record !== undefined) records.push(record);
+			start = newline + 1;
+			newline = joined.indexOf(0x0a, start);
+		}
+		this.#pending = joined.slice(start);
+		return records;
 	}
 
 	/** Flush at end of stream: a final record without a trailing LF is still returned. */
 	end(): JsonlRecordV0[] {
-		this.#buffer += this.#decoder.decode();
-		return this.#drain(true);
-	}
-
-	#drain(final: boolean): JsonlRecordV0[] {
-		const records: JsonlRecordV0[] = [];
-		let newline = this.#buffer.indexOf("\n");
-		while (newline !== -1) {
-			const line = this.#buffer.slice(0, newline);
-			this.#buffer = this.#buffer.slice(newline + 1);
-			const record = parseRecord(line);
-			if (record !== undefined) records.push(record);
-			newline = this.#buffer.indexOf("\n");
-		}
-		if (final && this.#buffer.length > 0) {
-			const record = parseRecord(this.#buffer);
-			this.#buffer = "";
-			if (record !== undefined) records.push(record);
-		}
-		return records;
+		const rest = this.#pending;
+		this.#pending = new Uint8Array(0);
+		const record = rest.length === 0 ? undefined : decodeRecord(rest);
+		return record === undefined ? [] : [record];
 	}
 }
 
-function parseRecord(raw: string): JsonlRecordV0 | undefined {
-	const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+function decodeRecord(bytes: Uint8Array): JsonlRecordV0 | undefined {
+	const line = bytes.at(-1) === 0x0d ? bytes.subarray(0, -1) : bytes;
 	if (line.length === 0) return undefined;
+	let text: string;
+	try {
+		text = new TextDecoder("utf-8", { fatal: true }).decode(line);
+	} catch {
+		return { kind: "invalid", error: "Malformed UTF-8", length: line.length };
+	}
+	return parseRecord(text);
+}
+
+function parseRecord(line: string): JsonlRecordV0 {
 	try {
 		const value: unknown = JSON.parse(line);
 		if (value === null || typeof value !== "object" || Array.isArray(value)) {
