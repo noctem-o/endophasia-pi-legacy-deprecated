@@ -67,7 +67,8 @@ class LoopbackWebSocketListener implements BrowserWebSocketListener {
 	private readonly connections = new Set<WebSocketByteConnection>();
 	private readonly webSocketServer: WebSocketServer;
 	private httpServer?: HttpServer;
-	private port?: number;
+	/** The canonical host[:port] authority, as browsers send it in the Host header. */
+	private authority?: string;
 	private started = false;
 	private closing = false;
 	private closePromise?: Promise<void>;
@@ -85,8 +86,8 @@ class LoopbackWebSocketListener implements BrowserWebSocketListener {
 	}
 
 	get url(): string {
-		if (this.port === undefined) throw new Error("Browser WebSocket listener has not started");
-		return `ws://${LOOPBACK_HOST}:${this.port}${this.capabilityPath}`;
+		if (this.authority === undefined) throw new Error("Browser WebSocket listener has not started");
+		return `ws://${this.authority}${this.capabilityPath}`;
 	}
 
 	async start(accept: ByteConnectionAcceptor): Promise<void> {
@@ -119,7 +120,7 @@ class LoopbackWebSocketListener implements BrowserWebSocketListener {
 		});
 		const address = server.address();
 		if (address === null || typeof address === "string") throw new Error("Browser WebSocket listener has no port");
-		this.port = address.port;
+		this.authority = loopbackAuthority(address.port);
 	}
 
 	close(): Promise<void> {
@@ -135,11 +136,7 @@ class LoopbackWebSocketListener implements BrowserWebSocketListener {
 			return;
 		}
 		const origin = request.headers.origin;
-		if (
-			request.headers.host !== `${LOOPBACK_HOST}:${this.port}` ||
-			origin === undefined ||
-			!this.options.allowedOrigins.has(origin)
-		) {
+		if (request.headers.host !== this.authority || origin === undefined || !this.options.allowedOrigins.has(origin)) {
 			rejectUpgrade(socket, 403, "Forbidden");
 			return;
 		}
@@ -336,6 +333,14 @@ export class WebSocketByteConnection implements ByteConnection {
 			}
 		});
 	}
+}
+
+/**
+ * @internal The ws: authority for a loopback port, canonicalized as browsers do: the default port 80 is omitted,
+ * so its Host header is "127.0.0.1", not "127.0.0.1:80".
+ */
+export function loopbackAuthority(port: number): string {
+	return new URL(`ws://${LOOPBACK_HOST}:${port}`).host;
 }
 
 function rawDataBytes(data: RawData): Uint8Array {

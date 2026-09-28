@@ -3,7 +3,11 @@ import { networkInterfaces } from "node:os";
 import type { ServerListener } from "@earendil-works/pi-server";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
-import { type BrowserWebSocketListener, createBrowserWebSocketListener } from "../runtime/browser-listener.ts";
+import {
+	type BrowserWebSocketListener,
+	createBrowserWebSocketListener,
+	loopbackAuthority,
+} from "../runtime/browser-listener.ts";
 
 type ByteConnectionAcceptor = Parameters<ServerListener["start"]>[0];
 type ByteConnection = Parameters<ByteConnectionAcceptor>[0];
@@ -25,7 +29,7 @@ interface Accepted {
 }
 
 async function startListener(
-	options: { maxFrameLength?: number; maxPendingBytes?: number; gracefulCloseTimeoutMs?: number } = {},
+	options: { port?: number; maxFrameLength?: number; maxPendingBytes?: number; gracefulCloseTimeoutMs?: number } = {},
 ): Promise<{ listener: BrowserWebSocketListener; accepted: Accepted[]; nextAccepted(): Promise<Accepted> }> {
 	const listener = createBrowserWebSocketListener({ allowedOrigins: [ORIGIN, "https://app.example"], ...options });
 	listeners.push(listener);
@@ -194,6 +198,31 @@ describe("Endophasia browser WebSocket listener", () => {
 			expect(await refusedStatus(connect(listener.url, { origin: ORIGIN, headers: { host } })), host).toBe(403);
 		}
 		expect(accepted).toEqual([]);
+	});
+
+	it("expects the Host header browsers send, without the default port", () => {
+		expect(loopbackAuthority(80)).toBe("127.0.0.1");
+		expect(loopbackAuthority(5173)).toBe("127.0.0.1:5173");
+		expect(loopbackAuthority(443)).toBe("127.0.0.1:443");
+	});
+
+	it("admits browser upgrades on the default port 80", async (context) => {
+		let started: Awaited<ReturnType<typeof startListener>>;
+		try {
+			started = await startListener({ port: 80 });
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === "EACCES" || code === "EADDRINUSE") context.skip(`port 80 is unavailable (${code})`);
+			throw error;
+		}
+		const { listener, nextAccepted } = started;
+		// Browsers, like ws, drop the default port from both the URL and the Host header.
+		expect(listener.url).toMatch(/^ws:\/\/127\.0\.0\.1\/pi\//);
+		await opened(connect(listener.url, { origin: ORIGIN }));
+		await nextAccepted();
+		expect(await refusedStatus(connect(listener.url, { origin: ORIGIN, headers: { host: "127.0.0.1:80" } }))).toBe(
+			403,
+		);
 	});
 
 	it("upgrades only the exact capability path", async () => {
