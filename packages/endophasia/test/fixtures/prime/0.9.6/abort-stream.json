@@ -3,9 +3,10 @@
 		"source": "prime-agent",
 		"version": "0.9.6",
 		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
+		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.2.0",
+		"probeVersion": "0.3.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "abort-stream"
@@ -303,7 +304,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0e8da-4eea-72a8-a9fc-4b96a85fc717",
+			"id": "01a0e912-144a-7395-aafe-4b19e3713f2d",
 			"keys": [
 				"cwd",
 				"id",
@@ -315,7 +316,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "adeda86a",
+			"id": "984f017d",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -328,8 +329,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "dd47d426",
-			"parentId": "adeda86a",
+			"id": "91aa675d",
+			"parentId": "984f017d",
 			"keys": [
 				"id",
 				"parentId",
@@ -340,8 +341,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "f92b2951",
-			"parentId": "dd47d426",
+			"id": "0b1dd870",
+			"parentId": "91aa675d",
 			"keys": [
 				"id",
 				"parentId",
@@ -352,8 +353,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "d9a5a94f",
-			"parentId": "f92b2951",
+			"id": "43d101ec",
+			"parentId": "0b1dd870",
 			"keys": [
 				"id",
 				"parentId",
@@ -364,8 +365,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "cc791b38",
-			"parentId": "d9a5a94f",
+			"id": "398ca89a",
+			"parentId": "43d101ec",
 			"keys": [
 				"content",
 				"customType",
@@ -379,21 +380,28 @@
 		},
 		{
 			"type": "message",
-			"id": "d993dbe5",
-			"parentId": "cc791b38",
-			"role": "user",
+			"id": "e78b6a29",
+			"parentId": "398ca89a",
 			"keys": [
 				"id",
 				"message",
 				"parentId",
 				"timestamp",
 				"type"
-			]
+			],
+			"role": "user"
 		},
 		{
 			"type": "message",
-			"id": "cddae4b2",
-			"parentId": "d993dbe5",
+			"id": "a7212d2c",
+			"parentId": "e78b6a29",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			],
 			"role": "assistant",
 			"stopReason": "aborted",
 			"usage": {
@@ -410,32 +418,32 @@
 					"total": 0
 				},
 				"extraKeys": []
-			},
+			}
+		},
+		{
+			"type": "message",
+			"id": "741d4a9b",
+			"parentId": "a7212d2c",
 			"keys": [
 				"id",
 				"message",
 				"parentId",
 				"timestamp",
 				"type"
-			]
+			],
+			"role": "user"
 		},
 		{
 			"type": "message",
-			"id": "eba70f73",
-			"parentId": "cddae4b2",
-			"role": "user",
+			"id": "44baae90",
+			"parentId": "741d4a9b",
 			"keys": [
 				"id",
 				"message",
 				"parentId",
 				"timestamp",
 				"type"
-			]
-		},
-		{
-			"type": "message",
-			"id": "2b82de82",
-			"parentId": "eba70f73",
+			],
 			"role": "assistant",
 			"stopReason": "stop",
 			"usage": {
@@ -452,16 +460,10 @@
 					"total": 559.5
 				},
 				"extraKeys": []
-			},
-			"keys": [
-				"id",
-				"message",
-				"parentId",
-				"timestamp",
-				"type"
-			]
+			}
 		}
 	],
+	"entrySnapshots": [],
 	"stateKeys": [
 		"autoCompactionEnabled",
 		"followUpMode",
@@ -476,10 +478,11 @@
 		"steeringMode",
 		"thinkingLevel"
 	],
+	"observations": {
+		"plainPromptAfterAbortAdmitted": false,
+		"followUpAfterAbortAdmitted": true,
+		"providerRequests": 2
+	},
 	"protocolErrors": [],
-	"notes": [
-		"plain prompt after abort admitted: false",
-		"followUp prompt after abort admitted: true",
-		"provider requests: 2"
-	]
+	"failures": []
 }

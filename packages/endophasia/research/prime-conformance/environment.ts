@@ -112,10 +112,12 @@ export function createPrimeEnvironmentV0(options: { providerBaseUrl: string; ret
 			},
 		}),
 	);
-	// A tiny recent-token budget lets a manual compaction summarize even this short probe conversation.
+	// A tiny recent-token budget lets a manual compaction summarize even this short probe conversation. Auto-refine is
+	// on by default and runs a review model call after every compaction (settings-manager.ts getAutoRefineSettings);
+	// it is disabled so the compaction experiment measures compaction alone. Its accounting is not examined here.
 	writeFileSync(
 		join(agentDir, "settings.json"),
-		JSON.stringify({ compaction: { enabled: false, keepRecentTokens: 1 } }),
+		JSON.stringify({ compaction: { enabled: false, keepRecentTokens: 1 }, autoRefine: { enabled: false } }),
 	);
 	const extensionPath = join(root, "probe-tool.ts");
 	writeFileSync(extensionPath, PROBE_TOOL_EXTENSION);

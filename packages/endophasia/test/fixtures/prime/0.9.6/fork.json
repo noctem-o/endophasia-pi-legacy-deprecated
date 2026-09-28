@@ -3,9 +3,10 @@
 		"source": "prime-agent",
 		"version": "0.9.6",
 		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
+		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.2.0",
+		"probeVersion": "0.3.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "fork"
@@ -428,7 +429,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0e8db-6b0c-757f-8bca-a536351da88d",
+			"id": "01a0e913-312a-7095-a917-ef578349b5b7",
 			"keys": [
 				"cwd",
 				"id",
@@ -441,7 +442,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "44bc6912",
+			"id": "ba818a36",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -454,8 +455,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "9b377766",
-			"parentId": "44bc6912",
+			"id": "51319fe7",
+			"parentId": "ba818a36",
 			"keys": [
 				"id",
 				"parentId",
@@ -466,8 +467,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "5a14b100",
-			"parentId": "9b377766",
+			"id": "fed3c687",
+			"parentId": "51319fe7",
 			"keys": [
 				"id",
 				"parentId",
@@ -478,8 +479,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "3c9678c9",
-			"parentId": "5a14b100",
+			"id": "9fc13e63",
+			"parentId": "fed3c687",
 			"keys": [
 				"id",
 				"parentId",
@@ -490,8 +491,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "1f5fa418",
-			"parentId": "3c9678c9",
+			"id": "246bec55",
+			"parentId": "9fc13e63",
 			"keys": [
 				"content",
 				"customType",
@@ -505,21 +506,28 @@
 		},
 		{
 			"type": "message",
-			"id": "1760a415",
-			"parentId": "1f5fa418",
-			"role": "user",
+			"id": "13210aa0",
+			"parentId": "246bec55",
 			"keys": [
 				"id",
 				"message",
 				"parentId",
 				"timestamp",
 				"type"
-			]
+			],
+			"role": "user"
 		},
 		{
 			"type": "message",
-			"id": "85faa17c",
-			"parentId": "1760a415",
+			"id": "56ec704e",
+			"parentId": "13210aa0",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			],
 			"role": "assistant",
 			"stopReason": "stop",
 			"usage": {
@@ -536,32 +544,32 @@
 					"total": 514
 				},
 				"extraKeys": []
-			},
+			}
+		},
+		{
+			"type": "message",
+			"id": "edc204e7",
+			"parentId": "56ec704e",
 			"keys": [
 				"id",
 				"message",
 				"parentId",
 				"timestamp",
 				"type"
-			]
+			],
+			"role": "user"
 		},
 		{
 			"type": "message",
-			"id": "ae005531",
-			"parentId": "85faa17c",
-			"role": "user",
+			"id": "8c1d4c20",
+			"parentId": "edc204e7",
 			"keys": [
 				"id",
 				"message",
 				"parentId",
 				"timestamp",
 				"type"
-			]
-		},
-		{
-			"type": "message",
-			"id": "cc929fd2",
-			"parentId": "ae005531",
+			],
 			"role": "assistant",
 			"stopReason": "stop",
 			"usage": {
@@ -578,16 +586,10 @@
 					"total": 726
 				},
 				"extraKeys": []
-			},
-			"keys": [
-				"id",
-				"message",
-				"parentId",
-				"timestamp",
-				"type"
-			]
+			}
 		}
 	],
+	"entrySnapshots": [],
 	"stateKeys": [
 		"autoCompactionEnabled",
 		"followUpMode",
@@ -602,13 +604,13 @@
 		"steeringMode",
 		"thinkingLevel"
 	],
+	"observations": {
+		"forkTargets": 2,
+		"forkCreatedNewFile": true,
+		"originalEntriesAfterFork": 10,
+		"forkSharedEntryIds": 7,
+		"providerRequests": 3
+	},
 	"protocolErrors": [],
-	"notes": [
-		"forkable user messages: 2",
-		"fork succeeded: true",
-		"fork created a different session file: true",
-		"original file entries after fork: 10",
-		"fork entries sharing an id with the original file: 7",
-		"provider requests: 3"
-	]
+	"failures": []
 }

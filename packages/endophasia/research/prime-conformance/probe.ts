@@ -1,43 +1,87 @@
 // Research-only (Prime Runtime Conformance v0). Runs deterministic scenarios against a real Prime Agent over
 // `--mode rpc`, in isolated temporary environments against a loopback fake provider, and keeps only sanitized
 // evidence. Live payloads are inspected in memory only to decide when to abort; nothing but evidence is retained.
+//
+// Fail closed: every Prime value passes decode.ts before it becomes evidence, every scenario states the provider
+// requests it expects, and every scenario's invariants must hold. Anything the probe cannot establish is recorded as a
+// failure, which makes the scenario invalid evidence; it never becomes a default, a skipped step or a plausible value.
 import { execFileSync, spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+	commandEvidenceV0,
+	decodePrimeCompactionResultV0,
+	decodePrimeEventV0,
+	decodePrimeForkTargetsV0,
+	decodePrimeMessageCountV0,
+	decodePrimeSessionFileV0,
+	decodePrimeStateV0,
+	decodePrimeStatsV0,
+	PrimeDecodeError,
+	requirePrimeNotCancelledV0,
+} from "./decode.ts";
 import { createPrimeEnvironmentV0, type PrimeBinaryV0, type PrimeEnvironmentV0 } from "./environment.ts";
 import {
-	invalidStatsFieldsV0,
 	PROBE_NAME,
 	PROBE_VERSION,
+	type PrimeBuildProvenanceV0,
 	type PrimeCommandErrorKindV0,
 	type PrimeCommandEvidenceV0,
+	type PrimeEntrySnapshotV0,
+	type PrimeObservationsV0,
 	type PrimeProvenanceV0,
 	type PrimeScenarioEvidenceV0,
 	type PrimeSessionEntryEvidenceV0,
 	type PrimeStatsEvidenceV0,
-	sanitizeCommandV0,
-	sanitizeSessionEntryV0,
-	sanitizeStatsV0,
 } from "./evidence.ts";
-import {
-	type FakeProviderV0,
-	MALFORMED_PROVIDER_REQUEST,
-	SENTINELS,
-	SUMMARY_PROVIDER_REQUEST,
-	startFakeProviderV0,
-	UNEXPECTED_PROVIDER_REQUEST,
-} from "./fake-provider.ts";
-import { type PrimeEvidenceEventV0, sanitizePrimeEventV0 } from "./protocol.ts";
-import { PrimeRpcClientV0 } from "./rpc-client.ts";
+import { type FakeProviderV0, SENTINELS, startFakeProviderV0 } from "./fake-provider.ts";
+import { scenarioInvariantProblemsV0 } from "./invariants.ts";
+import type { PrimeEvidenceEventV0, PrimeRpcResponseV0 } from "./protocol.ts";
+import { PrimeRpcClientV0, PrimeRpcError } from "./rpc-client.ts";
+
+/** A probe-authored failure: its message never contains Prime payloads, so it is safe to keep as evidence. */
+export class PrimeProbeFailureV0 extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "PrimeProbeFailureV0";
+	}
+}
+
+/**
+ * The text kept for a caught error. Only messages the probe itself composed (field paths, command names, counts) are
+ * kept; any other error (a Node or parser message, which may quote data) is reduced to its name.
+ */
+export function failureTextV0(error: unknown): string {
+	if (error instanceof PrimeProbeFailureV0 || error instanceof PrimeDecodeError || error instanceof PrimeRpcError) {
+		return error.message;
+	}
+	return error instanceof Error ? `unexpected ${error.name}` : "unexpected non-error exception";
+}
 
 type Trigger = (type: string, event: Record<string, unknown>) => boolean;
 
-/** One Prime process attached to an isolated environment, recording sanitized evidence only. */
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+interface ScenarioRecorder {
+	events: PrimeEvidenceEventV0[];
+	abortRequestedAfter: number[];
+	commands: PrimeCommandEvidenceV0[];
+	stats: PrimeStatsEvidenceV0[];
+	sessionEntries: PrimeSessionEntryEvidenceV0[];
+	entrySnapshots: PrimeEntrySnapshotV0[];
+	stateKeys: string[];
+	observations: Mutable<PrimeObservationsV0>;
+	protocolErrors: string[];
+	failures: string[];
+}
+
+/** One Prime process attached to an isolated environment, recording decoded evidence only. */
 class ProbeSession {
 	readonly client: PrimeRpcClientV0;
 	readonly #run: ScenarioRecorder;
 	#agentEnd: (() => void) | undefined;
 	#abortOn: Trigger | undefined;
+	#closed: Promise<void> | undefined;
 
 	constructor(binary: PrimeBinaryV0, environment: PrimeEnvironmentV0, run: ScenarioRecorder) {
 		this.#run = run;
@@ -47,15 +91,20 @@ class ProbeSession {
 			env: environment.env,
 			cwd: environment.cwd,
 			onEvent: (type, event) => {
-				const sanitized = sanitizePrimeEventV0(type, event);
-				if (sanitized !== undefined) run.events.push(sanitized);
+				try {
+					const evidence = decodePrimeEventV0(type, event);
+					if (evidence !== undefined) run.events.push(evidence);
+				} catch (error) {
+					// A malformed event is not dropped silently: the scenario becomes invalid evidence.
+					run.failures.push(`event ${type}: ${failureTextV0(error)}`);
+				}
 				// Decide on the event's type and role only; the payload is not read.
 				if (this.#abortOn?.(type, event) === true) {
 					this.#abortOn = undefined;
 					run.abortRequestedAfter.push(run.events.length - 1);
 					// Detached from the scenario's control flow: a failure is recorded, never left unhandled.
-					this.command({ type: "abort" }).catch(() => {
-						run.notes.push("scenario error: abort request failed");
+					this.command({ type: "abort" }).catch((error: unknown) => {
+						run.failures.push(`abort request: ${failureTextV0(error)}`);
 					});
 				}
 				if (type === "agent_end") this.#agentEnd?.();
@@ -65,28 +114,36 @@ class ProbeSession {
 
 	/**
 	 * Send a command and record it. A refusal fails the scenario unless the scenario expects exactly that refusal
-	 * (`mayFailWith`): any other error kind is not the behavior under test.
+	 * category (`expectRefusal`): any other refusal is not the behavior under test.
 	 */
 	async command(
 		command: { readonly type: string } & Record<string, unknown>,
-		options: { mayFailWith?: PrimeCommandErrorKindV0 } = {},
-	) {
+		options: { expectRefusal?: PrimeCommandErrorKindV0 } = {},
+	): Promise<PrimeRpcResponseV0> {
 		const response = await this.client.request(command);
-		const evidence = sanitizeCommandV0(response);
+		const evidence = commandEvidenceV0(response);
 		this.#run.commands.push(evidence);
-		if (!response.success && (options.mayFailWith === undefined || evidence.errorKind !== options.mayFailWith)) {
-			throw new Error(`${command.type} failed unexpectedly (${evidence.errorKind ?? "no error kind"})`);
+		if (!response.success && (options.expectRefusal === undefined || evidence.errorKind !== options.expectRefusal)) {
+			throw new PrimeProbeFailureV0(`${command.type} was refused (${evidence.errorKind ?? "no category"})`);
 		}
+		return response;
+	}
+
+	/** A read-only lookup: not part of the recorded command evidence, but a refusal still fails the scenario. */
+	async lookup(type: string): Promise<PrimeRpcResponseV0> {
+		const response = await this.client.request({ type });
+		if (!response.success) throw new PrimeProbeFailureV0(`${type} was refused`);
 		return response;
 	}
 
 	/**
 	 * Prompt one scenario turn and wait for its agent_end. Optionally abort when a trigger first matches. Returns whether
-	 * Prime admitted the prompt. `streamingBehavior` is the only RPC prompt option that also resumes a suspended queue.
+	 * Prime admitted the prompt; a refusal is accepted only with the expected category. `streamingBehavior` is the only
+	 * RPC prompt option that also resumes a suspended queue.
 	 */
 	async prompt(
-		scenario: string,
-		options: { abortOn?: Trigger; streamingBehavior?: "followUp"; mayBeRefusedWith?: PrimeCommandErrorKindV0 } = {},
+		marker: string,
+		options: { abortOn?: Trigger; streamingBehavior?: "followUp"; expectRefusal?: PrimeCommandErrorKindV0 } = {},
 	): Promise<boolean> {
 		this.#abortOn = options.abortOn;
 		const ended = new Promise<void>((resolve) => {
@@ -95,18 +152,22 @@ class ProbeSession {
 		const response = await this.command(
 			{
 				type: "prompt",
-				message: `SCENARIO:${scenario} ${SENTINELS.prompt}`,
+				message: `SCENARIO:${marker} ${SENTINELS.prompt}`,
 				...(options.streamingBehavior === undefined ? {} : { streamingBehavior: options.streamingBehavior }),
 			},
-			options.mayBeRefusedWith === undefined ? {} : { mayFailWith: options.mayBeRefusedWith },
+			options.expectRefusal === undefined ? {} : { expectRefusal: options.expectRefusal },
 		);
-		if (!response.success) return false;
+		if (!response.success) {
+			this.#abortOn = undefined;
+			this.#agentEnd = undefined;
+			return false;
+		}
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		try {
 			await Promise.race([
 				ended,
 				new Promise<void>((_, reject) => {
-					timer = setTimeout(() => reject(new Error(`${scenario} did not end`)), 60_000);
+					timer = setTimeout(() => reject(new PrimeProbeFailureV0(`prompt ${marker} did not end`)), 60_000);
 				}),
 			]);
 		} finally {
@@ -118,58 +179,41 @@ class ProbeSession {
 	}
 
 	async stats(label: string): Promise<void> {
-		const response = await this.command({ type: "get_session_stats" });
-		const stats = sanitizeStatsV0(label, response.data);
-		// A changed or partial stats shape must fail the scenario, not become NaN (serialized as null) evidence.
-		const invalid = invalidStatsFieldsV0(stats);
-		if (invalid.length > 0) throw new Error(`get_session_stats for ${label} lacks ${invalid.join(", ")}`);
-		this.#run.stats.push(stats);
+		this.#run.stats.push(decodePrimeStatsV0(label, await this.command({ type: "get_session_stats" })));
 	}
 
 	/** The current session file path, used in memory only to read the durable entries. */
 	async sessionFile(): Promise<string> {
-		// Read-only lookups are not part of the recorded command evidence, but a refusal still fails the scenario.
-		const response = await this.client.request({ type: "get_state" });
-		if (!response.success) throw new Error("get_state failed unexpectedly");
-		const data = response.data as Record<string, unknown> | undefined;
-		this.#run.stateKeys = Object.keys(data ?? {}).sort();
-		// Without the file there are no durable entries to read; an empty list would pass as evidence.
-		if (typeof data?.sessionFile !== "string") throw new Error("get_state has no sessionFile");
-		return data.sessionFile;
+		const state = decodePrimeStateV0(await this.lookup("get_state"));
+		this.#run.stateKeys = state.keys;
+		return state.sessionFile;
 	}
 
-	async close(): Promise<void> {
-		await this.client.close();
-		this.#run.protocolErrors.push(...this.client.protocolErrors);
+	/** Close once; the client's protocol errors are recorded after its stdout has drained. */
+	close(): Promise<void> {
+		this.#closed ??= (async () => {
+			await this.client.close();
+			this.#run.protocolErrors.push(...this.client.protocolErrors);
+		})();
+		return this.#closed;
 	}
-}
-
-interface ScenarioRecorder {
-	events: PrimeEvidenceEventV0[];
-	abortRequestedAfter: number[];
-	commands: PrimeCommandEvidenceV0[];
-	stats: PrimeStatsEvidenceV0[];
-	sessionEntries: PrimeSessionEntryEvidenceV0[];
-	stateKeys: string[];
-	protocolErrors: string[];
-	notes: string[];
 }
 
 function readSessionEntries(path: string): PrimeSessionEntryEvidenceV0[] {
-	return readFileSync(path, "utf8")
-		.split("\n")
-		.filter((line) => line.length > 0)
-		.map((line, index) => {
-			// Every line is evidence: dropping one would shift adapter sequences and undercount usage.
-			const entry = sanitizeSessionEntryV0(JSON.parse(line));
-			if (entry === undefined) throw new Error(`session file line ${index + 1} is not a typed entry`);
-			return entry;
-		});
+	return decodePrimeSessionFileV0(readFileSync(path, "utf8"));
+}
+
+function sameFile(a: string, b: string): boolean {
+	try {
+		return realpathSync(a) === realpathSync(b);
+	} catch {
+		return false;
+	}
 }
 
 interface ScenarioContext {
-	readonly binary: PrimeBinaryV0;
 	readonly environment: PrimeEnvironmentV0;
+	readonly fake: FakeProviderV0;
 	readonly run: ScenarioRecorder;
 	open(): ProbeSession;
 }
@@ -177,8 +221,8 @@ interface ScenarioContext {
 interface ScenarioDefinition {
 	readonly name: string;
 	readonly description: string;
-	/** Whether the scenario makes marker-less summarization requests (manual compaction). */
-	readonly summarizes?: boolean;
+	/** Prompt markers this scenario sends; the fake provider refuses any other scripted request. */
+	readonly markers: readonly string[];
 	execute(context: ScenarioContext): Promise<void>;
 }
 
@@ -240,66 +284,59 @@ function writeChildUsageSession(environment: PrimeEnvironmentV0): string {
 	return path;
 }
 
+/** One prompt, the stats after it, and the durable entries: the shape of every single-run scenario. */
+function singleRun(marker: string, options: { abortOn?: Trigger; autoRetryOff?: boolean } = {}) {
+	return async ({ open, run }: ScenarioContext): Promise<void> => {
+		const session = open();
+		if (options.autoRetryOff === true) await session.command({ type: "set_auto_retry", enabled: false });
+		await session.prompt(marker, options.abortOn === undefined ? {} : { abortOn: options.abortOn });
+		await session.stats("after");
+		run.sessionEntries = readSessionEntries(await session.sessionFile());
+		await session.close();
+	};
+}
+
 export const SCENARIOS: readonly ScenarioDefinition[] = [
 	{
 		name: "simple",
 		description: "One prompt, one assistant completion with known usage.",
-		async execute({ open, run }) {
-			const session = open();
-			await session.prompt("simple");
-			await session.stats("after");
-			run.sessionEntries = readSessionEntries(await session.sessionFile());
-			await session.close();
-		},
+		markers: ["simple"],
+		execute: singleRun("simple"),
 	},
 	{
 		name: "tool-run",
 		description: "Assistant tool call, successful tool execution, second assistant completion.",
-		async execute({ open, run }) {
-			const session = open();
-			await session.prompt("tool-run");
-			await session.stats("after");
-			run.sessionEntries = readSessionEntries(await session.sessionFile());
-			await session.close();
-		},
+		markers: ["tool-run"],
+		execute: singleRun("tool-run"),
 	},
 	{
 		name: "tool-error",
 		description: "The tool throws; the model recovers with a final answer.",
-		async execute({ open, run }) {
-			const session = open();
-			await session.prompt("tool-error");
-			await session.stats("after");
-			run.sessionEntries = readSessionEntries(await session.sessionFile());
-			await session.close();
-		},
+		markers: ["tool-error"],
+		execute: singleRun("tool-error"),
 	},
 	{
 		name: "provider-failure",
 		description: "The provider rejects the request with a non-retryable error.",
-		async execute({ open, run }) {
-			const session = open();
-			await session.command({ type: "set_auto_retry", enabled: false });
-			await session.prompt("provider-failure");
-			await session.stats("after");
-			run.sessionEntries = readSessionEntries(await session.sessionFile());
-			await session.close();
-		},
+		markers: ["provider-failure"],
+		execute: singleRun("provider-failure", { autoRetryOff: true }),
 	},
 	{
 		name: "abort-stream",
 		description: "RPC abort while the assistant response is streaming.",
+		markers: ["abort-stream", "multi-a", "multi-b"],
 		async execute({ open, run }) {
 			const session = open();
 			await session.prompt("abort-stream", { abortOn: assistantStarted });
 			await session.stats("after");
-			// An RPC abort suspends Prime's input queue; a plain prompt is refused until a prompt that may queue resumes it.
-			run.notes.push(
-				`plain prompt after abort admitted: ${await session.prompt("multi-a", { mayBeRefusedWith: "queued-input-suspended" })}`,
-			);
-			run.notes.push(
-				`followUp prompt after abort admitted: ${await session.prompt("multi-b", { streamingBehavior: "followUp" })}`,
-			);
+			// An RPC abort suspends Prime's input queue; a plain prompt is refused (with that category only) until a
+			// prompt that may queue resumes it.
+			run.observations.plainPromptAfterAbortAdmitted = await session.prompt("multi-a", {
+				expectRefusal: "queued-input-suspended",
+			});
+			run.observations.followUpAfterAbortAdmitted = await session.prompt("multi-b", {
+				streamingBehavior: "followUp",
+			});
 			await session.stats("after-resume");
 			run.sessionEntries = readSessionEntries(await session.sessionFile());
 			await session.close();
@@ -308,60 +345,46 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 	{
 		name: "abort-tool",
 		description: "RPC abort while a tool is executing.",
-		async execute({ open, run }) {
-			const session = open();
-			await session.prompt("abort-tool", { abortOn: toolStarted });
-			await session.stats("after");
-			run.sessionEntries = readSessionEntries(await session.sessionFile());
-			await session.close();
-		},
+		markers: ["abort-tool"],
+		execute: singleRun("abort-tool", { abortOn: toolStarted }),
 	},
 	{
 		name: "length-stop",
 		description: "The assistant stops on the output-length limit.",
-		async execute({ open, run }) {
-			const session = open();
-			await session.prompt("length");
-			await session.stats("after");
-			run.sessionEntries = readSessionEntries(await session.sessionFile());
-			await session.close();
-		},
+		markers: ["length"],
+		execute: singleRun("length"),
 	},
 	{
 		name: "reasoning-usage",
 		description: "The provider reports reasoning tokens and reasoning content.",
-		async execute({ open, run }) {
-			const session = open();
-			await session.prompt("reasoning");
-			await session.stats("after");
-			run.sessionEntries = readSessionEntries(await session.sessionFile());
-			await session.close();
-		},
+		markers: ["reasoning"],
+		execute: singleRun("reasoning"),
 	},
 	{
 		name: "multi-turn-reopen",
 		description: "Three prompts with known usage, then the process exits and a new process reopens the session file.",
+		markers: ["multi-a", "multi-b", "multi-c"],
 		async execute({ open, run }) {
 			const first = open();
-			for (const scenario of ["multi-a", "multi-b", "multi-c"]) {
-				await first.prompt(scenario);
-				await first.stats(`after-${scenario}`);
+			for (const marker of ["multi-a", "multi-b", "multi-c"]) {
+				await first.prompt(marker);
+				await first.stats(`after-${marker}`);
 			}
 			const path = await first.sessionFile();
 			const before = readSessionEntries(path);
 			await first.close();
 			const second = open();
-			const switched = await second.command({ type: "switch_session", sessionPath: path });
-			run.notes.push(`reopen via switch_session succeeded: ${switched.success}`);
+			requirePrimeNotCancelledV0(await second.command({ type: "switch_session", sessionPath: path }));
 			await second.stats("after-reopen");
-			const messages = await second.command({ type: "get_messages" });
-			const restored = (messages.data as { messages?: unknown } | undefined)?.messages;
-			if (!Array.isArray(restored)) throw new Error("get_messages has no messages array");
-			run.notes.push(`messages after reopen: ${restored.length}`);
-			const after = readSessionEntries(await second.sessionFile());
-			run.notes.push(
-				`entry ids stable across reopen: ${JSON.stringify(before.map((entry) => entry.id)) === JSON.stringify(after.slice(0, before.length).map((entry) => entry.id))}`,
+			run.observations.messagesAfterReopen = decodePrimeMessageCountV0(
+				await second.command({ type: "get_messages" }),
 			);
+			const reopenedFile = await second.sessionFile();
+			run.observations.reopenedIntendedSession = sameFile(reopenedFile, path);
+			const after = readSessionEntries(reopenedFile);
+			run.observations.entryIdsStableAcrossReopen =
+				JSON.stringify(before.map((entry) => entry.id)) ===
+				JSON.stringify(after.slice(0, before.length).map((entry) => entry.id));
 			run.sessionEntries = after;
 			await second.close();
 		},
@@ -369,23 +392,32 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 	{
 		name: "compaction",
 		description: "Two prompts, then a manual compaction whose summary also reports usage.",
-		summarizes: true,
-		async execute({ open, run }) {
+		markers: ["multi-a", "multi-b", "multi-c"],
+		async execute({ fake, open, run }) {
 			const session = open();
 			await session.prompt("multi-a");
 			await session.prompt("multi-b");
 			await session.stats("before-compaction");
-			const compacted = await session.command({ type: "compact" });
-			run.notes.push(`compaction succeeded: ${compacted.success}`);
+			const file = await session.sessionFile();
+			run.entrySnapshots.push({ label: "before-compaction", entries: readSessionEntries(file) });
+			// Summarization requests are expected only while the compaction runs.
+			fake.allowSummaries(true);
+			try {
+				decodePrimeCompactionResultV0(await session.command({ type: "compact" }));
+			} finally {
+				fake.allowSummaries(false);
+			}
 			await session.stats("after-compaction");
+			// Snapshot before any later prompt adds rows, so retention is judged on the compaction alone.
+			run.entrySnapshots.push({ label: "after-compaction", entries: readSessionEntries(file) });
 			// Manual compaction aborts first (compact -> abort -> requestAbort), which suspends the input queue. Record the
-			// plain refusal, then resume with a prompt that may queue.
-			run.notes.push(
-				`plain prompt after compaction admitted: ${await session.prompt("multi-c", { mayBeRefusedWith: "queued-input-suspended" })}`,
-			);
-			run.notes.push(
-				`followUp prompt after compaction admitted: ${await session.prompt("multi-c", { streamingBehavior: "followUp" })}`,
-			);
+			// plain refusal (queued-input category only), then resume with a prompt that may queue.
+			run.observations.plainPromptAfterCompactionAdmitted = await session.prompt("multi-c", {
+				expectRefusal: "queued-input-suspended",
+			});
+			run.observations.followUpAfterCompactionAdmitted = await session.prompt("multi-c", {
+				streamingBehavior: "followUp",
+			});
 			await session.stats("after-next-prompt");
 			run.sessionEntries = readSessionEntries(await session.sessionFile());
 			await session.close();
@@ -394,36 +426,29 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 	{
 		name: "fork",
 		description: "Two prompts, then a fork from the second user message, then one more prompt on the fork.",
+		markers: ["multi-a", "multi-b", "multi-c"],
 		async execute({ open, run }) {
 			const session = open();
 			await session.prompt("multi-a");
 			await session.prompt("multi-b");
 			await session.stats("before-fork");
 			const originalFile = await session.sessionFile();
-			const forkableResponse = await session.client.request({ type: "get_fork_messages" });
-			if (!forkableResponse.success) throw new Error("get_fork_messages failed unexpectedly");
-			const forkable = (forkableResponse.data as { messages?: unknown } | undefined)?.messages;
-			if (!Array.isArray(forkable)) throw new Error("get_fork_messages has no messages array");
-			const entries = forkable.flatMap((message: { entryId?: unknown } | null) =>
-				typeof message?.entryId === "string" ? [message.entryId] : [],
-			);
-			run.notes.push(`forkable user messages: ${entries.length}`);
-			// The fork is the operation under test: without a target the scenario must fail, not continue unforked.
-			const target = entries.at(-1);
-			if (target === undefined) throw new Error("get_fork_messages offered no fork target");
-			const forked = await session.command({ type: "fork", entryId: target });
-			run.notes.push(`fork succeeded: ${forked.success}`);
+			// The fork is the operation under test: no target, a cancelled fork or no new session fails the scenario.
+			const targets = decodePrimeForkTargetsV0(await session.lookup("get_fork_messages"));
+			run.observations.forkTargets = targets.length;
+			requirePrimeNotCancelledV0(await session.command({ type: "fork", entryId: targets.at(-1) }));
 			await session.stats("after-fork");
 			const forkFile = await session.sessionFile();
-			run.notes.push(`fork created a different session file: ${forkFile !== originalFile}`);
+			run.observations.forkCreatedNewFile = !sameFile(forkFile, originalFile);
 			await session.prompt("multi-c");
 			await session.stats("after-fork-prompt");
 			run.sessionEntries = readSessionEntries(forkFile);
 			const original = readSessionEntries(originalFile);
-			run.notes.push(`original file entries after fork: ${original.length}`);
+			run.observations.originalEntriesAfterFork = original.length;
 			const originalIds = new Set(original.flatMap((entry) => (entry.type === "session" ? [] : [entry.id])));
-			const shared = run.sessionEntries.filter((entry) => entry.type !== "session" && originalIds.has(entry.id));
-			run.notes.push(`fork entries sharing an id with the original file: ${shared.length}`);
+			run.observations.forkSharedEntryIds = run.sessionEntries.filter(
+				(entry) => entry.type !== "session" && originalIds.has(entry.id),
+			).length;
 			await session.close();
 		},
 	},
@@ -431,11 +456,11 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 		name: "child-usage-replay",
 		description:
 			"A crafted durable session holding one child_usage_attributed entry, reopened by a real Prime process (no live RLM child).",
+		markers: [],
 		async execute({ environment, open, run }) {
 			const path = writeChildUsageSession(environment);
 			const session = open();
-			const switched = await session.command({ type: "switch_session", sessionPath: path });
-			run.notes.push(`crafted session opened: ${switched.success}`);
+			requirePrimeNotCancelledV0(await session.command({ type: "switch_session", sessionPath: path }));
 			await session.stats("after-open");
 			run.sessionEntries = readSessionEntries(path);
 			await session.close();
@@ -451,13 +476,13 @@ export interface PrimeProbeOptionsV0 {
 	readonly log?: (message: string) => void;
 }
 
-/** Run every scenario, each in its own isolated environment and Prime process tree. */
+/** Run the scenarios, each in its own isolated environment, Prime process tree and fake provider. */
 export async function runPrimeProbeV0(options: PrimeProbeOptionsV0): Promise<PrimeScenarioEvidenceV0[]> {
 	const results: PrimeScenarioEvidenceV0[] = [];
 	for (const scenario of SCENARIOS) {
 		if (options.only !== undefined && !options.only.includes(scenario.name)) continue;
 		options.log?.(`scenario ${scenario.name}`);
-		const fake: FakeProviderV0 = await startFakeProviderV0();
+		const fake = await startFakeProviderV0({ markers: scenario.markers });
 		const environment = createPrimeEnvironmentV0({ providerBaseUrl: fake.baseUrl, retain: options.retain });
 		const run: ScenarioRecorder = {
 			events: [],
@@ -465,15 +490,17 @@ export async function runPrimeProbeV0(options: PrimeProbeOptionsV0): Promise<Pri
 			commands: [],
 			stats: [],
 			sessionEntries: [],
+			entrySnapshots: [],
 			stateKeys: [],
+			observations: {},
 			protocolErrors: [],
-			notes: [],
+			failures: [],
 		};
 		const sessions: ProbeSession[] = [];
 		try {
 			await scenario.execute({
-				binary: options.binary,
 				environment,
+				fake,
 				run,
 				open: () => {
 					const session = new ProbeSession(options.binary, environment, run);
@@ -482,71 +509,70 @@ export async function runPrimeProbeV0(options: PrimeProbeOptionsV0): Promise<Pri
 				},
 			});
 		} catch (error) {
-			run.notes.push(`scenario error: ${error instanceof Error ? error.name : "unknown"}`);
+			run.failures.push(failureTextV0(error));
 		} finally {
-			for (const session of sessions) await session.client.close();
+			// Close every session through the same path, so protocol errors are recorded even after a failure.
+			for (const session of sessions) await session.close();
 			environment.dispose(options.binary);
 			await fake.close();
 		}
-		run.notes.push(`provider requests: ${fake.requests.length}`);
-		const count = (kind: string) => fake.requests.filter((request) => request === kind).length;
-		if (count(MALFORMED_PROVIDER_REQUEST) > 0) {
-			run.notes.push(`scenario error: ${count(MALFORMED_PROVIDER_REQUEST)} malformed provider request(s)`);
+		run.observations.providerRequests = fake.requests.length;
+		for (const request of fake.requests) {
+			if (request.kind === "malformed") run.failures.push("provider received a malformed request");
+			if (request.kind === "unexpected")
+				run.failures.push(`provider received an unexpected request (${request.reason})`);
 		}
-		if (count(UNEXPECTED_PROVIDER_REQUEST) > 0) {
-			run.notes.push(`scenario error: ${count(UNEXPECTED_PROVIDER_REQUEST)} unscripted provider request(s)`);
-		}
-		// Marker-less requests are summarization; only a scenario that summarizes may make them.
-		if (count(SUMMARY_PROVIDER_REQUEST) > 0 && scenario.summarizes !== true) {
-			run.notes.push(`scenario error: ${count(SUMMARY_PROVIDER_REQUEST)} unexpected summary request(s)`);
-		}
-		results.push({
+		const evidence: PrimeScenarioEvidenceV0 = {
 			provenance: { ...options.provenance, scenario: scenario.name },
 			description: scenario.description,
 			...run,
-		});
+		};
+		const violated = scenarioInvariantProblemsV0(evidence);
+		results.push(violated.length === 0 ? evidence : { ...evidence, failures: [...run.failures, ...violated] });
 	}
 	return results;
 }
 
-/** Identify the Prime under test: its reported version and, for a source checkout, its commit. */
+function git(checkout: string, args: readonly string[]): string {
+	return execFileSync("git", ["-C", checkout, ...args], { encoding: "utf8", timeout: 30_000 }).trim();
+}
+
+/** Identify the Prime under test: its reported version and how its build is known. */
 export function describePrimeV0(binary: PrimeBinaryV0): PrimeProvenanceV0 {
 	// Even --version runs in a disposable environment, so no user state is touched.
 	const environment = createPrimeEnvironmentV0({ providerBaseUrl: "http://127.0.0.1:9/v1" });
-	let version: string;
+	let version = "unknown";
 	try {
-		// Prime prints its version on stderr in some modes; accept either stream.
+		// Prime prints its version on stderr in some modes; accept either stream, but only from a successful run.
 		const result = spawnSync(binary.command, [...binary.leadingArgs, "--version"], {
 			cwd: environment.cwd,
 			env: environment.env,
 			encoding: "utf8",
 			timeout: 60_000,
 		});
-		version = /\d+\.\d+\.\d+\S*/.exec(`${result.stdout} ${result.stderr}`)?.[0] ?? "unknown";
+		if (result.status === 0) version = /\d+\.\d+\.\d+\S*/.exec(`${result.stdout} ${result.stderr}`)?.[0] ?? "unknown";
 	} finally {
 		environment.dispose(binary);
 	}
+	let build: PrimeBuildProvenanceV0 = binary.checkout === undefined ? "binary" : "unverified-checkout";
 	let commit: string | undefined;
-	let checkoutDirty = false;
-	// Only a source checkout the probe actually runs has a commit; PRIME_AGENT_BIN is attributed to none.
 	if (binary.checkout !== undefined) {
 		try {
-			const head = execFileSync("git", ["-C", binary.checkout, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-			// Modified tracked files mean the running code is not HEAD. Untracked build output (dist, node_modules) is
+			const head = git(binary.checkout, ["rev-parse", "HEAD"]);
+			// Modified tracked files mean the code that ran is not HEAD. Untracked build output (dist, node_modules) is
 			// expected in a built checkout and is not counted.
-			checkoutDirty =
-				execFileSync("git", ["-C", binary.checkout, "status", "--porcelain", "--untracked-files=no"], {
-					encoding: "utf8",
-				}).trim().length > 0;
-			// Recorded only once cleanliness is known: a commit whose state could not be checked is no commit.
+			const dirty = git(binary.checkout, ["status", "--porcelain", "--untracked-files=no"]).length > 0;
 			commit = head;
-		} catch {}
+			build = dirty ? "dirty-checkout" : "clean-checkout";
+		} catch {
+			// Neither the commit nor cleanliness is known: stays unverified-checkout, with no commit.
+		}
 	}
 	return {
 		source: "prime-agent",
 		version,
 		...(commit === undefined ? {} : { commit }),
-		...(checkoutDirty ? { checkoutDirty: true } : {}),
+		build,
 		mode: "rpc",
 		generatedBy: PROBE_NAME,
 		probeVersion: PROBE_VERSION,

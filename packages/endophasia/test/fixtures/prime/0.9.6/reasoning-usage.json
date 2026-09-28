@@ -3,9 +3,10 @@
 		"source": "prime-agent",
 		"version": "0.9.6",
 		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
+		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.2.0",
+		"probeVersion": "0.3.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "reasoning-usage"
@@ -160,7 +161,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0e8da-d16b-710d-a23d-c537583e761a",
+			"id": "01a0e912-9cb2-75d4-9f7c-4790b8596125",
 			"keys": [
 				"cwd",
 				"id",
@@ -172,7 +173,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "74dd9475",
+			"id": "3796de08",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -185,8 +186,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "7b1be377",
-			"parentId": "74dd9475",
+			"id": "8e4a0f65",
+			"parentId": "3796de08",
 			"keys": [
 				"id",
 				"parentId",
@@ -197,8 +198,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "9327652e",
-			"parentId": "7b1be377",
+			"id": "135ad93a",
+			"parentId": "8e4a0f65",
 			"keys": [
 				"id",
 				"parentId",
@@ -209,8 +210,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "07c0db97",
-			"parentId": "9327652e",
+			"id": "04d250e5",
+			"parentId": "135ad93a",
 			"keys": [
 				"id",
 				"parentId",
@@ -221,8 +222,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "7214fed1",
-			"parentId": "07c0db97",
+			"id": "0fd7a9f0",
+			"parentId": "04d250e5",
 			"keys": [
 				"content",
 				"customType",
@@ -236,21 +237,28 @@
 		},
 		{
 			"type": "message",
-			"id": "8f54d72b",
-			"parentId": "7214fed1",
-			"role": "user",
+			"id": "5e073462",
+			"parentId": "0fd7a9f0",
 			"keys": [
 				"id",
 				"message",
 				"parentId",
 				"timestamp",
 				"type"
-			]
+			],
+			"role": "user"
 		},
 		{
 			"type": "message",
-			"id": "90743968",
-			"parentId": "8f54d72b",
+			"id": "fa42e9e6",
+			"parentId": "5e073462",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			],
 			"role": "assistant",
 			"stopReason": "stop",
 			"usage": {
@@ -267,16 +275,10 @@
 					"total": 780
 				},
 				"extraKeys": []
-			},
-			"keys": [
-				"id",
-				"message",
-				"parentId",
-				"timestamp",
-				"type"
-			]
+			}
 		}
 	],
+	"entrySnapshots": [],
 	"stateKeys": [
 		"autoCompactionEnabled",
 		"followUpMode",
@@ -291,8 +293,9 @@
 		"steeringMode",
 		"thinkingLevel"
 	],
+	"observations": {
+		"providerRequests": 1
+	},
 	"protocolErrors": [],
-	"notes": [
-		"provider requests: 1"
-	]
+	"failures": []
 }

@@ -3,7 +3,7 @@
 import type { PrimeScenarioEvidenceV0, PrimeSessionEntryEvidenceV0, PrimeStatsEvidenceV0 } from "./evidence.ts";
 import { type MissionTraceMappingV0, mapPrimeMissionTraceV0 } from "./mission-trace.ts";
 import { rebuildPrimeRuntimeMetricsV0 } from "./projection.ts";
-import type { PrimeEvidenceEventV0 } from "./protocol.ts";
+import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 /** Where the contract's facts come from. */
 export type PrimeSupportV0 = "native" | "adapter-state" | "unavailable";
@@ -47,12 +47,14 @@ export const PRIME_SOURCE = {
 	openAiUsage: "prime:packages/ai/src/providers/openai-completions.ts:1110 (usage parser: no reasoning field)",
 	sessionRewrite:
 		"prime:packages/coding-agent/src/core/session-manager.ts:1812-1818,1917-1930 (whole-file atomic rewrite on migration and moves)",
+	autoRefine:
+		"prime:packages/coding-agent/src/core/settings-manager.ts:1030-1045 and core/agent-session.ts:3398-3428 (auto-refine, on by default, runs a review model call after compaction)",
 	rlmChildren: "prime:packages/coding-agent/docs/rlm.md:64-118 (children are separate AgentSessions and session dirs)",
 } as const;
 
 /** A fact is `undefined` when the scenario that establishes it was not run. */
 export interface PrimeFactsV0 {
-	readonly toolCallIdsNative: boolean | undefined;
+	readonly toolCallIdentityNative: boolean | undefined;
 	readonly toolErrorRecovered: boolean | undefined;
 	readonly providerFailureStop: string | undefined;
 	readonly abortStreamStop: string | undefined;
@@ -74,6 +76,8 @@ export interface PrimeFactsV0 {
 	readonly rebuildMatchesStatsOnSinglePath: boolean | undefined;
 	readonly rebuildIncludesCompactionUsage: boolean | undefined;
 	readonly childUsageFoldedIntoStats: boolean | undefined;
+	/** After child folding: stats' recomputed tokens.total next to the aggregate's reported totalTokens. */
+	readonly childFoldTotals: { readonly statsTokensTotal: number; readonly aggregateTotalTokens: number } | undefined;
 	readonly childUsageRewritesEarlierRow: boolean | undefined;
 	readonly undocumentedEventTypes: readonly string[];
 	readonly protocolErrors: number;
@@ -87,16 +91,11 @@ function stat(run: PrimeScenarioEvidenceV0 | undefined, label: string): PrimeSta
 	return run?.stats.find((item) => item.label === label);
 }
 
-function note(run: PrimeScenarioEvidenceV0 | undefined, prefix: string): string | undefined {
-	return run?.notes
-		.find((item) => item.startsWith(prefix))
-		?.slice(prefix.length)
-		.trim();
-}
-
-function noteFlag(run: PrimeScenarioEvidenceV0 | undefined, prefix: string): boolean | undefined {
-	const value = note(run, prefix);
-	return value === undefined ? undefined : value === "true";
+function snapshot(
+	run: PrimeScenarioEvidenceV0 | undefined,
+	label: string,
+): readonly PrimeSessionEntryEvidenceV0[] | undefined {
+	return run?.entrySnapshots.find((item) => item.label === label)?.entries;
 }
 
 /** The final assistant stop reason of the scenario's first run. */
@@ -106,10 +105,10 @@ function firstRunStop(run: PrimeScenarioEvidenceV0 | undefined): string | undefi
 }
 
 /**
- * Whether get_session_stats counts the compaction summary, judged right after compaction on a single linear path: the
- * path then holds only the kept entries (from firstKeptEntryId up to the compaction entry), so stats equal their
- * assistant cost if the summary is excluded, and that plus the summary cost if it is counted. Anything else is
- * undecided rather than guessed.
+ * Whether get_session_stats counts the compaction summary, judged from the session file snapshotted immediately after
+ * compaction (before any later prompt) on a single linear path: the context path then holds only the kept entries
+ * (from firstKeptEntryId up to the compaction entry), so stats equal their assistant cost if the summary is excluded,
+ * and that plus the summary cost if it is counted. Anything else is undecided rather than guessed.
  */
 function compactionSummaryCounted(
 	entries: readonly PrimeSessionEntryEvidenceV0[] | undefined,
@@ -134,8 +133,9 @@ function compactionSummaryCounted(
 }
 
 /**
- * Stats equal in every stable field. contextUsageTokens is excluded: it is Prime's context-window estimate, documented
- * here as a different, volatile fact (it is null right after compaction until the next response).
+ * Stats equal in every field expected to survive a pure close and reopen: every message count, every token count, the
+ * cost and the field-name set. Excluded, deliberately: `contextUsageTokens`, Prime's context-window estimate, which is
+ * recomputed per process and is null right after compaction until the next response; and `label`, which names the read.
  */
 function stableStatsEqual(a: PrimeStatsEvidenceV0, b: PrimeStatsEvidenceV0): boolean {
 	return (
@@ -152,6 +152,52 @@ function stableStatsEqual(a: PrimeStatsEvidenceV0, b: PrimeStatsEvidenceV0): boo
 		a.cost === b.cost &&
 		a.keys.join(",") === b.keys.join(",")
 	);
+}
+
+function usageEqual(a: PrimeUsageEvidenceV0, b: PrimeUsageEvidenceV0): boolean {
+	return (
+		a.input === b.input &&
+		a.output === b.output &&
+		a.cacheRead === b.cacheRead &&
+		a.cacheWrite === b.cacheWrite &&
+		a.totalTokens === b.totalTokens &&
+		a.cost.input === b.cost.input &&
+		a.cost.output === b.cost.output &&
+		a.cost.cacheRead === b.cost.cacheRead &&
+		a.cost.cacheWrite === b.cost.cacheWrite &&
+		a.cost.total === b.cost.total
+	);
+}
+
+/**
+ * Whether the adapter rebuild keeps every pre-compaction row and adds exactly the summary usage, from the snapshots
+ * taken immediately before and after compaction (no later prompt can make up for a loss). Exact in every usage
+ * dimension: rebuild(after) must equal rebuild(before) plus the compaction entry's usage. Undecided without both
+ * snapshots or a compaction usage.
+ */
+function rebuildRetainsCompaction(
+	before: readonly PrimeSessionEntryEvidenceV0[] | undefined,
+	after: readonly PrimeSessionEntryEvidenceV0[] | undefined,
+): boolean | undefined {
+	const summary = after?.find((entry) => entry.type === "compaction")?.usage;
+	if (before === undefined || after === undefined || summary === undefined) return undefined;
+	const kept = rebuildPrimeRuntimeMetricsV0(before).usage;
+	const expected: PrimeUsageEvidenceV0 = {
+		input: kept.input + summary.input,
+		output: kept.output + summary.output,
+		cacheRead: kept.cacheRead + summary.cacheRead,
+		cacheWrite: kept.cacheWrite + summary.cacheWrite,
+		totalTokens: kept.totalTokens + summary.totalTokens,
+		cost: {
+			input: kept.cost.input + summary.cost.input,
+			output: kept.cost.output + summary.cost.output,
+			cacheRead: kept.cost.cacheRead + summary.cost.cacheRead,
+			cacheWrite: kept.cost.cacheWrite + summary.cost.cacheWrite,
+			total: kept.cost.total + summary.cost.total,
+		},
+		extraKeys: [],
+	};
+	return usageEqual({ ...rebuildPrimeRuntimeMetricsV0(after).usage, extraKeys: [] }, expected);
 }
 
 const DOCUMENTED_EVENT_TYPES = new Set([
@@ -183,7 +229,7 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 	const child = runs.get("child-usage-replay");
 	const reasoning = runs.get("reasoning-usage");
 
-	const toolCallIdsNative =
+	const toolCallIdentityNative =
 		toolRun === undefined
 			? undefined
 			: (() => {
@@ -221,7 +267,9 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 
 	const beforeCompaction = stat(compaction, "before-compaction");
 	const afterCompaction = stat(compaction, "after-compaction");
-	const compactionEntry = compaction?.sessionEntries.find((entry) => entry.type === "compaction");
+	const beforeSnapshot = snapshot(compaction, "before-compaction");
+	const afterSnapshot = snapshot(compaction, "after-compaction");
+	const compactionEntry = afterSnapshot?.find((entry) => entry.type === "compaction");
 	const beforeFork = stat(fork, "before-fork");
 	const afterFork = stat(fork, "after-fork");
 
@@ -237,14 +285,14 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 	);
 
 	return {
-		toolCallIdsNative,
+		toolCallIdentityNative,
 		toolErrorRecovered,
 		providerFailureStop: firstRunStop(runs.get("provider-failure")),
 		abortStreamStop: firstRunStop(runs.get("abort-stream")),
 		abortToolStop: firstRunStop(runs.get("abort-tool")),
 		lengthStop: firstRunStop(runs.get("length-stop")),
-		plainPromptAfterAbortAdmitted: noteFlag(runs.get("abort-stream"), "plain prompt after abort admitted:"),
-		plainPromptAfterCompactionAdmitted: noteFlag(compaction, "plain prompt after compaction admitted:"),
+		plainPromptAfterAbortAdmitted: runs.get("abort-stream")?.observations.plainPromptAfterAbortAdmitted,
+		plainPromptAfterCompactionAdmitted: compaction?.observations.plainPromptAfterCompactionAdmitted,
 		reasoningFieldReported:
 			reasoningUsage === undefined || reasoningUsage.length === 0
 				? undefined
@@ -254,22 +302,19 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 			beforeCompaction === undefined || afterCompaction === undefined
 				? undefined
 				: afterCompaction.tokens.total < beforeCompaction.tokens.total,
-		compactionUsageDurable: compaction === undefined ? undefined : compactionEntry?.usage !== undefined,
-		compactionUsageInStats: compactionSummaryCounted(compaction?.sessionEntries, afterCompaction),
+		compactionUsageDurable: afterSnapshot === undefined ? undefined : compactionEntry?.usage !== undefined,
+		compactionUsageInStats: compactionSummaryCounted(afterSnapshot, afterCompaction),
 		statsDropAfterFork:
 			beforeFork === undefined || afterFork === undefined
 				? undefined
 				: afterFork.tokens.total < beforeFork.tokens.total,
-		forkNewFile: noteFlag(fork, "fork created a different session file:"),
-		forkSharedEntryIds: (() => {
-			const value = note(fork, "fork entries sharing an id with the original file:");
-			return value === undefined ? undefined : Number(value);
-		})(),
+		forkNewFile: fork?.observations.forkCreatedNewFile,
+		forkSharedEntryIds: fork?.observations.forkSharedEntryIds,
 		reopenStatsEqual:
 			lastReopenPrompt === undefined || afterReopen === undefined
 				? undefined
 				: stableStatsEqual(lastReopenPrompt, afterReopen),
-		reopenEntryIdsStable: noteFlag(reopen, "entry ids stable across reopen:"),
+		reopenEntryIdsStable: reopen?.observations.entryIdsStableAcrossReopen,
 		rebuildMatchesStatsOnSinglePath:
 			reopen === undefined || afterReopen === undefined
 				? undefined
@@ -286,23 +331,25 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 							usage.cost.total === afterReopen.cost
 						);
 					})(),
-		// Only the durable rows up to and including the compaction entry: later prompts must not make up for loss.
-		rebuildIncludesCompactionUsage:
-			compaction === undefined || beforeCompaction === undefined || compactionEntry?.usage === undefined
-				? undefined
-				: rebuildPrimeRuntimeMetricsV0(
-						compaction.sessionEntries.slice(0, compaction.sessionEntries.indexOf(compactionEntry) + 1),
-					).usage.cost.total ===
-					beforeCompaction.cost + compactionEntry.usage.cost.total,
+		rebuildIncludesCompactionUsage: rebuildRetainsCompaction(beforeSnapshot, afterSnapshot),
+		// Every dimension both surfaces report with the same meaning. Stats report no per-component cost, and their
+		// tokens.total is recomputed from the components, unlike the aggregate's reported totalTokens: that pair is kept
+		// as its own fact below rather than compared here.
 		childUsageFoldedIntoStats:
 			childStats === undefined || childEntry?.aggregateUsage === undefined
 				? undefined
-				: // Every dimension both report. Stats recompute tokens.total, so it is not comparable to totalTokens.
-					childStats.tokens.input === childEntry.aggregateUsage.input &&
+				: childStats.tokens.input === childEntry.aggregateUsage.input &&
 					childStats.tokens.output === childEntry.aggregateUsage.output &&
 					childStats.tokens.cacheRead === childEntry.aggregateUsage.cacheRead &&
 					childStats.tokens.cacheWrite === childEntry.aggregateUsage.cacheWrite &&
 					childStats.cost === childEntry.aggregateUsage.cost.total,
+		childFoldTotals:
+			childStats === undefined || childEntry?.aggregateUsage === undefined
+				? undefined
+				: {
+						statsTokensTotal: childStats.tokens.total,
+						aggregateTotalTokens: childEntry.aggregateUsage.totalTokens,
+					},
 		childUsageRewritesEarlierRow:
 			childStats === undefined || childTarget?.usage === undefined
 				? undefined
@@ -388,7 +435,7 @@ export function classifyPrimeConformanceV0(
 		support: "adapter-state",
 		semanticFit: "qualified",
 		evidence: [
-			`probe:tool-run: tool_execution_* (toolCallId, toolName) pairs are Prime's own and match the assistant tool calls: ${show(facts.toolCallIdsNative)}`,
+			`probe:tool-run: tool_execution_* (toolCallId, toolName) pairs are Prime's own and match the assistant tool calls: ${show(facts.toolCallIdentityNative)}`,
 			`probe:tool-error: tool_execution_end isError=true and the run recovers to stop: ${show(facts.toolErrorRecovered)}`,
 			`probe:provider-failure: final stop reason ${show(facts.providerFailureStop)}`,
 			`probe:abort-stream: final stop reason ${show(facts.abortStreamStop)}`,
@@ -433,14 +480,16 @@ export function classifyPrimeConformanceV0(
 			`probe:*: tokens.total equals input+output+cacheRead+cacheWrite in every stats read: ${show(facts.statsTotalRecomputed)}`,
 			`probe:compaction: summary usage persisted on the compaction entry: ${show(facts.compactionUsageDurable)}; included in stats cost: ${show(facts.compactionUsageInStats)}`,
 			`probe:reasoning-usage: a reasoning count is reported: ${show(facts.reasoningFieldReported)}`,
-			`probe:child-usage-replay: child usage folded into stats: ${show(facts.childUsageFoldedIntoStats)}`,
-			`probe:multi-turn-reopen: stats identical after reopen: ${show(facts.reopenStatsEqual)}`,
+			`probe:child-usage-replay: child usage folded into stats (input, output, cacheRead, cacheWrite, cost): ${show(facts.childUsageFoldedIntoStats)}`,
+			`probe:child-usage-replay: after folding, stats tokens.total ${show(facts.childFoldTotals?.statsTokensTotal)} vs aggregate totalTokens ${show(facts.childFoldTotals?.aggregateTotalTokens)} (different definitions; not compared as a match)`,
+			`probe:multi-turn-reopen: stats identical after reopen in every stable field (message counts, tokens, cost; contextUsage excluded): ${show(facts.reopenStatsEqual)}`,
 			`probe:multi-turn-reopen: adapter rebuild from the session file equals get_session_stats on a single path: ${show(facts.rebuildMatchesStatsOnSinglePath)}`,
-			`probe:compaction: adapter rebuild keeps pre-compaction usage and adds the summary usage: ${show(facts.rebuildIncludesCompactionUsage)}`,
+			`probe:compaction: adapter rebuild, from snapshots immediately before and after compaction, equals the pre-compaction rows plus the summary usage in every dimension: ${show(facts.rebuildIncludesCompactionUsage)}`,
 			PRIME_SOURCE.sessionStats,
 			PRIME_SOURCE.retrySlice,
 			PRIME_SOURCE.childUsage,
 			PRIME_SOURCE.openAiUsage,
+			PRIME_SOURCE.autoRefine,
 		],
 		adapterState: [
 			"A cumulative accounting sum rebuilt from every durable session file of the tree (assistant, compaction and branch_summary usage, and child_usage_attributed rows), because get_session_stats is scoped to the current context path",
@@ -454,6 +503,7 @@ export function classifyPrimeConformanceV0(
 			"get_session_stats tokens.total is recomputed from the four components; RuntimeMetricsV0.totalTokens is the sum of reported totalTokens",
 			"Compaction and branch-summary usage is durable on its entry but never counted by get_session_stats",
 			"A failed attempt that is auto-retried is removed from the context path (source only; not exercised live), so its usage leaves get_session_stats",
+			"Prime's default auto-refine runs a review model call after compaction; the probe disables it, so where that call's usage is recorded is not examined",
 			"RLM child usage is folded into the parent assistant usage (input/output/cost) while that message's totalTokens stays at the parent's own context tokens",
 			"messageCount has no equivalent: totalMessages counts current-path messages, not persisted message entries",
 			"contextUsage is a context-window estimate and is deliberately not mapped",

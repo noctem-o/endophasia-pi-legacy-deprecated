@@ -1,21 +1,34 @@
-// Offline tests for the research-only Prime Runtime Conformance v0 classification: Mission Trace mapping, projections,
-// the conformance report, provenance, drift and privacy. They run on the committed sanitized fixtures; no Prime
-// installation is needed.
+// Offline tests for the research-only Prime Runtime Conformance v0 classification side: Mission Trace mapping,
+// projections, exact fact predicates, scenario invariants, drift, the publication gate and the command's
+// privacy-before-persistence ordering. They run on the committed sanitized fixtures; no Prime installation is needed.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	checkAdapterIdentitiesV0,
 	classifyPrimeConformanceV0,
 	derivePrimeFactsV0,
 } from "../research/prime-conformance/classification.ts";
-import type { PrimeStatsEvidenceV0 } from "../research/prime-conformance/evidence.ts";
+import {
+	type PrimeConformanceCommandDepsV0,
+	parsePrimeConformanceArgsV0,
+	runPrimeConformanceCommandV0,
+} from "../research/prime-conformance/command.ts";
+import {
+	PROBE_VERSION,
+	type PrimeProvenanceV0,
+	type PrimeScenarioEvidenceV0,
+	type PrimeStatsEvidenceV0,
+} from "../research/prime-conformance/evidence.ts";
 import { SENTINEL_PATTERN, SENTINELS } from "../research/prime-conformance/fake-provider.ts";
+import { scenarioInvariantProblemsV0 } from "../research/prime-conformance/invariants.ts";
 import { mapPrimeMissionTraceV0, PRIME_ROOT_LANE_LABEL } from "../research/prime-conformance/mission-trace.ts";
+import { SCENARIOS } from "../research/prime-conformance/probe.ts";
 import { projectPrimeUsageRowsV0, rebuildPrimeRuntimeMetricsV0 } from "../research/prime-conformance/projection.ts";
+import { assessPrimeEvidenceV0, isPublishableV0 } from "../research/prime-conformance/publication.ts";
 import {
 	buildPrimeConformanceReportV0,
 	checkPrimeDriftV0,
@@ -23,14 +36,40 @@ import {
 	writePrimeFixturesV0,
 } from "../research/prime-conformance/report.ts";
 
-const fixtureDir = fileURLToPath(new URL("./fixtures/prime/0.9.6", import.meta.url));
+const fixtureRoot = fileURLToPath(new URL("./fixtures/prime", import.meta.url));
+const fixtureDir = join(fixtureRoot, "0.9.6");
 const cli = fileURLToPath(new URL("../research/prime-conformance/cli.ts", import.meta.url));
 const fixtures = readPrimeFixturesV0(fixtureDir);
-const fixture = (scenario: string) => {
+const scenarioNames = SCENARIOS.map((scenario) => scenario.name);
+
+function fixture(scenario: string): PrimeScenarioEvidenceV0 {
 	const found = fixtures.find((item) => item.provenance.scenario === scenario);
 	if (found === undefined) throw new Error(`missing fixture ${scenario}`);
-	return found;
-};
+	return structuredClone(found);
+}
+
+/** The full fixture set with one scenario replaced. */
+function withScenario(replacement: PrimeScenarioEvidenceV0): PrimeScenarioEvidenceV0[] {
+	return fixtures.map((item) =>
+		item.provenance.scenario === replacement.provenance.scenario ? replacement : structuredClone(item),
+	);
+}
+
+function withProvenance(evidence: readonly PrimeScenarioEvidenceV0[], change: Partial<PrimeProvenanceV0>) {
+	return evidence.map((item) => ({ ...structuredClone(item), provenance: { ...item.provenance, ...change } }));
+}
+
+function withStats(
+	run: PrimeScenarioEvidenceV0,
+	label: string,
+	change: (stats: PrimeStatsEvidenceV0) => PrimeStatsEvidenceV0,
+): PrimeScenarioEvidenceV0 {
+	return { ...run, stats: run.stats.map((item) => (item.label === label ? change(item) : item)) };
+}
+
+function assess(evidence: readonly PrimeScenarioEvidenceV0[], requested: readonly string[] = scenarioNames) {
+	return assessPrimeEvidenceV0({ report: buildPrimeConformanceReportV0(evidence), requestedScenarios: requested });
+}
 
 describe("Mission Trace mapping", () => {
 	it("maps a tool run with native tool identities and adapter-owned run and turn identities", () => {
@@ -137,31 +176,41 @@ describe("projections", () => {
 	});
 });
 
-describe("conformance report", () => {
-	it("carries provenance on every fixture", () => {
+describe("committed reference fixtures", () => {
+	it("are one homogeneous, verified, current-probe evidence set", () => {
+		expect(fixtures.map((run) => run.provenance.scenario).sort()).toEqual([...scenarioNames].sort());
 		for (const run of fixtures) {
 			expect(run.provenance).toMatchObject({
 				source: "prime-agent",
 				version: "0.9.6",
 				commit: "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
+				build: "clean-checkout",
 				mode: "rpc",
 				generatedBy: "prime-conformance-v0",
+				probeVersion: PROBE_VERSION,
 			});
 		}
-		expect(fixtures.map((run) => run.provenance.scenario).sort()).toEqual(
-			readdirSync(fixtureDir)
-				.map((name) => name.replace(/\.json$/, ""))
-				.sort(),
-		);
 	});
 
-	it("contains no probe sentinel in any committed fixture", () => {
+	it("contain no probe sentinel", () => {
 		for (const name of readdirSync(fixtureDir)) {
 			expect(readFileSync(join(fixtureDir, name), "utf8"), name).not.toMatch(SENTINEL_PATTERN);
 		}
 	});
 
-	it("classifies the four contracts on two axes", () => {
+	it("satisfy every scenario invariant and pass the publication gate", () => {
+		for (const run of fixtures) {
+			expect(run.failures, run.provenance.scenario).toEqual([]);
+			expect(scenarioInvariantProblemsV0(run), run.provenance.scenario).toEqual([]);
+		}
+		const assessment = assess(fixtures);
+		expect(assessment).toEqual({ invalid: [], unpublishable: [] });
+		expect(isPublishableV0(assessment)).toBe(true);
+	});
+});
+
+describe("classification", () => {
+	it("classifies the four contracts on two axes, from fully verified facts", () => {
 		const report = buildPrimeConformanceReportV0(fixtures);
 		expect(report.findings.map((finding) => [finding.contract, finding.support, finding.semanticFit])).toEqual([
 			["MissionTraceEventV0", "adapter-state", "qualified"],
@@ -169,150 +218,28 @@ describe("conformance report", () => {
 			["OperationOutcomeV0", "unavailable", "incompatible"],
 			["UsageLedgerRowV0", "adapter-state", "qualified"],
 		]);
-		expect(report.privacyViolations).toEqual([]);
-		expect(report.scenarios.flatMap((scenario) => scenario.evidenceProblems)).toEqual([]);
-		expect(report.drift.stale).toBe(false);
 		expect(report.facts).toMatchObject({
+			toolCallIdentityNative: true,
 			abortToolStop: "toolUse",
 			statsDropAfterCompaction: true,
+			compactionUsageDurable: true,
 			compactionUsageInStats: false,
 			rebuildIncludesCompactionUsage: true,
+			rebuildMatchesStatsOnSinglePath: true,
+			reopenStatsEqual: true,
+			childUsageFoldedIntoStats: true,
+			childFoldTotals: { statsTokensTotal: 1470, aggregateTotalTokens: 1050 },
 			childUsageRewritesEarlierRow: true,
 			reasoningFieldReported: false,
 			plainPromptAfterAbortAdmitted: false,
-			undocumentedEventTypes: ["refine_failed"],
+			plainPromptAfterCompactionAdmitted: false,
 			protocolErrors: 0,
 		});
 		for (const finding of report.findings) {
-			expect(finding.evidence.length, finding.contract).toBeGreaterThan(0);
 			expect(
 				finding.evidence.some((item) => item.includes("unverified")),
 				finding.contract,
 			).toBe(false);
-		}
-	});
-
-	it("does not count missing tool-call ids as native identities", () => {
-		const run = fixture("tool-run");
-		const anonymous = {
-			...run,
-			events: run.events.map((event) => {
-				if (event.type === "tool_execution_end") return { ...event, toolCallId: "" };
-				if (event.type === "message_end" && event.assistant !== undefined) {
-					return {
-						...event,
-						assistant: {
-							...event.assistant,
-							toolCalls: event.assistant.toolCalls.map((call) => ({ ...call, id: "" })),
-						},
-					};
-				}
-				return event;
-			}),
-		};
-		expect(derivePrimeFactsV0([anonymous]).toolCallIdsNative).toBe(false);
-		expect(buildPrimeConformanceReportV0([anonymous]).scenarios[0]!.evidenceProblems.length).toBeGreaterThan(0);
-	});
-
-	it("requires every compared dimension before reporting a match", () => {
-		const withStats = (
-			scenario: string,
-			label: string,
-			change: (stats: PrimeStatsEvidenceV0) => PrimeStatsEvidenceV0,
-		) => {
-			const run = fixture(scenario);
-			return { ...run, stats: run.stats.map((item) => (item.label === label ? change(item) : item)) };
-		};
-		expect(derivePrimeFactsV0([fixture("multi-turn-reopen")]).reopenStatsEqual).toBe(true);
-		const fewerMessages = withStats("multi-turn-reopen", "after-reopen", (item) => ({
-			...item,
-			totalMessages: item.totalMessages - 1,
-		}));
-		expect(derivePrimeFactsV0([fewerMessages]).reopenStatsEqual).toBe(false);
-		expect(derivePrimeFactsV0([fixture("child-usage-replay")]).childUsageFoldedIntoStats).toBe(true);
-		const lostOutput = withStats("child-usage-replay", "after-open", (item) => ({
-			...item,
-			tokens: { ...item.tokens, output: item.tokens.output - 1 },
-		}));
-		expect(derivePrimeFactsV0([lostOutput]).childUsageFoldedIntoStats).toBe(false);
-		const run = fixture("tool-run");
-		const renamed = {
-			...run,
-			events: run.events.map((event) =>
-				event.type === "tool_execution_end" ? { ...event, toolName: "other_tool" } : event,
-			),
-		};
-		expect(derivePrimeFactsV0([renamed]).toolCallIdsNative).toBe(false);
-	});
-
-	it("proves compaction usage retention from rows before the later prompt", () => {
-		const run = fixture("compaction");
-		expect(derivePrimeFactsV0([run]).rebuildIncludesCompactionUsage).toBe(true);
-		// Losing a pre-compaction row must show, however much the post-compaction prompt adds.
-		const firstAssistant = run.sessionEntries.findIndex((entry) => entry.role === "assistant");
-		const lost = { ...run, sessionEntries: run.sessionEntries.filter((_, index) => index !== firstAssistant) };
-		expect(derivePrimeFactsV0([lost]).rebuildIncludesCompactionUsage).toBe(false);
-	});
-
-	it("flags a tool result without a boolean isError instead of reading it as success", () => {
-		const run = fixture("tool-error");
-		const unflagged = {
-			...run,
-			events: run.events.map((event) => (event.type === "tool_execution_end" ? { ...event, isError: null } : event)),
-		};
-		const report = buildPrimeConformanceReportV0([unflagged]);
-		expect(report.scenarios[0]!.evidenceProblems).toContain(
-			"event 9 (tool_execution_end): tool execution without boolean isError",
-		);
-		expect(mapPrimeMissionTraceV0({ evidence: unflagged.events }).unmapped).toContain(
-			"tool_execution_end without isError at 9",
-		);
-	});
-
-	it("detects a rebuild mismatch in any shared usage dimension", () => {
-		const reopen = fixture("multi-turn-reopen");
-		const skewed = {
-			...reopen,
-			stats: reopen.stats.map((item) =>
-				item.label === "after-reopen"
-					? { ...item, tokens: { ...item.tokens, cacheRead: item.tokens.cacheRead + 1 } }
-					: item,
-			),
-		};
-		expect(derivePrimeFactsV0([reopen]).rebuildMatchesStatsOnSinglePath).toBe(true);
-		expect(derivePrimeFactsV0([skewed]).rebuildMatchesStatsOnSinglePath).toBe(false);
-	});
-
-	it("decides compaction summary accounting from the kept path, not the pre-compaction total", () => {
-		const run = fixture("compaction");
-		const after = run.stats.find((item) => item.label === "after-compaction")!;
-		const summary = run.sessionEntries.find((entry) => entry.type === "compaction")!.usage!.cost.total;
-		expect(derivePrimeFactsV0([run]).compactionUsageInStats).toBe(false);
-		// Had stats counted the summary, the kept path plus the summary is what they would show.
-		const counted = {
-			...run,
-			stats: run.stats.map((item) =>
-				item.label === "after-compaction" ? { ...item, cost: after.cost + summary } : item,
-			),
-		};
-		expect(derivePrimeFactsV0([counted]).compactionUsageInStats).toBe(true);
-		const other = {
-			...run,
-			stats: run.stats.map((item) => (item.label === "after-compaction" ? { ...item, cost: after.cost + 1 } : item)),
-		};
-		expect(derivePrimeFactsV0([other]).compactionUsageInStats).toBeUndefined();
-	});
-
-	it("prunes fixtures of vanished scenarios only on a full refresh", () => {
-		const directory = mkdtempSync(join(tmpdir(), "prime-fixtures-"));
-		try {
-			writeFileSync(join(directory, "renamed-away.json"), "{}");
-			writePrimeFixturesV0(directory, [fixture("simple")]);
-			expect(readdirSync(directory).sort()).toEqual(["renamed-away.json", "simple.json"]);
-			writePrimeFixturesV0(directory, [fixture("simple")], { prune: true });
-			expect(readdirSync(directory)).toEqual(["simple.json"]);
-		} finally {
-			rmSync(directory, { recursive: true, force: true });
 		}
 	});
 
@@ -325,64 +252,432 @@ describe("conformance report", () => {
 		);
 	});
 
-	it("reports stale evidence when the Prime version or commit drifts", () => {
-		const current = fixture("simple").provenance;
-		expect(checkPrimeDriftV0(current, current).stale).toBe(false);
-		expect(checkPrimeDriftV0({ ...current, version: "0.9.7" }, current)).toMatchObject({
-			stale: true,
-			evidenceVersion: "0.9.7",
-			referenceVersion: "0.9.6",
-		});
-		expect(checkPrimeDriftV0({ ...current, commit: "0".repeat(40) }, current).stale).toBe(true);
-		// A same-version binary without a commit is not a verified match against a commit-pinned reference.
-		const { commit: _commit, ...binaryRun } = current;
-		expect(checkPrimeDriftV0(binaryRun, current)).toMatchObject({ stale: false, unverified: true });
-		expect(checkPrimeDriftV0(current, current).unverified).toBe(false);
-		expect(checkPrimeDriftV0({ ...current, checkoutDirty: true }, current)).toMatchObject({ unverified: true });
-		expect(checkPrimeDriftV0(current, current).probeChanged).toBe(false);
-		expect(checkPrimeDriftV0({ ...current, probeVersion: "9.9.9" }, current)).toMatchObject({
-			stale: false,
-			probeChanged: true,
-		});
-		expect(() =>
-			buildPrimeConformanceReportV0([
-				fixture("simple"),
-				{ ...fixture("tool-run"), provenance: { ...fixture("tool-run").provenance, version: "0.9.7" } },
-			]),
-		).toThrow("mixes Prime versions");
-		expect(() =>
-			buildPrimeConformanceReportV0([
-				fixture("simple"),
-				{ ...fixture("tool-run"), provenance: { ...fixture("tool-run").provenance, probeVersion: "9.9.9" } },
-			]),
-		).toThrow("mixes probe versions");
-		expect(() =>
-			buildPrimeConformanceReportV0([
-				fixture("simple"),
-				{ ...fixture("tool-run"), provenance: { ...fixture("tool-run").provenance, node: "v99.0.0" } },
-			]),
-		).toThrow("mixes environments");
+	it("matches tool identity on the (id, name) pair", () => {
+		const run = fixture("tool-run");
+		const renamed = {
+			...run,
+			events: run.events.map((event) =>
+				event.type === "tool_execution_end" ? { ...event, toolName: "other_tool" } : event,
+			),
+		};
+		expect(derivePrimeFactsV0([renamed]).toolCallIdentityNative).toBe(false);
 	});
 
-	it("reports a leaked sentinel instead of hiding it", () => {
-		const leaked = { ...fixture("simple"), notes: [`note ${SENTINELS.toolResult}`] };
-		expect(buildPrimeConformanceReportV0([leaked]).privacyViolations).toContain("evidence: TOOL_RESULT_SENTINEL");
+	it("compares every stable stats field across reopen", () => {
+		const changes: ((stats: PrimeStatsEvidenceV0) => PrimeStatsEvidenceV0)[] = [
+			(s) => ({ ...s, userMessages: s.userMessages + 1 }),
+			(s) => ({ ...s, assistantMessages: s.assistantMessages + 1 }),
+			(s) => ({ ...s, toolCalls: s.toolCalls + 1 }),
+			(s) => ({ ...s, toolResults: s.toolResults + 1 }),
+			(s) => ({ ...s, totalMessages: s.totalMessages - 1 }),
+			(s) => ({ ...s, tokens: { ...s.tokens, cacheWrite: s.tokens.cacheWrite + 1 } }),
+			(s) => ({ ...s, cost: s.cost + 0.5 }),
+		];
+		for (const change of changes) {
+			expect(
+				derivePrimeFactsV0([withStats(fixture("multi-turn-reopen"), "after-reopen", change)]).reopenStatsEqual,
+			).toBe(false);
+		}
+		// The context-window estimate is deliberately excluded: it is recomputed per process.
+		const volatile = withStats(fixture("multi-turn-reopen"), "after-reopen", (s) => ({
+			...s,
+			contextUsageTokens: null,
+		}));
+		expect(derivePrimeFactsV0([volatile]).reopenStatsEqual).toBe(true);
+	});
+
+	it("requires every shared dimension before claiming child usage was folded", () => {
+		for (const key of ["input", "output", "cacheRead", "cacheWrite"] as const) {
+			const skewed = withStats(fixture("child-usage-replay"), "after-open", (s) => ({
+				...s,
+				tokens: { ...s.tokens, [key]: s.tokens[key] + 1 },
+			}));
+			expect(derivePrimeFactsV0([skewed]).childUsageFoldedIntoStats, key).toBe(false);
+		}
+		const costly = withStats(fixture("child-usage-replay"), "after-open", (s) => ({ ...s, cost: s.cost + 1 }));
+		expect(derivePrimeFactsV0([costly]).childUsageFoldedIntoStats).toBe(false);
+	});
+
+	it("detects a single-path rebuild mismatch in any shared usage dimension", () => {
+		const skewed = withStats(fixture("multi-turn-reopen"), "after-reopen", (s) => ({
+			...s,
+			tokens: { ...s.tokens, cacheRead: s.tokens.cacheRead + 1 },
+		}));
+		expect(derivePrimeFactsV0([skewed]).rebuildMatchesStatsOnSinglePath).toBe(false);
+	});
+
+	it("proves compaction retention from the snapshots, uncontaminated by the later prompt", () => {
+		const run = fixture("compaction");
+		// The final file (after the later prompt) plays no part.
+		expect(derivePrimeFactsV0([{ ...run, sessionEntries: [] }]).rebuildIncludesCompactionUsage).toBe(true);
+		const lossy = {
+			...run,
+			entrySnapshots: run.entrySnapshots.map((snapshot) =>
+				snapshot.label === "after-compaction"
+					? {
+							...snapshot,
+							entries: snapshot.entries.filter(
+								(_entry, index) => index !== snapshot.entries.findIndex((item) => item.role === "assistant"),
+							),
+						}
+					: snapshot,
+			),
+		};
+		expect(derivePrimeFactsV0([lossy]).rebuildIncludesCompactionUsage).toBe(false);
+		expect(derivePrimeFactsV0([{ ...run, entrySnapshots: [] }]).rebuildIncludesCompactionUsage).toBeUndefined();
+	});
+
+	it("decides compaction summary accounting from the kept path in the post-compaction snapshot", () => {
+		const run = fixture("compaction");
+		const after = run.stats.find((item) => item.label === "after-compaction")!;
+		const summary = run.entrySnapshots
+			.find((snapshot) => snapshot.label === "after-compaction")!
+			.entries.find((entry) => entry.type === "compaction")!.usage!.cost.total;
+		expect(derivePrimeFactsV0([run]).compactionUsageInStats).toBe(false);
+		const counted = withStats(run, "after-compaction", (s) => ({ ...s, cost: after.cost + summary }));
+		expect(derivePrimeFactsV0([counted]).compactionUsageInStats).toBe(true);
+		const other = withStats(run, "after-compaction", (s) => ({ ...s, cost: after.cost + 1 }));
+		expect(derivePrimeFactsV0([other]).compactionUsageInStats).toBeUndefined();
 	});
 });
 
-describe("isolation", () => {
-	it("rejects malformed arguments before anything runs", () => {
-		const run = (...args: string[]) =>
-			spawnSync(process.execPath, [cli, ...args], { env: { PATH: process.env.PATH }, encoding: "utf8" });
-		expect(run("--write-fixtures", "--scenario").stderr).toContain("--scenario needs a scenario name");
-		expect(run("--scenario", "--write-fixtures").stderr).toContain("--scenario needs a scenario name");
-		expect(run("--scenario", "no-such").stderr).toContain("unknown scenario no-such");
-		expect(run("--writefixtures").stderr).toContain("unknown argument --writefixtures");
+type Mutation = readonly [string, string, (run: PrimeScenarioEvidenceV0) => PrimeScenarioEvidenceV0];
+
+const INVARIANT_MUTATIONS: readonly Mutation[] = [
+	["fork", "no new session file", (r) => ({ ...r, observations: { ...r.observations, forkCreatedNewFile: false } })],
+	["fork", "no fork target", (r) => ({ ...r, observations: { ...r.observations, forkTargets: 0 } })],
+	["fork", "fork never succeeded", (r) => ({ ...r, commands: r.commands.filter((c) => c.command !== "fork") })],
+	[
+		"multi-turn-reopen",
+		"another session reopened",
+		(r) => ({ ...r, observations: { ...r.observations, reopenedIntendedSession: false } }),
+	],
+	[
+		"multi-turn-reopen",
+		"messages never counted",
+		(r) => ({ ...r, observations: { ...r.observations, messagesAfterReopen: undefined } }),
+	],
+	["compaction", "no snapshots", (r) => ({ ...r, entrySnapshots: [] })],
+	[
+		"compaction",
+		"no compaction entry",
+		(r) => ({
+			...r,
+			entrySnapshots: r.entrySnapshots.map((s) => ({
+				...s,
+				entries: s.entries.filter((e) => e.type !== "compaction"),
+			})),
+		}),
+	],
+	[
+		"compaction",
+		"pre-compaction rows changed",
+		(r) => ({
+			...r,
+			entrySnapshots: r.entrySnapshots.map((s) =>
+				s.label === "after-compaction" ? { ...s, entries: s.entries.slice(1) } : s,
+			),
+		}),
+	],
+	[
+		"abort-stream",
+		"refusal of another category",
+		(r) => ({
+			...r,
+			commands: r.commands.map((c) => (c.success ? c : { ...c, errorKind: "other" as const })),
+		}),
+	],
+	["abort-stream", "abort never requested", (r) => ({ ...r, abortRequestedAfter: [] })],
+	["abort-tool", "abort not at a tool start", (r) => ({ ...r, abortRequestedAfter: [0] })],
+	[
+		"tool-run",
+		"no tool execution",
+		(r) => ({ ...r, events: r.events.filter((e) => e.type !== "tool_execution_end") }),
+	],
+	[
+		"child-usage-replay",
+		"no child attribution read",
+		(r) => ({ ...r, sessionEntries: r.sessionEntries.filter((e) => e.type !== "child_usage_attributed") }),
+	],
+	[
+		"simple",
+		"an unexpected refusal",
+		(r) => ({
+			...r,
+			commands: [...r.commands, { command: "get_messages", success: false, dataKeys: [], errorKind: "other" }],
+		}),
+	],
+	["simple", "provider request count missing", (r) => ({ ...r, observations: {} })],
+	["simple", "a run that never ended", (r) => ({ ...r, events: r.events.filter((e) => e.type !== "agent_end") })],
+];
+
+describe("scenario invariants", () => {
+	it.each(INVARIANT_MUTATIONS)("%s: %s makes the scenario invalid and unpublishable", (scenario, _case, change) => {
+		const mutated = change(fixture(scenario));
+		expect(scenarioInvariantProblemsV0(mutated)).not.toEqual([]);
+		const assessment = assess(withScenario(mutated));
+		expect(assessment.invalid.some((item) => item.startsWith(`${scenario}: failure:`))).toBe(true);
+		expect(isPublishableV0(assessment)).toBe(false);
 	});
 
-	it("fails clearly when no Prime Agent is configured", () => {
+	it("rejects a scenario without defined invariants", () => {
+		const run = fixture("simple");
+		expect(scenarioInvariantProblemsV0({ ...run, provenance: { ...run.provenance, scenario: "invented" } })).toEqual([
+			"no invariants are defined for scenario invented",
+		]);
+	});
+});
+
+describe("publication gate", () => {
+	const cases: readonly (readonly [string, () => PrimeScenarioEvidenceV0[], "invalid" | "unpublishable"])[] = [
+		[
+			"a recorded scenario failure",
+			() => withScenario({ ...fixture("simple"), failures: ["prompt simple did not end"] }),
+			"invalid",
+		],
+		[
+			"a protocol error",
+			() => withScenario({ ...fixture("simple"), protocolErrors: ["Duplicate response for probe-1"] }),
+			"invalid",
+		],
+		[
+			"a missing assistant usage object",
+			() => {
+				const run = fixture("simple");
+				const events = run.events.map((event) =>
+					event.type === "message_end" && event.assistant !== undefined
+						? ({ ...event, assistant: { ...event.assistant, usage: undefined } } as unknown as typeof event)
+						: event,
+				);
+				return withScenario({ ...run, events });
+			},
+			"invalid",
+		],
+		[
+			"a non-boolean isError",
+			() => {
+				const run = fixture("tool-run");
+				const events = run.events.map((event) =>
+					event.type === "tool_execution_end" ? ({ ...event, isError: null } as unknown as typeof event) : event,
+				);
+				return withScenario({ ...run, events });
+			},
+			"invalid",
+		],
+		["a probe sentinel", () => withScenario({ ...fixture("simple"), stateKeys: [SENTINELS.prompt] }), "invalid"],
+		["a missing requested scenario", () => fixtures.filter((run) => run.provenance.scenario !== "fork"), "invalid"],
+		["binary provenance", () => withProvenance(fixtures, { build: "binary", commit: undefined }), "unpublishable"],
+		["a dirty checkout", () => withProvenance(fixtures, { build: "dirty-checkout" }), "unpublishable"],
+		[
+			"an unverified checkout",
+			() => withProvenance(fixtures, { build: "unverified-checkout", commit: undefined }),
+			"unpublishable",
+		],
+		["an older probe version", () => withProvenance(fixtures, { probeVersion: "0.2.0" }), "unpublishable"],
+	];
+
+	it.each(cases)("refuses %s", (_case, evidence, kind) => {
+		const assessment = assess(evidence());
+		expect(assessment[kind]).not.toEqual([]);
+		expect(isPublishableV0(assessment)).toBe(false);
+	});
+
+	it("refuses a partial refresh that would mix provenance with the fixtures it keeps", () => {
+		const refreshed = [fixture("simple")];
+		const kept = withProvenance(
+			fixtures.filter((run) => run.provenance.scenario !== "simple"),
+			{ node: "v99.0.0" },
+		);
+		const assessment = assessPrimeEvidenceV0({
+			report: buildPrimeConformanceReportV0(refreshed),
+			requestedScenarios: ["simple"],
+			retainedFixtures: kept,
+		});
+		expect(assessment.unpublishable.length).toBe(kept.length);
+		const consistent = assessPrimeEvidenceV0({
+			report: buildPrimeConformanceReportV0(refreshed),
+			requestedScenarios: ["simple"],
+			retainedFixtures: fixtures.filter((run) => run.provenance.scenario !== "simple"),
+		});
+		expect(isPublishableV0(consistent)).toBe(true);
+	});
+
+	it("never mixes builds, probes or environments in one report", () => {
+		const [first, ...rest] = fixtures;
+		const mixed = (change: Partial<PrimeProvenanceV0>) => [first!, ...withProvenance(rest, change)];
+		expect(() => buildPrimeConformanceReportV0(mixed({ version: "0.9.7" }))).toThrow("mixes Prime builds");
+		expect(() => buildPrimeConformanceReportV0(mixed({ commit: "0".repeat(40) }))).toThrow("mixes Prime builds");
+		expect(() => buildPrimeConformanceReportV0(mixed({ build: "dirty-checkout" }))).toThrow("mixes Prime builds");
+		expect(() => buildPrimeConformanceReportV0(mixed({ probeVersion: "9.9.9" }))).toThrow("mixes probe versions");
+		expect(() => buildPrimeConformanceReportV0(mixed({ platform: "darwin-arm64" }))).toThrow("mixes environments");
+		expect(() => buildPrimeConformanceReportV0(mixed({ node: "v99.0.0" }))).toThrow("mixes environments");
+		expect(() => buildPrimeConformanceReportV0([first!, structuredClone(first!)])).toThrow("repeats scenario");
+	});
+});
+
+describe("drift", () => {
+	const reference = fixtures[0]!.provenance;
+	it.each([
+		[
+			"the same verified build",
+			{},
+			{ runtime: "same", probe: "same", environment: "same", provenanceVerified: true },
+		],
+		["another Prime version", { version: "0.9.7" }, { runtime: "different" }],
+		["another commit", { commit: "0".repeat(40) }, { runtime: "different" }],
+		[
+			"a commit-less binary",
+			{ build: "binary", commit: undefined },
+			{ runtime: "unverifiable", provenanceVerified: false },
+		],
+		[
+			"a dirty checkout at the same commit",
+			{ build: "dirty-checkout" },
+			{ runtime: "unverifiable", provenanceVerified: false },
+		],
+		["another probe version", { probeVersion: "9.9.9" }, { runtime: "same", probe: "different" }],
+		["another Node version", { node: "v99.0.0" }, { environment: "different" }],
+	] as const)("reports %s", (_case, change, expected) => {
+		expect(checkPrimeDriftV0({ ...reference, ...change } as PrimeProvenanceV0, reference)).toMatchObject(expected);
+	});
+
+	it("has no reference when there are no comparable fixtures", () => {
+		expect(checkPrimeDriftV0(reference, undefined)).toMatchObject({ runtime: "no-reference", probe: "no-reference" });
+	});
+});
+
+describe("fixture writing", () => {
+	it("prunes fixtures of vanished scenarios only on a full refresh", () => {
+		const directory = mkdtempSync(join(tmpdir(), "prime-fixtures-"));
+		try {
+			writeFileSync(join(directory, "renamed-away.json"), "{}");
+			writePrimeFixturesV0(directory, [fixture("simple")]);
+			expect(readdirSync(directory).sort()).toEqual(["renamed-away.json", "simple.json"]);
+			writePrimeFixturesV0(directory, [fixture("simple")], { prune: true });
+			expect(readdirSync(directory)).toEqual(["simple.json"]);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("command ordering", () => {
+	const temps: string[] = [];
+	afterEach(() => {
+		for (const directory of temps.splice(0)) rmSync(directory, { recursive: true, force: true });
+	});
+
+	function harness(evidence: PrimeScenarioEvidenceV0[], build: Partial<PrimeProvenanceV0> = {}) {
+		const root = mkdtempSync(join(tmpdir(), "prime-command-"));
+		temps.push(root);
+		const fixtures = join(root, "fixtures");
+		cpSync(fixtureRoot, fixtures, { recursive: true });
+		const artifactDir = join(root, "artifacts");
+		const stderr: string[] = [];
+		const probe = vi.fn(async () => evidence);
+		const { scenario: _scenario, ...provenance } = evidence[0]!.provenance;
+		const deps: PrimeConformanceCommandDepsV0 = {
+			env: {},
+			fixtureRoot: fixtures,
+			artifactDir,
+			scenarios: scenarioNames,
+			stdout: () => {},
+			stderr: (text) => stderr.push(text),
+			resolveBinary: () => ({ command: "prime-agent", leadingArgs: [], description: "prime-agent" }),
+			describe: () => ({ ...provenance, ...build }),
+			probe,
+		};
+		const referenceDir = join(fixtures, "0.9.6");
+		const fixtureState = () =>
+			Object.fromEntries(
+				readdirSync(referenceDir).map((name) => [name, readFileSync(join(referenceDir, name), "utf8")]),
+			);
+		return { deps, probe, stderr, reportPath: join(artifactDir, "report.json"), fixtureState, artifactDir };
+	}
+
+	it("writes the report for a valid run, and fixtures only when asked and publishable", async () => {
+		const run = harness(fixtures.map((item) => structuredClone(item)));
+		const before = run.fixtureState();
+		expect(await runPrimeConformanceCommandV0([], run.deps)).toBe(0);
+		expect(existsSync(run.reportPath)).toBe(true);
+		expect(run.fixtureState()).toEqual(before);
+		expect(await runPrimeConformanceCommandV0(["--write-fixtures"], run.deps)).toBe(0);
+	});
+
+	it("persists nothing when a probe sentinel reaches the evidence, and names no sentinel", async () => {
+		const leaked = withScenario({ ...fixture("simple"), stateKeys: [SENTINELS.toolResult] });
+		const fresh = harness(leaked);
+		const before = fresh.fixtureState();
+		expect(await runPrimeConformanceCommandV0(["--write-fixtures"], fresh.deps)).toBe(1);
+		expect(existsSync(fresh.reportPath)).toBe(false);
+		expect(fresh.fixtureState()).toEqual(before);
+		expect(fresh.stderr.join("")).toContain("evidence:simple (1)");
+		expect(fresh.stderr.join("")).not.toMatch(SENTINEL_PATTERN);
+
+		// A report from an earlier run is left untouched, not overwritten with contaminated content.
+		const earlier = harness(leaked);
+		cpSync(fixtureDir, earlier.artifactDir, { recursive: true });
+		writeFileSync(earlier.reportPath, "earlier report\n");
+		expect(await runPrimeConformanceCommandV0([], earlier.deps)).toBe(1);
+		expect(readFileSync(earlier.reportPath, "utf8")).toBe("earlier report\n");
+	});
+
+	it("allows inspection but refuses fixture writes from unverified provenance", async () => {
+		const binary = harness(withProvenance(fixtures, { build: "binary", commit: undefined }));
+		const before = binary.fixtureState();
+		expect(await runPrimeConformanceCommandV0([], binary.deps)).toBe(0);
+		expect(await runPrimeConformanceCommandV0(["--write-fixtures"], binary.deps)).toBe(1);
+		expect(existsSync(binary.reportPath)).toBe(true);
+		expect(binary.fixtureState()).toEqual(before);
+		expect(binary.stderr.join("")).toContain("provenance is binary");
+	});
+
+	it("refuses fixture writes from an invalid run", async () => {
+		const invalid = harness(
+			withScenario({ ...fixture("fork"), failures: ["get_fork_messages.data.messages is empty"] }),
+		);
+		const before = invalid.fixtureState();
+		expect(await runPrimeConformanceCommandV0(["--write-fixtures"], invalid.deps)).toBe(1);
+		expect(invalid.fixtureState()).toEqual(before);
+	});
+
+	it.each([
+		[["--scenario", "--write-fixtures"]],
+		[["--write-fixtures", "--scenario"]],
+		[["--scenario"]],
+		[["--bogus"]],
+	])("fails %j before probing or touching fixtures", async (argv) => {
+		const run = harness(fixtures.map((item) => structuredClone(item)));
+		const before = run.fixtureState();
+		expect(await runPrimeConformanceCommandV0(argv, run.deps)).toBe(1);
+		expect(run.probe).not.toHaveBeenCalled();
+		expect(existsSync(run.reportPath)).toBe(false);
+		expect(run.fixtureState()).toEqual(before);
+	});
+
+	it("parses flags strictly", () => {
+		expect(parsePrimeConformanceArgsV0(["--scenario", "fork", "--retain"], scenarioNames)).toEqual({
+			ok: true,
+			args: { only: ["fork"], writeFixtures: false, retain: true },
+		});
+		expect(parsePrimeConformanceArgsV0(["--scenario", "no-such"], scenarioNames)).toEqual({
+			ok: false,
+			error: "unknown scenario no-such",
+		});
+		expect(parsePrimeConformanceArgsV0(["--scenario", "fork", "--scenario", "fork"], scenarioNames).ok).toBe(false);
+		expect(parsePrimeConformanceArgsV0(["--scenario=fork"], scenarioNames).ok).toBe(false);
+		expect(parsePrimeConformanceArgsV0(["--retain=yes"], scenarioNames).ok).toBe(false);
+	});
+
+	it("fails clearly from the real entry point when no Prime Agent is configured", () => {
 		const result = spawnSync(process.execPath, [cli], { env: { PATH: process.env.PATH }, encoding: "utf8" });
 		expect(result.status).toBe(1);
 		expect(result.stderr).toContain("no Prime Agent configured");
+		const malformed = spawnSync(process.execPath, [cli, "--scenario"], {
+			env: { PATH: process.env.PATH },
+			encoding: "utf8",
+		});
+		expect(malformed.status).toBe(1);
+		expect(malformed.stderr).toContain("--scenario needs a scenario name");
 	});
 });

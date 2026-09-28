@@ -18,7 +18,15 @@ export interface PrimeRpcExitV0 {
 	readonly signal: NodeJS.Signals | null;
 }
 
-export class PrimeRpcExitError extends Error {
+/** An RPC failure described by the client itself (never Prime's text), so its message is safe to keep. */
+export class PrimeRpcError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "PrimeRpcError";
+	}
+}
+
+export class PrimeRpcExitError extends PrimeRpcError {
 	readonly exit: PrimeRpcExitV0;
 	constructor(command: string, exit: PrimeRpcExitV0) {
 		super(`Prime RPC process exited before responding to ${command} (code ${exit.code}, signal ${exit.signal})`);
@@ -40,7 +48,11 @@ const STDOUT_DRAIN_GRACE_MS = 2_000;
 export class PrimeRpcClientV0 {
 	/** Protocol violations observed: malformed records, responses without or with unknown/duplicate ids. */
 	readonly protocolErrors: string[] = [];
+	/** Settles once the process has exited and its stdout has drained (bounded): every record has been decoded. */
 	readonly exited: Promise<PrimeRpcExitV0>;
+	/** Settles as soon as the process exits, before stdout necessarily drained. */
+	readonly exitObserved: Promise<PrimeRpcExitV0>;
+	#observeExit: (exit: PrimeRpcExitV0) => void = () => {};
 	readonly #child: ChildProcessWithoutNullStreams;
 	readonly #decoder = new JsonlDecoderV0();
 	readonly #pending = new Map<string, Pending>();
@@ -64,6 +76,9 @@ export class PrimeRpcClientV0 {
 			this.stderr = (this.stderr + chunk.toString("utf8")).slice(-4_000);
 		});
 		this.#child.stdin.on("error", () => {});
+		this.exitObserved = new Promise((resolve) => {
+			this.#observeExit = resolve;
+		});
 		this.exited = new Promise((resolve) => {
 			// Pending requests fail as soon as the process exits, but `exited` settles only once stdout has drained
 			// ("close"), so records written just before exit are decoded and any protocol errors in them are counted.
@@ -81,6 +96,7 @@ export class PrimeRpcClientV0 {
 	/** Record the first exit and reject every pending request with it. */
 	#settle(exit: PrimeRpcExitV0): PrimeRpcExitV0 {
 		this.#exit ??= exit;
+		this.#observeExit(this.#exit);
 		for (const [id, pending] of this.#pending) {
 			clearTimeout(pending.timer);
 			pending.reject(new PrimeRpcExitError(pending.command, this.#exit));
@@ -105,7 +121,7 @@ export class PrimeRpcClientV0 {
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.#pending.delete(id);
-				reject(new Error(`Prime RPC ${command.type} timed out after ${timeoutMs} ms`));
+				reject(new PrimeRpcError(`Prime RPC ${command.type} timed out after ${timeoutMs} ms`));
 			}, timeoutMs);
 			this.#pending.set(id, { command: command.type, resolve, reject, timer });
 			this.#child.stdin.write(encodeJsonlRecordV0({ ...command, id }));
@@ -160,7 +176,7 @@ export class PrimeRpcClientV0 {
 			if (record.response.command !== pending.command) {
 				const error = `Response for ${id} echoes ${record.response.command}, expected ${pending.command}`;
 				this.protocolErrors.push(error);
-				pending.reject(new Error(error));
+				pending.reject(new PrimeRpcError(error));
 				continue;
 			}
 			pending.resolve(record.response);

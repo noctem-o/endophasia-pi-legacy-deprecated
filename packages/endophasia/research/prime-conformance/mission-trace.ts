@@ -115,10 +115,6 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 					continue;
 				}
 				const { toolCallId, toolName, isError } = item;
-				if (isError === null) {
-					unmapped.push(`tool_execution_end without isError at ${index}`);
-					continue;
-				}
 				push({ kind: "tool.finished", lane, runId: run.id, turnId: run.turnId, toolCallId, toolName, isError });
 				continue;
 			}

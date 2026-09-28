@@ -3,9 +3,10 @@
 		"source": "prime-agent",
 		"version": "0.9.6",
 		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
+		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.2.0",
+		"probeVersion": "0.3.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "child-usage-replay"
@@ -85,19 +86,26 @@
 			"type": "message",
 			"id": "a0000001",
 			"parentId": null,
-			"role": "user",
 			"keys": [
 				"id",
 				"message",
 				"parentId",
 				"timestamp",
 				"type"
-			]
+			],
+			"role": "user"
 		},
 		{
 			"type": "message",
 			"id": "a0000002",
 			"parentId": "a0000001",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			],
 			"role": "assistant",
 			"stopReason": "stop",
 			"usage": {
@@ -114,19 +122,21 @@
 					"total": 1100
 				},
 				"extraKeys": []
-			},
-			"keys": [
-				"id",
-				"message",
-				"parentId",
-				"timestamp",
-				"type"
-			]
+			}
 		},
 		{
 			"type": "child_usage_attributed",
 			"id": "a0000003",
 			"parentId": "a0000002",
+			"keys": [
+				"aggregateUsage",
+				"childUsage",
+				"id",
+				"parentId",
+				"targetId",
+				"timestamp",
+				"type"
+			],
 			"targetId": "a0000002",
 			"childUsage": {
 				"input": 400,
@@ -157,20 +167,11 @@
 					"total": 1540
 				},
 				"extraKeys": []
-			},
-			"keys": [
-				"aggregateUsage",
-				"childUsage",
-				"id",
-				"parentId",
-				"targetId",
-				"timestamp",
-				"type"
-			]
+			}
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "2e21056d",
+			"id": "0eaaab21",
 			"parentId": "a0000003",
 			"keys": [
 				"id",
@@ -182,8 +183,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "e02658e2",
-			"parentId": "2e21056d",
+			"id": "15e446ac",
+			"parentId": "0eaaab21",
 			"keys": [
 				"id",
 				"parentId",
@@ -194,8 +195,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "d41d7904",
-			"parentId": "e02658e2",
+			"id": "b6c96bfb",
+			"parentId": "15e446ac",
 			"keys": [
 				"content",
 				"customType",
@@ -208,10 +209,11 @@
 			]
 		}
 	],
+	"entrySnapshots": [],
 	"stateKeys": [],
+	"observations": {
+		"providerRequests": 0
+	},
 	"protocolErrors": [],
-	"notes": [
-		"crafted session opened: true",
-		"provider requests: 0"
-	]
+	"failures": []
 }
