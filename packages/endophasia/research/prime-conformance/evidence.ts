@@ -1,6 +1,6 @@
 // Research-only (Prime Runtime Conformance v0). The sanitized, committed evidence format. Everything here is either an
 // identity, a kind, a flag or a number: no prompt, assistant, reasoning, tool or error text.
-import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
+import type { PrimeAssistantEvidenceV0, PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 import { sanitizeUsageV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
@@ -198,4 +198,86 @@ export function sanitizeSessionEntryV0(value: unknown): PrimeSessionEntryEvidenc
 		...(aggregateUsage === undefined ? {} : { aggregateUsage }),
 		keys: Object.keys(entry).sort(),
 	};
+}
+
+function usageProblems(label: string, usage: PrimeUsageEvidenceV0 | undefined): string[] {
+	if (usage === undefined) return [];
+	const fields: Record<string, number> = {
+		input: usage.input,
+		output: usage.output,
+		cacheRead: usage.cacheRead,
+		cacheWrite: usage.cacheWrite,
+		totalTokens: usage.totalTokens,
+		"cost.input": usage.cost.input,
+		"cost.output": usage.cost.output,
+		"cost.cacheRead": usage.cost.cacheRead,
+		"cost.cacheWrite": usage.cost.cacheWrite,
+		"cost.total": usage.cost.total,
+	};
+	return Object.entries(fields).flatMap(([name, value]) =>
+		Number.isFinite(value) ? [] : [`${label}: usage ${name} is not a finite number`],
+	);
+}
+
+function assistantProblems(label: string, assistant: PrimeAssistantEvidenceV0 | undefined): string[] {
+	if (assistant === undefined) return [];
+	return [
+		...(assistant.stopReason === "" ? [`${label}: assistant has no stop reason`] : []),
+		...assistant.toolCalls.flatMap((call) =>
+			call.id === "" || call.name === "" ? [`${label}: tool call without id or name`] : [],
+		),
+		...usageProblems(label, assistant.usage),
+	];
+}
+
+/**
+ * Evidence the sanitizers could only record by substituting a value: a missing identity ("") or a non-finite number.
+ * Any problem means the run observed a shape the probe does not understand, so the evidence must not be accepted.
+ */
+export function evidenceProblemsV0(run: PrimeScenarioEvidenceV0): string[] {
+	const events = run.events.flatMap((event, index) => {
+		const label = `event ${index} (${event.type})`;
+		switch (event.type) {
+			case "message_start":
+			case "message_end":
+				return [
+					...(event.role === "" ? [`${label}: message has no role`] : []),
+					...assistantProblems(label, event.assistant),
+				];
+			case "turn_end":
+				return [
+					...assistantProblems(label, event.assistant),
+					...event.toolResults.flatMap((result) =>
+						result.toolCallId === "" || result.toolName === ""
+							? [`${label}: tool result without id or name`]
+							: [],
+					),
+				];
+			case "tool_execution_start":
+			case "tool_execution_update":
+			case "tool_execution_end":
+				return event.toolCallId === "" || event.toolName === ""
+					? [`${label}: tool execution without id or name`]
+					: [];
+			case "agent_end":
+				return [
+					...(event.messageRoles.includes("") ? [`${label}: message without role`] : []),
+					...(event.assistantStopReasons.includes("") ? [`${label}: assistant without stop reason`] : []),
+				];
+			default:
+				return [];
+		}
+	});
+	const entries = run.sessionEntries.flatMap((entry, index) => {
+		const label = `entry ${index} (${entry.type})`;
+		return [
+			...usageProblems(label, entry.usage),
+			...usageProblems(`${label} childUsage`, entry.childUsage),
+			...usageProblems(`${label} aggregateUsage`, entry.aggregateUsage),
+		];
+	});
+	const stats = run.stats.flatMap((item) =>
+		invalidStatsFieldsV0(item).map((field) => `stats ${item.label}: ${field} is not a finite number`),
+	);
+	return [...events, ...entries, ...stats];
 }

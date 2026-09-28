@@ -11,7 +11,7 @@ import {
 	type PrimeConformanceFindingV0,
 	type PrimeFactsV0,
 } from "./classification.ts";
-import { PROBE_NAME, type PrimeProvenanceV0, type PrimeScenarioEvidenceV0 } from "./evidence.ts";
+import { evidenceProblemsV0, PROBE_NAME, type PrimeProvenanceV0, type PrimeScenarioEvidenceV0 } from "./evidence.ts";
 import { SENTINEL_PATTERN } from "./fake-provider.ts";
 import type { CandidateTerminalV0 } from "./mission-trace.ts";
 import { projectPrimeUsageRowsV0, rebuildPrimeRuntimeMetricsV0 } from "./projection.ts";
@@ -40,6 +40,8 @@ export interface PrimeScenarioReportV0 {
 	readonly terminals: readonly CandidateTerminalV0[];
 	readonly unmapped: readonly string[];
 	readonly identityProblems: readonly string[];
+	/** Values the sanitizers could only substitute (missing identities, non-finite numbers); must be empty. */
+	readonly evidenceProblems: readonly string[];
 	readonly notes: readonly string[];
 	readonly protocolErrors: readonly string[];
 }
@@ -117,6 +119,7 @@ export function buildPrimeConformanceReportV0(
 			terminals: mapping.terminals,
 			unmapped: mapping.unmapped,
 			identityProblems: checkAdapterIdentitiesV0(mapping),
+			evidenceProblems: evidenceProblemsV0(item),
 			notes: item.notes,
 			protocolErrors: item.protocolErrors,
 		};

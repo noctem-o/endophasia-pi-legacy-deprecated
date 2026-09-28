@@ -5,12 +5,18 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { resolvePrimeBinaryV0 } from "../research/prime-conformance/environment.ts";
 import {
+	evidenceProblemsV0,
 	invalidStatsFieldsV0,
 	sanitizeCommandV0,
 	sanitizeSessionEntryV0,
 	sanitizeStatsV0,
 } from "../research/prime-conformance/evidence.ts";
-import { SENTINEL_PATTERN, SENTINELS } from "../research/prime-conformance/fake-provider.ts";
+import {
+	MALFORMED_PROVIDER_REQUEST,
+	SENTINEL_PATTERN,
+	SENTINELS,
+	startFakeProviderV0,
+} from "../research/prime-conformance/fake-provider.ts";
 import { encodeJsonlRecordV0, JsonlDecoderV0, type JsonlRecordV0 } from "../research/prime-conformance/jsonl.ts";
 import { classifyPrimeRecordV0, sanitizePrimeEventV0 } from "../research/prime-conformance/protocol.ts";
 import { PrimeRpcClientV0, PrimeRpcExitError } from "../research/prime-conformance/rpc-client.ts";
@@ -232,6 +238,51 @@ describe("sanitization", () => {
 		expect(invalidStatsFieldsV0(sanitizeStatsV0("absent", undefined))).toHaveLength(11);
 	});
 
+	it("never fabricates identities or numbers, and flags what it could not read", () => {
+		const events = [
+			sanitizePrimeEventV0("tool_execution_end", { toolName: "probe_tool", isError: false }),
+			sanitizePrimeEventV0("message_end", {
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", name: "probe_tool" }],
+					usage: { input: 1, output: "2", cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { total: 1 } },
+				},
+			}),
+		].flatMap((event) => (event === undefined ? [] : [event]));
+		expect(events[0]).toMatchObject({ toolCallId: "" });
+		const problems = evidenceProblemsV0({
+			provenance: {
+				source: "prime-agent",
+				version: "0",
+				mode: "rpc",
+				generatedBy: "prime-conformance-v0",
+				probeVersion: "0",
+				platform: "test",
+				node: "test",
+				scenario: "synthetic",
+			},
+			description: "",
+			events,
+			abortRequestedAfter: [],
+			commands: [],
+			stats: [],
+			sessionEntries: [],
+			stateKeys: [],
+			protocolErrors: [],
+			notes: [],
+		});
+		expect(problems).toEqual([
+			"event 0 (tool_execution_end): tool execution without id or name",
+			"event 1 (message_end): assistant has no stop reason",
+			"event 1 (message_end): tool call without id or name",
+			"event 1 (message_end): usage output is not a finite number",
+			"event 1 (message_end): usage cost.input is not a finite number",
+			"event 1 (message_end): usage cost.output is not a finite number",
+			"event 1 (message_end): usage cost.cacheRead is not a finite number",
+			"event 1 (message_end): usage cost.cacheWrite is not a finite number",
+		]);
+	});
+
 	it("drops streaming deltas and keeps unknown events by name only", () => {
 		expect(sanitizePrimeEventV0("message_update", { delta: SENTINELS.assistant })).toBeUndefined();
 		expect(sanitizePrimeEventV0("brand_new_event", { payload: SENTINELS.prompt })).toEqual({
@@ -286,5 +337,25 @@ describe("isolation", () => {
 			checkout: "/src/prime",
 		});
 		expect(resolvePrimeBinaryV0({})).toBeUndefined();
+	});
+
+	it("answers a request it cannot read with an error, never a scripted completion", async () => {
+		const fake = await startFakeProviderV0();
+		try {
+			const post = (body: string) =>
+				fetch(`${fake.baseUrl}/chat/completions`, {
+					method: "POST",
+					body,
+					headers: { "content-type": "application/json" },
+				});
+			expect((await post("{not json")).status).toBe(400);
+			expect((await post(JSON.stringify({ model: "probe-model" }))).status).toBe(400);
+			const ok = await post(JSON.stringify({ messages: [] }));
+			expect(ok.status).toBe(200);
+			await ok.text();
+			expect(fake.requests).toEqual([MALFORMED_PROVIDER_REQUEST, MALFORMED_PROVIDER_REQUEST, "summary"]);
+		} finally {
+			await fake.close();
+		}
 	});
 });

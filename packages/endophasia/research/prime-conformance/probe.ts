@@ -18,7 +18,7 @@ import {
 	sanitizeSessionEntryV0,
 	sanitizeStatsV0,
 } from "./evidence.ts";
-import { type FakeProviderV0, SENTINELS, startFakeProviderV0 } from "./fake-provider.ts";
+import { type FakeProviderV0, MALFORMED_PROVIDER_REQUEST, SENTINELS, startFakeProviderV0 } from "./fake-provider.ts";
 import { type PrimeEvidenceEventV0, sanitizePrimeEventV0 } from "./protocol.ts";
 import { PrimeRpcClientV0 } from "./rpc-client.ts";
 
@@ -110,11 +110,15 @@ class ProbeSession {
 	}
 
 	/** The current session file path, used in memory only to read the durable entries. */
-	async sessionFile(): Promise<string | undefined> {
+	async sessionFile(): Promise<string> {
+		// Read-only lookups are not part of the recorded command evidence, but a refusal still fails the scenario.
 		const response = await this.client.request({ type: "get_state" });
+		if (!response.success) throw new Error("get_state failed unexpectedly");
 		const data = response.data as Record<string, unknown> | undefined;
 		this.#run.stateKeys = Object.keys(data ?? {}).sort();
-		return typeof data?.sessionFile === "string" ? data.sessionFile : undefined;
+		// Without the file there are no durable entries to read; an empty list would pass as evidence.
+		if (typeof data?.sessionFile !== "string") throw new Error("get_state has no sessionFile");
+		return data.sessionFile;
 	}
 
 	async close(): Promise<void> {
@@ -134,8 +138,7 @@ interface ScenarioRecorder {
 	notes: string[];
 }
 
-function readSessionEntries(path: string | undefined): PrimeSessionEntryEvidenceV0[] {
-	if (path === undefined) return [];
+function readSessionEntries(path: string): PrimeSessionEntryEvidenceV0[] {
 	return readFileSync(path, "utf8")
 		.split("\n")
 		.filter((line) => line.length > 0)
@@ -377,6 +380,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			await session.stats("before-fork");
 			const originalFile = await session.sessionFile();
 			const forkable = await session.client.request({ type: "get_fork_messages" });
+			if (!forkable.success) throw new Error("get_fork_messages failed unexpectedly");
 			const entries = (
 				(forkable.data as { messages?: { entryId?: unknown }[] } | undefined)?.messages ?? []
 			).flatMap((message) => (typeof message.entryId === "string" ? [message.entryId] : []));
@@ -462,6 +466,8 @@ export async function runPrimeProbeV0(options: PrimeProbeOptionsV0): Promise<Pri
 			await fake.close();
 		}
 		run.notes.push(`provider requests: ${fake.requests.length}`);
+		const malformed = fake.requests.filter((request) => request === MALFORMED_PROVIDER_REQUEST).length;
+		if (malformed > 0) run.notes.push(`scenario error: ${malformed} malformed provider request(s)`);
 		results.push({
 			provenance: { ...options.provenance, scenario: scenario.name },
 			description: scenario.description,

@@ -67,7 +67,7 @@ The fake provider plants these sentinels in every payload class: `PROMPT_SENTINE
 - Live: `PRIME_AGENT_BIN=/path/to/prime-agent npm run check:prime-conformance` or `PRIME_AGENT_ROOT=/path/to/prime-agent npm run check:prime-conformance`. It writes `.artifacts/prime-conformance/report.json`, which is ignored by git.
 - Refresh fixtures: add `--write-fixtures`.
 - Drift: when the installed Prime's version or commit differs from the committed fixtures, the run prints `STALE` and sets `drift.stale`. A `PRIME_AGENT_BIN` binary reports no commit, so a same-version run against the commit-pinned fixtures prints `UNVERIFIED` and sets `drift.unverified` instead of claiming a match.
-- Refresh safety: `--write-fixtures` refuses a run with any problem: a sentinel leak, a protocol error, an adapter-identity problem, or a scenario error (including an unexpected command refusal or a malformed stats response). A full refresh also removes fixtures of scenarios that no longer exist.
+- Refresh safety: `--write-fixtures` refuses a run with any problem: a sentinel leak, a protocol error, an adapter-identity problem, a scenario error (including an unexpected command refusal, a malformed stats response, or a provider request the fake cannot read), or an evidence problem (a missing identity or a non-finite usage number, which the sanitizers record as an empty string or NaN rather than a plausible value). A full refresh also removes fixtures of scenarios that no longer exist.
 - Missing binary: the command exits 1 with a clear message.
 - CI: the live probe is not part of CI. The offline tests in `packages/endophasia/test/prime-conformance.test.ts` need no Prime.
 

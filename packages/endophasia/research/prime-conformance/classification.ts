@@ -172,7 +172,11 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 					const executed = toolRun.events.flatMap((event) =>
 						event.type === "tool_execution_end" ? [event.toolCallId] : [],
 					);
-					return executed.length > 0 && executed.every((id) => called.includes(id) && !id.startsWith("adapter:"));
+					// A missing id ("") never counts as a native identity, even when both sides lack one.
+					return (
+						executed.length > 0 &&
+						executed.every((id) => id !== "" && called.includes(id) && !id.startsWith("adapter:"))
+					);
 				})();
 
 	const toolErrorRecovered =

@@ -64,6 +64,7 @@ const problems = [
 	...report.scenarios.flatMap((scenario) => [
 		...scenario.protocolErrors.map((item) => `${scenario.scenario}: protocol: ${item}`),
 		...scenario.identityProblems.map((item) => `${scenario.scenario}: identity: ${item}`),
+		...scenario.evidenceProblems.map((item) => `${scenario.scenario}: evidence: ${item}`),
 		...scenario.notes
 			.filter((item) => item.startsWith("scenario error"))
 			.map((item) => `${scenario.scenario}: ${item}`),

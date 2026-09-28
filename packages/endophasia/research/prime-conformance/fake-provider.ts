@@ -118,6 +118,9 @@ function usageChunk(name: string): Record<string, unknown> {
 	};
 }
 
+/** Recorded in `requests` for a request whose body is not JSON with a `messages` array. */
+export const MALFORMED_PROVIDER_REQUEST = "malformed-request";
+
 export interface FakeProviderV0 {
 	readonly baseUrl: string;
 	/** Scenario names of every request received, in order. */
@@ -134,13 +137,22 @@ export async function startFakeProviderV0(): Promise<FakeProviderV0> {
 		const chunks: Buffer[] = [];
 		request.on("data", (chunk: Buffer) => chunks.push(chunk));
 		request.on("end", () => {
-			let body: { messages?: ChatMessage[]; model?: string } = {};
+			let body: { messages?: unknown; model?: unknown } | undefined;
 			try {
 				body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
 			} catch {}
-			const { scenario, step } = selectStepV0(body.messages ?? []);
+			// A request the fake cannot read must fail loudly, not fall through to the summary script.
+			if (body === null || typeof body !== "object" || !Array.isArray(body.messages)) {
+				requests.push(MALFORMED_PROVIDER_REQUEST);
+				response.writeHead(400, { "content-type": "application/json" });
+				response.end(
+					JSON.stringify({ error: { message: "malformed probe request", type: "invalid_request_error" } }),
+				);
+				return;
+			}
+			const { scenario, step } = selectStepV0(body.messages as ChatMessage[]);
 			requests.push(scenario);
-			const model = body.model ?? "probe-model";
+			const model = typeof body.model === "string" ? body.model : "probe-model";
 			if (step.kind === "http-error") {
 				response.writeHead(400, { "content-type": "application/json" });
 				response.end(

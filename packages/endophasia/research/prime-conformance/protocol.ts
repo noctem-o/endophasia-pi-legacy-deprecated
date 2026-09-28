@@ -124,8 +124,12 @@ function record(value: unknown): Record<string, unknown> | undefined {
 		: undefined;
 }
 
-function string(value: unknown, fallback = "unknown"): string {
-	return typeof value === "string" ? value : fallback;
+/**
+ * A missing or non-string field becomes "", never a plausible value: two missing identities must not look like a
+ * match. `evidenceProblemsV0` rejects empty required fields, so such evidence never reaches a report or fixture.
+ */
+function string(value: unknown): string {
+	return typeof value === "string" ? value : "";
 }
 
 function number(value: unknown): number {

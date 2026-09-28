@@ -169,6 +169,7 @@ describe("conformance report", () => {
 			["UsageLedgerRowV0", "adapter-state", "qualified"],
 		]);
 		expect(report.privacyViolations).toEqual([]);
+		expect(report.scenarios.flatMap((scenario) => scenario.evidenceProblems)).toEqual([]);
 		expect(report.drift.stale).toBe(false);
 		expect(report.facts).toMatchObject({
 			abortToolStop: "toolUse",
@@ -188,6 +189,28 @@ describe("conformance report", () => {
 				finding.contract,
 			).toBe(false);
 		}
+	});
+
+	it("does not count missing tool-call ids as native identities", () => {
+		const run = fixture("tool-run");
+		const anonymous = {
+			...run,
+			events: run.events.map((event) => {
+				if (event.type === "tool_execution_end") return { ...event, toolCallId: "" };
+				if (event.type === "message_end" && event.assistant !== undefined) {
+					return {
+						...event,
+						assistant: {
+							...event.assistant,
+							toolCalls: event.assistant.toolCalls.map((call) => ({ ...call, id: "" })),
+						},
+					};
+				}
+				return event;
+			}),
+		};
+		expect(derivePrimeFactsV0([anonymous]).toolCallIdsNative).toBe(false);
+		expect(buildPrimeConformanceReportV0([anonymous]).scenarios[0]!.evidenceProblems.length).toBeGreaterThan(0);
 	});
 
 	it("detects a rebuild mismatch in any shared usage dimension", () => {
