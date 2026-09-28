@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { EntryView } from "../cockpit/view-model.ts";
 import {
 	boundText,
 	formatClock,
@@ -13,10 +14,18 @@ import {
 	projectSessionOverview,
 	projectSessions,
 	projectTranscriptEntry,
+	projectVisibleTranscript,
 } from "../cockpit/view-model.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 
 const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: {} };
+
+/** Project an entry that must be for display. */
+function visible(source: unknown): EntryView {
+	const view = projectTranscriptEntry(source);
+	if (view === undefined) throw new Error("Expected a displayed entry");
+	return view;
+}
 
 function entry(fields: Record<string, unknown>): Record<string, unknown> {
 	return { id: "entry-1", parentId: null, seq: 1, timestamp: Date.UTC(2026, 0, 1, 12, 0, 0), ...fields };
@@ -129,11 +138,11 @@ describe("cockpit status projections", () => {
 
 describe("cockpit transcript projections", () => {
 	it("projects user, assistant and tool-result messages as distinct cards", () => {
-		expect(
-			projectTranscriptEntry(entry({ type: "message", message: { role: "user", content: "hi", timestamp: 1 } })),
-		).toMatchObject({ kind: "user", title: "User", blocks: [{ kind: "text", text: { text: "hi" } }] });
+		expect(visible(entry({ type: "message", message: { role: "user", content: "hi", timestamp: 1 } }))).toMatchObject(
+			{ kind: "user", title: "User", blocks: [{ kind: "text", text: { text: "hi" } }] },
+		);
 
-		const assistant = projectTranscriptEntry(
+		const assistant = visible(
 			entry({
 				type: "message",
 				message: {
@@ -156,7 +165,7 @@ describe("cockpit transcript projections", () => {
 		expect(assistant.blocks.map((block) => block.kind)).toEqual(["text", "tool-call", "error"]);
 		expect(assistant.blocks[1]).toMatchObject({ toolName: "bash", args: { text: expect.stringContaining('"ls"') } });
 
-		const result = projectTranscriptEntry(
+		const result = visible(
 			entry({
 				type: "message",
 				message: {
@@ -198,8 +207,8 @@ describe("cockpit transcript projections", () => {
 			stopReason: "stop",
 			timestamp: 1,
 		};
-		const durable = projectTranscriptEntry(entry({ type: "message", message }));
-		const streaming = projectMessage("streaming", message);
+		const durable = visible(entry({ type: "message", message }));
+		const streaming = projectMessage("streaming", message)!;
 		for (const view of [durable, streaming]) {
 			expect(view.blocks.map((block) => block.kind)).toEqual(["reasoning", "reasoning", "text"]);
 			expect(JSON.stringify(view)).not.toContain(secret);
@@ -208,7 +217,7 @@ describe("cockpit transcript projections", () => {
 
 	it("renders compaction and branch summaries from their own fields", () => {
 		expect(
-			projectTranscriptEntry(
+			visible(
 				entry({
 					type: "compaction",
 					summary: "what happened",
@@ -224,43 +233,40 @@ describe("cockpit transcript projections", () => {
 			blocks: [{ kind: "text", text: { text: "what happened" } }],
 		});
 		expect(
-			projectTranscriptEntry(entry({ type: "branch_summary", fromId: "abc", summary: "branch", fromHook: true })),
+			visible(entry({ type: "branch_summary", fromId: "abc", summary: "branch", fromHook: true })),
 		).toMatchObject({
 			kind: "branch-summary",
 			title: "Branch summary",
 			meta: [expect.any(String), "from abc", "from hook"],
 			blocks: [{ kind: "text", text: { text: "branch" } }],
 		});
-		expect(projectTranscriptEntry(entry({ type: "branch_summary", fromId: null, summary: "" })).meta).toContain(
-			"from root",
-		);
+		expect(visible(entry({ type: "branch_summary", fromId: null, summary: "" })).meta).toContain("from root");
 	});
 
 	it("renders custom and unknown entries and content generically without crashing", () => {
-		expect(projectTranscriptEntry(entry({ type: "custom", customType: "x.note", data: { a: 1 } }))).toMatchObject({
+		expect(visible(entry({ type: "custom", customType: "x.note", data: { a: 1 } }))).toMatchObject({
 			kind: "custom",
 			title: "Custom · x.note",
 			blocks: [{ kind: "preview", label: "Data", text: { text: '{\n  "a": 1\n}' } }],
 		});
-		expect(projectTranscriptEntry(entry({ type: "future_kind" }))).toMatchObject({
+		expect(visible(entry({ type: "future_kind" }))).toMatchObject({
 			kind: "unsupported",
 			title: "Unsupported entry · future_kind",
 		});
-		expect(projectTranscriptEntry(null)).toMatchObject({ kind: "unsupported" });
-		expect(projectTranscriptEntry(entry({ type: "message", message: { role: "hologram" } }))).toMatchObject({
+		expect(visible(null)).toMatchObject({ kind: "unsupported" });
+		expect(visible(entry({ type: "message", message: { role: "hologram" } }))).toMatchObject({
 			kind: "unsupported",
 			title: "Unsupported message · hologram",
 		});
 		expect(
-			projectTranscriptEntry(
-				entry({ type: "message", message: { role: "user", content: [{ type: "video" }, 7], timestamp: 1 } }),
-			).blocks,
+			visible(entry({ type: "message", message: { role: "user", content: [{ type: "video" }, 7], timestamp: 1 } }))
+				.blocks,
 		).toEqual([
 			{ kind: "unsupported", label: "Unsupported content · video" },
 			{ kind: "unsupported", label: "Unsupported content" },
 		]);
 		expect(
-			projectTranscriptEntry(
+			visible(
 				entry({
 					type: "message",
 					message: {
@@ -274,6 +280,49 @@ describe("cockpit transcript projections", () => {
 				}),
 			),
 		).toMatchObject({ kind: "shell", meta: [expect.any(String), "exit 0"] });
+	});
+
+	it("omits custom messages Pi does not display, as its interactive renderer does", () => {
+		const secret = "SECRET_SENTINEL_d41d8cd9";
+		const hidden = (display: unknown) =>
+			entry({
+				id: `hidden-${String(display)}`,
+				type: "message",
+				message: {
+					role: "custom",
+					customType: "plan-mode-context",
+					content: [{ type: "text", text: secret }],
+					display,
+					details: { secret },
+					timestamp: 1,
+				},
+			});
+		const shown = entry({
+			id: "shown",
+			type: "message",
+			message: { role: "custom", customType: "note", content: "visible note", display: true, timestamp: 1 },
+		});
+		const transcript = [hidden(false), hidden(undefined), hidden("true"), shown];
+
+		for (const source of transcript.slice(0, 3)) expect(projectTranscriptEntry(source)).toBeUndefined();
+		expect(projectMessage("streaming", (hidden(false) as { message: unknown }).message)).toBeUndefined();
+		const presented = projectVisibleTranscript(transcript);
+		expect(presented.map(({ view }) => view.id)).toEqual(["shown"]);
+		expect(presented[0]!.view).toMatchObject({
+			kind: "custom-message",
+			title: "Custom message · note",
+			blocks: [{ kind: "text", text: { text: "visible note" } }],
+		});
+		expect(JSON.stringify(presented.map(({ view }) => view))).not.toContain(secret);
+		// The presentation keeps a reference to the displayed source only.
+		expect(presented[0]!.source).toBe(shown);
+	});
+
+	it("keeps rendering durable custom entries, which have no display flag", () => {
+		expect(visible(entry({ type: "custom", customType: "x.state", data: { value: "durable" } }))).toMatchObject({
+			kind: "custom",
+			blocks: [{ kind: "preview", text: { text: expect.stringContaining("durable") } }],
+		});
 	});
 
 	it("bounds previews without changing the source value", () => {
@@ -291,7 +340,7 @@ describe("cockpit transcript projections", () => {
 
 	it("keeps markup in untrusted text as literal characters", () => {
 		const markup = '<img src=x onerror="alert(1)"><script>alert(2)</script>';
-		const view = projectTranscriptEntry(entry({ type: "message", message: { role: "user", content: markup } }));
+		const view = visible(entry({ type: "message", message: { role: "user", content: markup } }));
 		expect(view.blocks).toEqual([
 			{ kind: "text", text: { text: markup, truncated: false, totalLength: markup.length } },
 		]);

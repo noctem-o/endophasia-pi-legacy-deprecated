@@ -112,9 +112,18 @@ export class CockpitController {
 		void this.runSelection(sessionId);
 	}
 
-	/** Stop observing the current Session. */
+	/**
+	 * Whether Detach may run: Pi reports a current attachment, attached or degraded (its services failed to hydrate,
+	 * but it still holds the Session), and no selection is pending.
+	 */
+	get canDetach(): boolean {
+		const status = this.presentation.attachment.value?.status;
+		return !this.disposed && this.pending === undefined && (status === "attached" || status === "degraded");
+	}
+
+	/** Stop observing the current Session, including a degraded one. */
 	async detach(): Promise<void> {
-		if (this.disposed || this.pending !== undefined) return;
+		if (!this.canDetach) return;
 		try {
 			await this.presentation.detach(this.context);
 		} catch (error) {
@@ -167,7 +176,8 @@ export class CockpitController {
 
 	private async runSelection(sessionId: string): Promise<void> {
 		this.pending = sessionId;
-		this.invalidate("sessions", "status");
+		// The inspector shows the pending request and whether Detach is available.
+		this.invalidate("sessions", "status", "inspector");
 		try {
 			await this.presentation.attach(sessionId, this.context);
 			if (this.queuedSelection === undefined) void this.refreshOverview();
@@ -175,7 +185,7 @@ export class CockpitController {
 			this.report(error);
 		} finally {
 			this.pending = undefined;
-			this.invalidate("sessions", "status");
+			this.invalidate("sessions", "status", "inspector");
 		}
 		const next = this.queuedSelection;
 		this.queuedSelection = undefined;

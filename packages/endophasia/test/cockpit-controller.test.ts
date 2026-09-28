@@ -9,7 +9,7 @@ import type { SessionDirectoryState } from "@earendil-works/pi-coding-agent/expe
 import type { TranscriptState } from "@earendil-works/pi-coding-agent/experimental/services/transcript";
 import { describe, expect, it } from "vitest";
 import { CockpitController, type CockpitPresentation, type CockpitRegion } from "../cockpit/controller.ts";
-import { projectSessions } from "../cockpit/view-model.ts";
+import { projectAttachment, projectSessions } from "../cockpit/view-model.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 
 type Listener<T> = Parameters<ReplicatedState<T>["subscribe"]>[0];
@@ -256,6 +256,42 @@ describe("Standard Cockpit controller", () => {
 		expect(attachment.value).toEqual({ status: "attached", sessionId: "a" });
 		expect(controller.diagnostics).toEqual([]);
 		controller.dispose();
+	});
+
+	it("detaches a degraded attachment without treating it as attached", async () => {
+		const { controller, attachment, attaches, renders, flush } = fixture();
+		expect(controller.canDetach).toBe(false);
+		attachment.set({ status: "attaching", sessionId: "a" });
+		expect(controller.canDetach).toBe(false);
+
+		// Session services failed to hydrate: Pi still holds the attachment, so it can and must be released.
+		attachment.set({ status: "degraded", sessionId: "a" });
+		expect(controller.canDetach).toBe(true);
+		expect(projectAttachment(attachment.value)).toMatchObject({ tone: "warn", glyph: "△", label: "Degraded" });
+		// Overview capture stays reserved for an attached Session.
+		await controller.refreshOverview();
+		expect(controller.overview).toEqual({ status: "none" });
+
+		// A pending selection blocks Detach until Pi settles it.
+		controller.select("b");
+		expect(controller.canDetach).toBe(false);
+		await controller.detach();
+		expect(attachment.value).toEqual({ status: "degraded", sessionId: "a" });
+		flush();
+		renders.length = 0;
+		attaches[0]!.reject(new Error("still degraded"));
+		await settle();
+		flush();
+		// Pi's state did not change, so only the settled request re-enables Detach, and it must redraw the inspector.
+		expect(renders.some((regions) => regions.has("inspector"))).toBe(true);
+
+		expect(controller.canDetach).toBe(true);
+		await controller.detach();
+		expect(attachment.value).toEqual({ status: "detached" });
+		expect(controller.canDetach).toBe(false);
+		controller.dispose();
+		attachment.set({ status: "degraded", sessionId: "a" });
+		expect(controller.canDetach).toBe(false);
 	});
 
 	it("contains render failures and bounds diagnostics without breaking the lifecycle", () => {

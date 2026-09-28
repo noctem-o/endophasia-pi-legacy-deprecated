@@ -15,7 +15,7 @@ import {
 	projectQueues,
 	projectSessionOverview,
 	projectSessions,
-	projectTranscriptEntry,
+	projectVisibleTranscript,
 	type StatusView,
 } from "./view-model.ts";
 
@@ -253,14 +253,14 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 			return;
 		}
 
-		transcriptEmpty.hidden = snapshot.transcript.length > 0;
 		transcriptEmpty.textContent = "The main-lane transcript is empty.";
 
 		// Keyed reconciliation: entries are immutable, so an unchanged source object keeps its card.
+		const visible = projectVisibleTranscript(snapshot.transcript);
+		transcriptEmpty.hidden = visible.length > 0;
 		const seen = new Set<string>();
 		let index = 0;
-		for (const entry of snapshot.transcript) {
-			const view = projectTranscriptEntry(entry);
+		for (const { source: entry, view } of visible) {
 			const key = `${view.id}:${index}`;
 			seen.add(key);
 			let rendered = renderedEntries.get(key);
@@ -283,11 +283,11 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 		}
 
 		const operation = snapshot.operation;
-		streamingSlot.replaceChildren(
-			...(operation?.streamingMessage === undefined
-				? []
-				: [renderCard(projectMessage(`streaming:${operation.id}`, operation.streamingMessage), "streaming")]),
-		);
+		const streaming =
+			operation?.streamingMessage === undefined
+				? undefined
+				: projectMessage(`streaming:${operation.id}`, operation.streamingMessage);
+		streamingSlot.replaceChildren(...(streaming === undefined ? [] : [renderCard(streaming, "streaming")]));
 
 		const view = projectOperation(operation, snapshot.lastResult);
 		const status = el("span", `pill ${view.idle ? "tone-idle" : "tone-live"}`);
@@ -321,7 +321,7 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 		if (controller.pendingSelection !== undefined) {
 			attachmentList.append(field("Requested", `${controller.pendingSelection} · awaiting Pi`, "muted"));
 		}
-		detachButton.disabled = attachment?.status !== "attached" || controller.pendingSelection !== undefined;
+		detachButton.disabled = !controller.canDetach;
 		attachmentSection.replaceChildren(
 			el("h3", "section-title", "Attachment"),
 			pill(projectAttachment(attachment)),

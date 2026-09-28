@@ -7,6 +7,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { parseBootstrap } from "../cockpit/bootstrap.ts";
+import { projectVisibleTranscript } from "../cockpit/view-model.ts";
 import { type EndophasiaPresentationClientV0, openEndophasiaPresentationClientV0 } from "../presentation/client.ts";
 import { type BrowserWebSocket, createBrowserWebSocketTransportFactory } from "../presentation/websocket-transport.ts";
 import { buildCockpitAssets, type RunningEndophasiaCockpit, startEndophasiaCockpit } from "../runtime/cockpit.ts";
@@ -16,6 +17,7 @@ const directories: string[] = [];
 const cockpits: RunningEndophasiaCockpit[] = [];
 const presentations: EndophasiaPresentationClientV0[] = [];
 const workerModel = { provider: "anthropic", model: "claude-sonnet-4-5" } as const;
+const HIDDEN_SENTINEL = "SECRET_SENTINEL_hidden_custom_7f3a";
 let assets: CockpitAssets | undefined;
 
 beforeEach(async () => {
@@ -50,6 +52,22 @@ async function createSessions(sessionsRoot: string, ids: readonly string[]): Pro
 			const session = await repo.create({ id, cwd: process.cwd() }, BACKGROUND_CONTEXT);
 			const main = await session.createBranch("main", null, BACKGROUND_CONTEXT);
 			await main.appendMessage({ role: "user", content: "cockpit-sentinel", timestamp: 1 }, BACKGROUND_CONTEXT);
+			// Context-only extension material Pi does not display, beside one custom message that it does.
+			await main.appendMessage(
+				{
+					role: "custom",
+					customType: "plan-mode-context",
+					content: HIDDEN_SENTINEL,
+					display: false,
+					details: { hidden: HIDDEN_SENTINEL },
+					timestamp: 2,
+				},
+				BACKGROUND_CONTEXT,
+			);
+			await main.appendMessage(
+				{ role: "custom", customType: "note", content: "shown-custom-note", display: true, timestamp: 3 },
+				BACKGROUND_CONTEXT,
+			);
 			await session.close(BACKGROUND_CONTEXT);
 		}
 	} finally {
@@ -116,12 +134,13 @@ describe("Standard Cockpit integration", () => {
 		await presentation.attach("observed", BACKGROUND_CONTEXT);
 		const snapshot = presentation.transcript.value?.snapshot;
 		expect(snapshot?.lane).toBe("main");
-		expect(snapshot?.transcript).toEqual([
-			expect.objectContaining({
-				type: "message",
-				message: expect.objectContaining({ content: "cockpit-sentinel" }),
-			}),
-		]);
+		expect(snapshot?.transcript).toHaveLength(3);
+		expect(snapshot?.transcript[0]).toMatchObject({ type: "message", message: { content: "cockpit-sentinel" } });
+		// Pi replicates the hidden custom message; the cockpit's visible transcript omits it entirely.
+		expect(JSON.stringify(snapshot?.transcript)).toContain(HIDDEN_SENTINEL);
+		const visible = projectVisibleTranscript(snapshot?.transcript ?? []);
+		expect(visible.map(({ view }) => view.title)).toEqual(["User", "Custom message · note"]);
+		expect(JSON.stringify(visible.map(({ view }) => view))).not.toContain(HIDDEN_SENTINEL);
 		expect(await presentation.sessionOverview(BACKGROUND_CONTEXT)).toMatchObject({
 			schemaVersion: "session-overview.v0",
 			consistency: "per-lane",
@@ -178,7 +197,7 @@ describe("Standard Cockpit integration", () => {
 });
 
 describe("Standard Cockpit source boundaries", () => {
-	const cockpitFiles = ["bootstrap.ts", "controller.ts", "main.ts", "view-model.ts", "view.ts"];
+	const cockpitFiles = ["bootstrap.ts", "controller.ts", "lifecycle.ts", "main.ts", "view-model.ts", "view.ts"];
 
 	it("never writes untrusted text through HTML parsing sinks", async () => {
 		for (const file of cockpitFiles) {

@@ -1,13 +1,18 @@
 // Browser entry for Standard Cockpit v0. It reads the host's bootstrap (serverId and the ephemeral WebSocket
 // capability URL), opens Presentation Client v0 over Browser ByteTransport v0 and mounts the cockpit. There is no
-// reconnect: after a disconnect or startup failure, reloading the page starts afresh.
+// reconnect: after a disconnect or startup failure, reloading the page starts afresh, as does a page restored from the
+// back-forward cache.
 import { type EndophasiaPresentationClientV0, openEndophasiaPresentationClientV0 } from "../presentation/client.ts";
 import { createBrowserWebSocketTransportFactory } from "../presentation/websocket-transport.ts";
 import { parseBootstrap } from "./bootstrap.ts";
 import { CockpitController } from "./controller.ts";
+import { bindPageLifecycle } from "./lifecycle.ts";
 import { mountCockpit, renderNotice } from "./view.ts";
 
 const MAX_ERROR_LENGTH = 500;
+
+/** Releases the running cockpit on pagehide; replaced once the cockpit is mounted. */
+let disposeActive: () => void = () => {};
 
 async function start(root: HTMLElement): Promise<void> {
 	renderNotice(root, "Connecting", "Opening the Endophasia presentation client…", "pending");
@@ -37,11 +42,15 @@ async function start(root: HTMLElement): Promise<void> {
 	});
 	controller = active;
 	mounted = mountCockpit(root, () => active);
-	addEventListener("pagehide", () => {
+	disposeActive = () => {
 		active.dispose();
 		void client.dispose();
-	});
+	};
 }
 
+bindPageLifecycle((type, listener) => addEventListener(type, (event) => listener(event.persisted)), {
+	dispose: () => disposeActive(),
+	reload: () => location.reload(),
+});
 const root = document.getElementById("cockpit");
 if (root !== null) void start(root);

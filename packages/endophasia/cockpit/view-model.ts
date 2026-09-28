@@ -225,8 +225,12 @@ function projectContent(content: unknown): ContentBlockView[] {
 	});
 }
 
-/** Project one message, durable or streaming, into a transcript card. */
-export function projectMessage(id: string, message: unknown, timestamp?: number): EntryView {
+/**
+ * Project one message, durable or streaming, into a transcript card, or undefined when it is not for display. As in
+ * Pi's interactive renderer, a custom message is shown only when it sets display: true; others carry context-only
+ * extension material.
+ */
+export function projectMessage(id: string, message: unknown, timestamp?: number): EntryView | undefined {
 	const meta = timestamp === undefined ? [] : [formatClock(timestamp)];
 	if (!isRecord(message)) return { id, kind: "unsupported", title: "Unsupported message", meta, blocks: [] };
 	switch (message.role) {
@@ -288,6 +292,7 @@ export function projectMessage(id: string, message: unknown, timestamp?: number)
 				),
 			};
 		case "custom":
+			if (message.display !== true) return undefined;
 			return {
 				id,
 				kind: "custom-message",
@@ -309,8 +314,8 @@ export function projectMessage(id: string, message: unknown, timestamp?: number)
 	}
 }
 
-/** Project one durable main-lane transcript entry. */
-export function projectTranscriptEntry(entry: unknown): EntryView {
+/** Project one durable main-lane transcript entry, or undefined when it is not for display. */
+export function projectTranscriptEntry(entry: unknown): EntryView | undefined {
 	if (!isRecord(entry))
 		return { id: "unknown", kind: "unsupported", title: "Unsupported entry", meta: [], blocks: [] };
 	const id = stringField(entry, "id") ?? "unknown";
@@ -363,6 +368,20 @@ export function projectTranscriptEntry(entry: unknown): EntryView {
 		default:
 			return { id, kind: "unsupported", title: `Unsupported entry · ${String(entry.type)}`, meta: time, blocks: [] };
 	}
+}
+
+export interface VisibleEntry {
+	/** The immutable source entry, for identity-based reconciliation. */
+	readonly source: unknown;
+	readonly view: EntryView;
+}
+
+/** The main-lane transcript as the cockpit shows it: every entry for display, in order. */
+export function projectVisibleTranscript(transcript: readonly unknown[]): VisibleEntry[] {
+	return transcript.flatMap((source) => {
+		const view = projectTranscriptEntry(source);
+		return view === undefined ? [] : [{ source, view }];
+	});
 }
 
 // ---------------------------------------------------------------------------------------------------------------
