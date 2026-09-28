@@ -150,7 +150,8 @@ export type UnexpectedProviderRequestV0 =
 	| "beyond-script"
 	| "summary-not-allowed"
 	| "wrong-model"
-	| "wrong-endpoint";
+	| "wrong-endpoint"
+	| "repeated-step";
 
 /** One request the fake received, classified. Only `scripted` and `summary` requests are answered with a completion. */
 export type FakeProviderRequestV0 =
@@ -225,6 +226,7 @@ export interface FakeProviderV0 {
 export async function startFakeProviderV0(expectations: FakeProviderExpectationsV0): Promise<FakeProviderV0> {
 	const requests: FakeProviderRequestV0[] = [];
 	let summariesAllowed = false;
+	const served = new Set<string>();
 	let callCounter = 0;
 	const open = new Set<ServerResponse>();
 	const server: Server = createServer((request: IncomingMessage, response: ServerResponse) => {
@@ -259,11 +261,17 @@ export async function startFakeProviderV0(expectations: FakeProviderExpectations
 				refuse("unexpected probe model");
 				return;
 			}
-			const { request: classified, step } = selectStepV0(
-				body.messages as ChatMessage[],
-				expectations,
-				summariesAllowed,
-			);
+			const selected = selectStepV0(body.messages as ChatMessage[], expectations, summariesAllowed);
+			// Each scripted step is served once: a second request for it (a double dispatch) is unexpected, so its spend
+			// cannot vanish from the evidence.
+			const stepKey =
+				selected.request.kind === "scripted" ? `${selected.request.marker}#${selected.request.reply}` : undefined;
+			const repeated = stepKey !== undefined && served.has(stepKey);
+			if (stepKey !== undefined) served.add(stepKey);
+			const classified: FakeProviderRequestV0 = repeated
+				? { kind: "unexpected", reason: "repeated-step" }
+				: selected.request;
+			const step = repeated ? undefined : selected.step;
 			requests.push(classified);
 			if (step === undefined) {
 				refuse("unexpected probe request");

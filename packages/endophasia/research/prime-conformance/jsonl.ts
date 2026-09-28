@@ -10,7 +10,8 @@ export type JsonlRecordV0 =
  * and each complete record is decoded as UTF-8 on its own with a fatal decoder, so malformed UTF-8 invalidates that
  * record instead of being replaced with U+FFFD. Each record must be one JSON object. U+2028 and U+2029 are ordinary
  * characters here, unlike Node's readline, which would split valid JSON strings on them. Incomplete bytes stay
- * buffered between chunks. Empty records are skipped.
+ * buffered between chunks. A completed empty record (a blank line) is invalid: it is not the JSON object the protocol
+ * requires. Only an entirely empty buffer at the end of the stream is nothing.
  */
 export class JsonlDecoderV0 {
 	#pending: Uint8Array = new Uint8Array(0);
@@ -24,8 +25,7 @@ export class JsonlDecoderV0 {
 		let start = 0;
 		let newline = joined.indexOf(0x0a, start);
 		while (newline !== -1) {
-			const record = decodeRecord(joined.subarray(start, newline));
-			if (record !== undefined) records.push(record);
+			records.push(decodeRecord(joined.subarray(start, newline)));
 			start = newline + 1;
 			newline = joined.indexOf(0x0a, start);
 		}
@@ -37,14 +37,13 @@ export class JsonlDecoderV0 {
 	end(): JsonlRecordV0[] {
 		const rest = this.#pending;
 		this.#pending = new Uint8Array(0);
-		const record = rest.length === 0 ? undefined : decodeRecord(rest);
-		return record === undefined ? [] : [record];
+		return rest.length === 0 ? [] : [decodeRecord(rest)];
 	}
 }
 
-function decodeRecord(bytes: Uint8Array): JsonlRecordV0 | undefined {
+function decodeRecord(bytes: Uint8Array): JsonlRecordV0 {
 	const line = bytes.at(-1) === 0x0d ? bytes.subarray(0, -1) : bytes;
-	if (line.length === 0) return undefined;
+	if (line.length === 0) return { kind: "invalid", error: "Empty record", length: 0 };
 	let text: string;
 	try {
 		text = new TextDecoder("utf-8", { fatal: true }).decode(line);

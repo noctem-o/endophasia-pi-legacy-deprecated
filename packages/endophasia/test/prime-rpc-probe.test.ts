@@ -1,8 +1,9 @@
 // Offline tests for the research-only Prime RPC conformance probe (Prime Runtime Conformance v0) at the Prime boundary:
 // JSONL framing, request correlation and process lifecycle, the strict decoders, the fake provider's expectations,
 // executable resolution and failure-text safety. No Prime installation is needed; a local fake RPC server stands in.
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -20,7 +21,7 @@ import {
 	PrimeDecodeError,
 	requirePrimeNotCancelledV0,
 } from "../research/prime-conformance/decode.ts";
-import { resolvePrimeBinaryV0 } from "../research/prime-conformance/environment.ts";
+import { createPrimeEnvironmentV0, resolvePrimeBinaryV0 } from "../research/prime-conformance/environment.ts";
 import {
 	type FakeProviderRequestV0,
 	SENTINEL_PATTERN,
@@ -28,7 +29,12 @@ import {
 	startFakeProviderV0,
 } from "../research/prime-conformance/fake-provider.ts";
 import { encodeJsonlRecordV0, JsonlDecoderV0, type JsonlRecordV0 } from "../research/prime-conformance/jsonl.ts";
-import { abnormalExitV0, failureTextV0, PrimeProbeFailureV0 } from "../research/prime-conformance/probe.ts";
+import {
+	abnormalExitV0,
+	confinedSessionFileV0,
+	failureTextV0,
+	PrimeProbeFailureV0,
+} from "../research/prime-conformance/probe.ts";
 import { classifyPrimeRecordV0, type PrimeRpcResponseV0 } from "../research/prime-conformance/protocol.ts";
 import { PrimeRpcClientV0, PrimeRpcError, PrimeRpcExitError } from "../research/prime-conformance/rpc-client.ts";
 
@@ -131,9 +137,12 @@ describe("JsonlDecoderV0", () => {
 			{ kind: "invalid", error: "Malformed JSON", length: 22 },
 			{ kind: "invalid", error: "Record is not a JSON object", length: 3 },
 			{ kind: "invalid", error: "Record is not a JSON object", length: 3 },
+			{ kind: "invalid", error: "Empty record", length: 0 },
 			{ kind: "object", value: { ok: true } },
 		]);
 		expect(leaks(records)).toEqual([]);
+		// An entirely empty buffer at the end of the stream is nothing, not an empty record.
+		expect(new JsonlDecoderV0().end()).toEqual([]);
 	});
 
 	it("invalidates a record with malformed UTF-8 instead of substituting U+FFFD", () => {
@@ -567,6 +576,8 @@ describe("fake provider expectations", () => {
 				return reply.status;
 			};
 			expect(await post(JSON.stringify({ model: "probe-model", messages: [user("SCENARIO:simple x")] }))).toBe(200);
+			// A double dispatch of the same scripted step is refused, so its spend cannot vanish from the evidence.
+			expect(await post(JSON.stringify({ model: "probe-model", messages: [user("SCENARIO:simple x")] }))).toBe(400);
 			expect(await post("{not json")).toBe(400);
 			expect(await post(JSON.stringify({ model: "probe-model" }))).toBe(400);
 			expect(await post(JSON.stringify({ model: "other-model", messages: [user("SCENARIO:simple x")] }))).toBe(400);
@@ -595,6 +606,7 @@ describe("fake provider expectations", () => {
 			expect((await fetch(`${fake.baseUrl}/chat/completions`)).status).toBe(404);
 			expect(fake.requests).toEqual<FakeProviderRequestV0[]>([
 				{ kind: "scripted", marker: "simple", reply: 0 },
+				{ kind: "unexpected", reason: "repeated-step" },
 				{ kind: "malformed" },
 				{ kind: "malformed" },
 				{ kind: "unexpected", reason: "wrong-model" },
@@ -642,6 +654,43 @@ describe("executable resolution", () => {
 			checkout: "/src/prime",
 		});
 		expect(resolvePrimeBinaryV0({})).toBeUndefined();
+	});
+});
+
+describe("isolated environment", () => {
+	it("isolates the home and temporary directories on Windows too", () => {
+		const environment = createPrimeEnvironmentV0({ providerBaseUrl: "http://127.0.0.1:9/v1" });
+		try {
+			expect(environment.env).toMatchObject({
+				USERPROFILE: environment.env.HOME,
+				TEMP: environment.env.TMPDIR,
+				TMP: environment.env.TMPDIR,
+			});
+			expect(environment.env.APPDATA?.startsWith(environment.env.HOME!)).toBe(true);
+			expect(environment.env.LOCALAPPDATA?.startsWith(environment.env.HOME!)).toBe(true);
+		} finally {
+			rmSync(environment.root, { recursive: true, force: true });
+		}
+	});
+
+	it("reads only session files inside the isolated session directory", () => {
+		const root = mkdtempSync(join(tmpdir(), "prime-confine-"));
+		try {
+			const sessions = join(root, "sessions");
+			mkdirSync(sessions);
+			writeFileSync(join(sessions, "s.jsonl"), "");
+			writeFileSync(join(root, "user-session.jsonl"), "");
+			symlinkSync(join(root, "user-session.jsonl"), join(sessions, "link.jsonl"));
+			expect(confinedSessionFileV0(join(sessions, "s.jsonl"), sessions)).toBe(join(sessions, "s.jsonl"));
+			expect(() => confinedSessionFileV0(join(root, "user-session.jsonl"), sessions)).toThrow(
+				"outside the isolated",
+			);
+			// A link inside the directory that resolves outside it is outside.
+			expect(() => confinedSessionFileV0(join(sessions, "link.jsonl"), sessions)).toThrow("outside the isolated");
+			expect(() => confinedSessionFileV0(join(sessions, "missing.jsonl"), sessions)).toThrow("does not exist");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });
 

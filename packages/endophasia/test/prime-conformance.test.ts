@@ -302,6 +302,30 @@ describe("classification", () => {
 		).toEqual(["RuntimeMetricsV0", "UsageLedgerRowV0"]);
 	});
 
+	it("contradicts Usage when a fork does not preserve the shared entries byte for byte", () => {
+		const run = fixture("fork");
+		const changed = { ...run, observations: { ...run.observations, forkSharedEntriesIdentical: false } };
+		const usage = buildPrimeConformanceReportV0(withScenario(changed)).findings.find(
+			(finding) => finding.contract === "UsageLedgerRowV0",
+		)!;
+		expect(usage).toMatchObject({ basis: "contradicted", support: "undetermined" });
+	});
+
+	it.each([
+		["another commit", { commit: "0".repeat(40) }],
+		["another version", { version: "0.9.7" }],
+		["a binary", { build: "binary", commit: undefined }],
+	] as const)("leaves every finding unverified for %s than the audited revision", (_case, change) => {
+		const report = buildPrimeConformanceReportV0(withProvenance(fixtures, change as Partial<PrimeProvenanceV0>));
+		for (const finding of report.findings) {
+			expect(finding, finding.contract).toMatchObject({ basis: "unverified", support: "undetermined" });
+			expect(
+				finding.missing.some((fact) => fact.includes("audited revision")),
+				finding.contract,
+			).toBe(true);
+		}
+	});
+
 	it("says unverified instead of guessing when a scenario did not run", () => {
 		const facts = derivePrimeFactsV0([fixture("simple")]);
 		expect(facts.statsDropAfterCompaction).toBeUndefined();
@@ -588,6 +612,33 @@ describe("publication gate", () => {
 			},
 			"invalid",
 		],
+		[
+			"an event tag the decoder never produces",
+			() => {
+				const run = fixture("simple");
+				const events = [...run.events, { type: "bogus" } as unknown as (typeof run.events)[number]];
+				return withScenario({ ...run, events });
+			},
+			"invalid",
+		],
+		[
+			"a turn_end that disagrees with its message_end",
+			() => {
+				const run = fixture("simple");
+				const events = run.events.map((event) =>
+					event.type === "turn_end" && event.assistant !== undefined
+						? { ...event, assistant: { ...event.assistant, stopReason: "length" } }
+						: event,
+				);
+				return withScenario({ ...run, events });
+			},
+			"invalid",
+		],
+		[
+			"a clean checkout without a build output hash",
+			() => withProvenance(fixtures, { artifactsHash: undefined }),
+			"unpublishable",
+		],
 		["a missing requested scenario", () => fixtures.filter((run) => run.provenance.scenario !== "fork"), "invalid"],
 		["binary provenance", () => withProvenance(fixtures, { build: "binary", commit: undefined }), "unpublishable"],
 		["a dirty checkout", () => withProvenance(fixtures, { build: "dirty-checkout" }), "unpublishable"],
@@ -625,6 +676,20 @@ describe("publication gate", () => {
 		expect(isPublishableV0(consistent)).toBe(true);
 	});
 
+	it("revalidates the fixtures a partial refresh keeps", () => {
+		const kept = fixtures
+			.filter((run) => run.provenance.scenario !== "simple")
+			.map((run) =>
+				run.provenance.scenario === "fork" ? { ...structuredClone(run), failures: ["edited by hand"] } : run,
+			);
+		const assessment = assessPrimeEvidenceV0({
+			report: buildPrimeConformanceReportV0([fixture("simple")]),
+			requestedScenarios: ["simple"],
+			retainedFixtures: kept,
+		});
+		expect(isPublishableV0(assessment)).toBe(false);
+	});
+
 	it("never mixes builds, probes or environments in one report", () => {
 		const [first, ...rest] = fixtures;
 		const mixed = (change: Partial<PrimeProvenanceV0>) => [first!, ...withProvenance(rest, change)];
@@ -656,6 +721,12 @@ describe("drift", () => {
 		[
 			"a dirty checkout at the same commit",
 			{ build: "dirty-checkout" },
+			{ runtime: "unverifiable", provenanceVerified: false },
+		],
+		["another build output hash", { artifactsHash: "0".repeat(64) }, { runtime: "different" }],
+		[
+			"a clean checkout without a build output hash",
+			{ artifactsHash: undefined },
 			{ runtime: "unverifiable", provenanceVerified: false },
 		],
 		["another probe version", { probeVersion: "9.9.9" }, { runtime: "same", probe: "different" }],

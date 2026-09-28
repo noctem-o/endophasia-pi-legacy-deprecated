@@ -85,6 +85,18 @@ function settle(analysis: FindingAnalysis, facts: PrimeFactsV0): PrimeConformanc
 	};
 }
 
+/**
+ * The Prime revision whose source and docs the classifications cite (PRIME_SOURCE). Evidence from any other build can
+ * confirm the observed facts but not the source-derived conclusions, so every finding stays unverified until the new
+ * revision is re-audited and this constant updated.
+ */
+export const AUDITED_PRIME = { version: "0.9.6", commit: "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e" } as const;
+
+const AUDITED_REVISION: Requirement = {
+	fact: `Prime ${AUDITED_PRIME.version} @ ${AUDITED_PRIME.commit.slice(0, 8)} (the audited revision), clean checkout`,
+	holds: (facts) => (facts.auditedRevision === true ? true : undefined),
+};
+
 /** Prime source and docs the classification relies on, at the pinned commit. */
 export const PRIME_SOURCE = {
 	rpcCommands: "prime:packages/coding-agent/docs/rpc.md:225-256 (command table, observe/observed_session_event)",
@@ -115,6 +127,10 @@ export const PRIME_SOURCE = {
 
 /** A fact is `undefined` when the scenario that establishes it was not run. */
 export interface PrimeFactsV0 {
+	/** The evidence came from a clean checkout of the audited Prime revision; undefined otherwise (not re-audited). */
+	readonly auditedRevision: true | undefined;
+	/** Every entry a fork file shares by id with the original is identical to it. */
+	readonly forkSharedEntriesIdentical: boolean | undefined;
 	/** Every assistant usage equals what the fake provider scripted, through Prime's documented mapping, in every field. */
 	readonly providerUsageDecodedExactly: boolean | undefined;
 	readonly toolCallIdentityNative: boolean | undefined;
@@ -381,7 +397,16 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 		event.type === "message_end" && event.assistant?.usage !== undefined ? [event.assistant.usage] : [],
 	);
 
+	const provenance = evidence[0]?.provenance;
 	return {
+		auditedRevision:
+			provenance !== undefined &&
+			provenance.build === "clean-checkout" &&
+			provenance.version === AUDITED_PRIME.version &&
+			provenance.commit === AUDITED_PRIME.commit
+				? true
+				: undefined,
+		forkSharedEntriesIdentical: fork?.observations.forkSharedEntriesIdentical,
 		providerUsageDecodedExactly: providerUsageDecodedExactly(evidence),
 		toolCallIdentityNative,
 		toolErrorRecovered,
@@ -533,6 +558,7 @@ export function classifyPrimeConformanceV0(
 		support: "adapter-state",
 		semanticFit: "qualified",
 		requires: [
+			AUDITED_REVISION,
 			expect("toolCallIdentityNative", true),
 			expect("toolErrorRecovered", true),
 			expect("providerFailureStop", "error"),
@@ -587,6 +613,7 @@ export function classifyPrimeConformanceV0(
 		support: "adapter-state",
 		semanticFit: "qualified",
 		requires: [
+			AUDITED_REVISION,
 			expect("providerUsageDecodedExactly", true),
 			expect("statsDropAfterCompaction", true),
 			expect("statsDropAfterFork", true),
@@ -648,7 +675,7 @@ export function classifyPrimeConformanceV0(
 		semanticFit: "incompatible",
 		// The absence of a result lookup rests on Prime's RPC surface (source and docs); the probe must still see the
 		// abort-during-tool case that no Prime record can recover.
-		requires: [expect("abortToolStop", "toolUse"), expect("reopenEntryIdsStable", true)],
+		requires: [AUDITED_REVISION, expect("abortToolStop", "toolUse"), expect("reopenEntryIdsStable", true)],
 		evidence: [
 			PRIME_SOURCE.rpcCommands,
 			PRIME_SOURCE.rpcEvents,
@@ -676,8 +703,10 @@ export function classifyPrimeConformanceV0(
 		support: "adapter-state",
 		semanticFit: "qualified",
 		requires: [
+			AUDITED_REVISION,
 			expect("providerUsageDecodedExactly", true),
 			expect("reopenEntryIdsStable", true),
+			expect("forkSharedEntriesIdentical", true),
 			expect("compactionUsageDurable", true),
 			expect("childUsageRewritesEarlierRow", true),
 			expect("forkNewFile", true),

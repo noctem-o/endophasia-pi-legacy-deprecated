@@ -127,6 +127,12 @@ export function createPrimeEnvironmentV0(options: { providerBaseUrl: string; ret
 		PATH: process.env.PATH,
 		HOME: home,
 		TMPDIR: tmp,
+		// Windows resolves the home and temporary directories from these instead of HOME and TMPDIR.
+		USERPROFILE: home,
+		TEMP: tmp,
+		TMP: tmp,
+		APPDATA: join(home, "AppData", "Roaming"),
+		LOCALAPPDATA: join(home, "AppData", "Local"),
 		XDG_CONFIG_HOME: join(home, ".config"),
 		XDG_DATA_HOME: join(home, ".local", "share"),
 		XDG_STATE_HOME: join(home, ".local", "state"),

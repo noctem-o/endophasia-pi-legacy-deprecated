@@ -3,10 +3,11 @@
 		"source": "prime-agent",
 		"version": "0.9.6",
 		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
+		"artifactsHash": "376c327e06c7523ed5ea7eb16232d4f166d711fcf6a05474d6472b514107bc09",
 		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.3.0",
+		"probeVersion": "0.4.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "multi-turn-reopen"
@@ -480,7 +481,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0e912-c7e2-71a4-a141-5c67f250f74e",
+			"id": "01a0e9a6-7088-728f-a726-263a60214188",
 			"keys": [
 				"cwd",
 				"id",
@@ -492,7 +493,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "9da24a3a",
+			"id": "0c230d6a",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -505,8 +506,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "f4888d55",
-			"parentId": "9da24a3a",
+			"id": "e8a59ca3",
+			"parentId": "0c230d6a",
 			"keys": [
 				"id",
 				"parentId",
@@ -517,8 +518,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "f361549b",
-			"parentId": "f4888d55",
+			"id": "302693c0",
+			"parentId": "e8a59ca3",
 			"keys": [
 				"id",
 				"parentId",
@@ -529,8 +530,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "28ceb7c4",
-			"parentId": "f361549b",
+			"id": "9416442f",
+			"parentId": "302693c0",
 			"keys": [
 				"id",
 				"parentId",
@@ -541,8 +542,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "7302d9bf",
-			"parentId": "28ceb7c4",
+			"id": "3a4583e0",
+			"parentId": "9416442f",
 			"keys": [
 				"content",
 				"customType",
@@ -556,8 +557,8 @@
 		},
 		{
 			"type": "message",
-			"id": "e3c3827e",
-			"parentId": "7302d9bf",
+			"id": "344f7293",
+			"parentId": "3a4583e0",
 			"keys": [
 				"id",
 				"message",
@@ -569,8 +570,8 @@
 		},
 		{
 			"type": "message",
-			"id": "54dfad1a",
-			"parentId": "e3c3827e",
+			"id": "dc4ad47f",
+			"parentId": "344f7293",
 			"keys": [
 				"id",
 				"message",
@@ -598,8 +599,8 @@
 		},
 		{
 			"type": "message",
-			"id": "315fbc80",
-			"parentId": "54dfad1a",
+			"id": "7eba0e04",
+			"parentId": "dc4ad47f",
 			"keys": [
 				"id",
 				"message",
@@ -611,8 +612,8 @@
 		},
 		{
 			"type": "message",
-			"id": "954514f3",
-			"parentId": "315fbc80",
+			"id": "41cc6572",
+			"parentId": "7eba0e04",
 			"keys": [
 				"id",
 				"message",
@@ -640,8 +641,8 @@
 		},
 		{
 			"type": "message",
-			"id": "ed899952",
-			"parentId": "954514f3",
+			"id": "4f5beca4",
+			"parentId": "41cc6572",
 			"keys": [
 				"id",
 				"message",
@@ -653,8 +654,8 @@
 		},
 		{
 			"type": "message",
-			"id": "179021ca",
-			"parentId": "ed899952",
+			"id": "50b3ad90",
+			"parentId": "4f5beca4",
 			"keys": [
 				"id",
 				"message",

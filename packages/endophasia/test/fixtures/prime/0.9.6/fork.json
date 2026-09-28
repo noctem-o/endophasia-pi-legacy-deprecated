@@ -3,10 +3,11 @@
 		"source": "prime-agent",
 		"version": "0.9.6",
 		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
+		"artifactsHash": "376c327e06c7523ed5ea7eb16232d4f166d711fcf6a05474d6472b514107bc09",
 		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.3.0",
+		"probeVersion": "0.4.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "fork"
@@ -429,7 +430,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0e913-312a-7095-a917-ef578349b5b7",
+			"id": "01a0e9a6-d871-707c-b159-da25e0d827d7",
 			"keys": [
 				"cwd",
 				"id",
@@ -442,7 +443,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "ba818a36",
+			"id": "22edc344",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -455,8 +456,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "51319fe7",
-			"parentId": "ba818a36",
+			"id": "9c4981ab",
+			"parentId": "22edc344",
 			"keys": [
 				"id",
 				"parentId",
@@ -467,8 +468,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "fed3c687",
-			"parentId": "51319fe7",
+			"id": "6a7b8110",
+			"parentId": "9c4981ab",
 			"keys": [
 				"id",
 				"parentId",
@@ -479,8 +480,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "9fc13e63",
-			"parentId": "fed3c687",
+			"id": "a19c0c4e",
+			"parentId": "6a7b8110",
 			"keys": [
 				"id",
 				"parentId",
@@ -491,8 +492,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "246bec55",
-			"parentId": "9fc13e63",
+			"id": "436a32f5",
+			"parentId": "a19c0c4e",
 			"keys": [
 				"content",
 				"customType",
@@ -506,8 +507,8 @@
 		},
 		{
 			"type": "message",
-			"id": "13210aa0",
-			"parentId": "246bec55",
+			"id": "6defe535",
+			"parentId": "436a32f5",
 			"keys": [
 				"id",
 				"message",
@@ -519,8 +520,8 @@
 		},
 		{
 			"type": "message",
-			"id": "56ec704e",
-			"parentId": "13210aa0",
+			"id": "634f61a4",
+			"parentId": "6defe535",
 			"keys": [
 				"id",
 				"message",
@@ -548,8 +549,8 @@
 		},
 		{
 			"type": "message",
-			"id": "edc204e7",
-			"parentId": "56ec704e",
+			"id": "0d019412",
+			"parentId": "634f61a4",
 			"keys": [
 				"id",
 				"message",
@@ -561,8 +562,8 @@
 		},
 		{
 			"type": "message",
-			"id": "8c1d4c20",
-			"parentId": "edc204e7",
+			"id": "42685c74",
+			"parentId": "0d019412",
 			"keys": [
 				"id",
 				"message",
@@ -609,6 +610,7 @@
 		"forkCreatedNewFile": true,
 		"originalEntriesAfterFork": 10,
 		"forkSharedEntryIds": 7,
+		"forkSharedEntriesIdentical": true,
 		"providerRequests": 3
 	},
 	"protocolErrors": [],

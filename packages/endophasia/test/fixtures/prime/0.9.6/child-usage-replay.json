@@ -3,10 +3,11 @@
 		"source": "prime-agent",
 		"version": "0.9.6",
 		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
+		"artifactsHash": "376c327e06c7523ed5ea7eb16232d4f166d711fcf6a05474d6472b514107bc09",
 		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.3.0",
+		"probeVersion": "0.4.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "child-usage-replay"
@@ -171,7 +172,7 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "0eaaab21",
+			"id": "1ead7574",
 			"parentId": "a0000003",
 			"keys": [
 				"id",
@@ -183,8 +184,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "15e446ac",
-			"parentId": "0eaaab21",
+			"id": "ebfac702",
+			"parentId": "1ead7574",
 			"keys": [
 				"id",
 				"parentId",
@@ -195,8 +196,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "b6c96bfb",
-			"parentId": "15e446ac",
+			"id": "d0420b4d",
+			"parentId": "ebfac702",
 			"keys": [
 				"content",
 				"customType",

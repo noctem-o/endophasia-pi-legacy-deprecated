@@ -6,8 +6,9 @@
 // requests it expects, and every scenario's invariants must hold. Anything the probe cannot establish is recorded as a
 // failure, which makes the scenario invalid evidence; it never becomes a default, a skipped step or a plausible value.
 import { execFileSync, spawnSync } from "node:child_process";
-import { readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import {
 	commandEvidenceV0,
 	decodePrimeCompactionResultV0,
@@ -58,6 +59,23 @@ export function failureTextV0(error: unknown): string {
 	return error instanceof Error ? `unexpected ${error.name}` : "unexpected non-error exception";
 }
 
+/**
+ * The real path of a session file Prime named, only if it lies inside the scenario's isolated session directory: a
+ * path elsewhere (Prime ignoring --session-dir) could be the user's real session, which the probe must never read.
+ */
+export function confinedSessionFileV0(path: string, sessionDir: string): string {
+	let real: string;
+	try {
+		real = realpathSync(path);
+	} catch {
+		throw new PrimeProbeFailureV0("get_state named a session file that does not exist");
+	}
+	if (!real.startsWith(`${realpathSync(sessionDir)}${sep}`)) {
+		throw new PrimeProbeFailureV0("get_state named a session file outside the isolated session directory");
+	}
+	return real;
+}
+
 /** Prime exits 0 when its RPC input ends; any other exit (a crash, a kill after the close timeout, a signal) fails. */
 export function abnormalExitV0(exit: PrimeRpcExitV0): string | undefined {
 	return exit.code === 0 && exit.signal === null
@@ -90,8 +108,11 @@ class ProbeSession {
 	#abortOn: Trigger | undefined;
 	#closed: Promise<void> | undefined;
 
+	readonly #sessionDir: string;
+
 	constructor(binary: PrimeBinaryV0, environment: PrimeEnvironmentV0, run: ScenarioRecorder) {
 		this.#run = run;
+		this.#sessionDir = environment.sessionDir;
 		this.client = new PrimeRpcClientV0({
 			command: binary.command,
 			args: [...binary.leadingArgs, ...environment.baseArgs],
@@ -193,7 +214,7 @@ class ProbeSession {
 	async sessionFile(): Promise<string> {
 		const state = decodePrimeStateV0(await this.lookup("get_state"));
 		this.#run.stateKeys = state.keys;
-		return state.sessionFile;
+		return confinedSessionFileV0(state.sessionFile, this.#sessionDir);
 	}
 
 	/**
@@ -458,9 +479,13 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			const original = readSessionEntries(originalFile);
 			run.observations.originalEntriesAfterFork = original.length;
 			const originalIds = new Set(original.flatMap((entry) => (entry.type === "session" ? [] : [entry.id])));
-			run.observations.forkSharedEntryIds = run.sessionEntries.filter(
-				(entry) => entry.type !== "session" && originalIds.has(entry.id),
-			).length;
+			const shared = run.sessionEntries.filter((entry) => entry.type !== "session" && originalIds.has(entry.id));
+			run.observations.forkSharedEntryIds = shared.length;
+			// Treating shared ids as copies (and de-duplicating by id) is only safe if the entries are identical.
+			const originalById = new Map(original.map((entry) => [entry.id, JSON.stringify(entry)]));
+			run.observations.forkSharedEntriesIdentical = shared.every(
+				(entry) => originalById.get(entry.id) === JSON.stringify(entry),
+			);
 			await session.close();
 		},
 	},
@@ -545,6 +570,33 @@ export async function runPrimeProbeV0(options: PrimeProbeOptionsV0): Promise<Pri
 	return results;
 }
 
+/**
+ * SHA-256 over the git-ignored build output the source launcher loads: every file under packages/<name>/dist, by
+ * relative path and content, in a stable order. Undefined when there is none.
+ */
+function hashBuildOutput(checkout: string): string | undefined {
+	const hash = createHash("sha256");
+	let files = 0;
+	const walk = (directory: string): void => {
+		for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
+			a.name.localeCompare(b.name),
+		)) {
+			const path = join(directory, entry.name);
+			if (entry.isDirectory()) walk(path);
+			else if (entry.isFile()) {
+				hash.update(relative(checkout, path)).update("\0").update(readFileSync(path)).update("\0");
+				files++;
+			}
+		}
+	};
+	const packages = join(checkout, "packages");
+	for (const name of existsSync(packages) ? readdirSync(packages).sort() : []) {
+		const dist = join(packages, name, "dist");
+		if (existsSync(dist)) walk(dist);
+	}
+	return files === 0 ? undefined : hash.digest("hex");
+}
+
 function git(checkout: string, args: readonly string[]): string {
 	return execFileSync("git", ["-C", checkout, ...args], { encoding: "utf8", timeout: 30_000 }).trim();
 }
@@ -567,14 +619,18 @@ export function describePrimeV0(binary: PrimeBinaryV0): PrimeProvenanceV0 {
 		environment.dispose(binary);
 	}
 	let build: PrimeBuildProvenanceV0 = binary.checkout === undefined ? "binary" : "unverified-checkout";
+	let artifactsHash: string | undefined;
 	let commit: string | undefined;
 	if (binary.checkout !== undefined) {
 		try {
 			const head = git(binary.checkout, ["rev-parse", "HEAD"]);
-			// Modified tracked files mean the code that ran is not HEAD. Untracked build output (dist, node_modules) is
-			// expected in a built checkout and is not counted.
+			// Modified tracked files mean the source is not HEAD. The launcher also loads git-ignored build output
+			// (packages/*/dist), which a clean tracked tree says nothing about: it is hashed below, so a different build
+			// is runtime drift, and a checkout without that hash is not verified provenance. Whether that output was built
+			// from HEAD cannot be proved here.
 			const dirty = git(binary.checkout, ["status", "--porcelain", "--untracked-files=no"]).length > 0;
 			commit = head;
+			artifactsHash = hashBuildOutput(binary.checkout);
 			build = dirty ? "dirty-checkout" : "clean-checkout";
 		} catch {
 			// Neither the commit nor cleanliness is known: stays unverified-checkout, with no commit.
@@ -584,6 +640,7 @@ export function describePrimeV0(binary: PrimeBinaryV0): PrimeProvenanceV0 {
 		source: "prime-agent",
 		version,
 		...(commit === undefined ? {} : { commit }),
+		...(artifactsHash === undefined ? {} : { artifactsHash }),
 		build,
 		mode: "rpc",
 		generatedBy: PROBE_NAME,

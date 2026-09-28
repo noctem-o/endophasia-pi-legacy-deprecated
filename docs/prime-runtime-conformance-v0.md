@@ -11,7 +11,7 @@ The code under `packages/endophasia/research/prime-conformance/` is experimental
 | Endophasia base | `main` at `f82e0020740d6b78621244703ee0ddb659c0877a` |
 | Prime Agent | `PrimeIntellect-ai/prime-agent` `main` at `2d24ad4e6b2d1ee8e6919af6f108e980a14d550e`, version 0.9.6 |
 | Boundary | `prime-agent --mode rpc`, JSONL over stdio |
-| Probe | `prime-conformance-v0`, probe version 0.3.0 |
+| Probe | `prime-conformance-v0`, probe version 0.4.0 |
 | Platform of the committed evidence | linux-x64, Node v22.22.2 |
 
 Citations use two forms:
@@ -23,8 +23,9 @@ Citations use two forms:
 
 **Isolation.** Prime runs as a separate process. The monorepo has no Prime npm dependency, alias, override, vendored file or copied Prime type. The probe knows Prime's shapes only inside `research/prime-conformance`; nothing in `@endophasia/core` depends on them.
 
-- **Executable.** The probe uses `PRIME_AGENT_BIN`, or `PRIME_AGENT_ROOT/prime-agent.sh` for a built source checkout. It never downloads Prime.
-- **Environment.** Each scenario gets its own temporary directory: `HOME`, `TMPDIR` (which also holds Prime's daemon socket), XDG directories, the Prime agent directory, the session directory, the working directory and `models.json`. The child process receives only a minimal allowlisted environment, so no provider keys are inherited. `~/.prime` is never read or written. After each scenario the probe runs `prime-agent shutdown --force` and deletes the directory, unless `--retain` is passed.
+- **Executable.** The probe uses `PRIME_AGENT_BIN`, or `PRIME_AGENT_ROOT/prime-agent.sh` for a built source checkout. It never downloads Prime. A path-like `PRIME_AGENT_BIN` (POSIX or Windows absolute, or containing a separator) is resolved to an absolute path before the working directory changes.
+- **Session files.** The probe reads only session files that resolve, after following symlinks, inside the scenario's isolated session directory. A path Prime reports outside it fails the scenario.
+- **Environment.** Each scenario gets its own temporary directory: `HOME`, `TMPDIR` (which also holds Prime's daemon socket), XDG directories, the Prime agent directory, the session directory, the working directory and `models.json`. The child process receives only a minimal allowlisted environment, so no provider keys are inherited. The Windows home and temp variables (`USERPROFILE`, `TEMP`, `TMP`, `APPDATA`, `LOCALAPPDATA`) point into the same directory, so Prime cannot resolve a real profile on either platform. `~/.prime` is never read or written. After each scenario the probe runs `prime-agent shutdown --force` and deletes the directory, unless `--retain` is passed.
 - **Settings.** The isolated `settings.json` disables automatic compaction and Prime's auto-refine. Auto-refine is on by default and makes a review model call after every compaction (`prime:packages/coding-agent/src/core/settings-manager.ts:1030-1045`, `core/agent-session.ts:3398-3428`), so it is off to make the compaction experiment measure compaction alone.
 - **Model.** A loopback fake of OpenAI Chat Completions on `127.0.0.1` is registered through Prime's documented `models.json` custom-provider seam. Nothing leaves loopback and no API credits are spent. Prices are chosen so every cost is exact: input ×1, output ×2, cache read ×0.5 and cache write ×0.25 per token.
 - **Tool.** A probe extension tool, `probe_tool`, has three modes: ok, fail and hang. Prime's default `ipython` tool is disabled with `--tools probe_tool`.
@@ -46,7 +47,9 @@ Citations use two forms:
    - Session lines: malformed JSON, a missing type, a malformed `id`, or a `parentId` that is neither a non-empty string nor null fails.
    - Session files: a blank line, a missing final newline or an entry id repeated within one file fails.
    - An unknown entry type is kept by identity and field names, as evidence of a new Prime surface. The exception is an unknown entry carrying accounting fields: it fails, because dropping its usage would undercount.
-   - Framing: an RPC record with an empty event type is a protocol error.
+   - Framing: an RPC record with an empty event type, or a blank line, is a protocol error.
+   - Every `turn_end` must carry the same assistant message as the preceding assistant `message_end`. Evidence where they disagree contradicts itself.
+   - Evidence is re-checked after decoding: an event tag the decoder never produces (for example in an edited fixture) is invalid.
    - Unknown event types are kept by name. `message_update` deltas are dropped deliberately, since they carry only payload fragments.
 2. **Payload-minimal evidence.** Only identities, kinds, flags and numbers survive. Command errors become categories such as `queued-input-suspended`, and raw transcripts are never kept.
 3. **Scenario invariants** (`invariants.ts`). Completing without an exception is not enough: each scenario must show that its operation actually happened.
@@ -59,14 +62,16 @@ Citations use two forms:
    - every scenario: each Prime process exits 0 once its RPC input ends. A crash, a timeout kill or a signal fails the scenario.
 
    Invariants check that an operation occurred, not what Prime answered. A valid observation of unexpected Prime behavior is conformance evidence.
-4. **Provider expectations.** Each scenario declares its prompt markers, and its fake provider refuses anything else with HTTP 400, which fails the run: a request to any route other than `POST /v1/chat/completions`, an unreadable body, a request for any model other than the probe's, an unknown or foreign marker, or a reply beyond the script. Summarization requests are accepted only while `compact` runs. This rule is what exposed auto-refine: in probe 0.2.0 its request was quietly answered as a summary.
+4. **Provider expectations.** Each scenario declares its prompt markers, and its fake provider refuses anything else with HTTP 400, which fails the run: a request to any route other than `POST /v1/chat/completions`, an unreadable body, a request for any model other than the probe's, an unknown or foreign marker, a reply beyond the script, or a scripted step requested a second time (Prime re-sending a request is evidence to inspect, not a step to serve twice). Summarization requests are accepted only while `compact` runs. This rule is what exposed auto-refine: in probe 0.2.0 its request was quietly answered as a summary.
 5. **Exact predicates** (`classification.ts`). A positive fact requires every dimension both surfaces report to agree.
    - Tool identity checks every execution phase (start, update and end) against the assistant's tool calls.
    - Compaction retention is proved from the session file snapshotted immediately before and after `compact`, so a later prompt cannot make up for a loss.
+   - Fork identity: the entries the fork copies must be byte-for-byte identical to the originals. Otherwise the Usage finding is contradicted, since the de-duplication rule below would be wrong.
+   - Audited revision: the conclusions drawn from Prime source hold only for the audited revision (0.9.6 at `2d24ad4e`). Evidence from any other commit, version or a binary leaves every finding unverified until Prime is re-audited and `AUDITED_PRIME` is updated.
    - An undecidable fact is left undefined and reported as unverified, never guessed.
 6. **Publication gate** (`publication.ts`). This is the only path to the committed reference. It separates three cases:
    - invalid evidence: failures, protocol errors, structural problems, identity problems or privacy leaks;
-   - unpublishable evidence: provenance other than a clean checkout at a known commit, another probe version, or a partial refresh that would mix provenance with the fixtures it keeps;
+   - unpublishable evidence: provenance other than a clean checkout at a known commit with a build output hash, another probe version, or a partial refresh that would mix provenance with the fixtures it keeps or keep fixtures that no longer pass this gate themselves;
    - valid evidence of Prime behaving differently: this is conformance evidence and is kept.
 
 The fake provider plants these sentinels in every payload class: `PROMPT_SENTINEL`, `ASSISTANT_SENTINEL`, `REASONING_SENTINEL`, `TOOL_ARGS_SENTINEL`, `TOOL_RESULT_SENTINEL`, `ERROR_DETAIL_SENTINEL` and `SUMMARY_SENTINEL`. If any of them appears in the evidence, the candidate Mission Trace, the usage projection, the metrics projection or the report itself, the command writes no report and no fixture, and prints only the affected surfaces and match counts.
@@ -92,9 +97,9 @@ The fake provider plants these sentinels in every payload class: `PROMPT_SENTINE
 
 - Live: `PRIME_AGENT_BIN=/path/to/prime-agent npm run check:prime-conformance` or `PRIME_AGENT_ROOT=/path/to/prime-agent npm run check:prime-conformance`. It writes `.artifacts/prime-conformance/report.json`, which is ignored by git.
 - Refresh fixtures: add `--write-fixtures`. This passes through the publication gate, so it needs a fully valid run from a clean `PRIME_AGENT_ROOT` checkout at a known commit. A `PRIME_AGENT_BIN` run can inspect but not refresh. A full refresh replaces the whole set, including fixtures of scenarios that no longer exist. A `--scenario` refresh is refused if it would mix provenance with the fixtures it keeps.
-- Drift is reported on three independent axes: `runtime` (`same`, `different`, or `unverifiable` when the build cannot be matched to the reference commit, as with a binary or a dirty checkout), `probe` (a different probe version is stale evidence even when Prime is unchanged) and `environment` (platform and Node). `provenanceVerified` says whether this run's build is a clean checkout at a known commit.
+- Drift is reported on three independent axes: `runtime` (`same`, `different`, or `unverifiable` when the build cannot be matched to the reference commit, as with a binary or a dirty checkout), `probe` (a different probe version is stale evidence even when Prime is unchanged) and `environment` (platform and Node). `provenanceVerified` says whether this run's build is a clean checkout at a known commit with a build output hash. A different build output hash at the same commit is runtime drift `different`.
 - Arguments are parsed strictly. A `--scenario` without a name, an unknown scenario or an unknown flag fails before anything runs.
-- Provenance: the probe runs `git rev-parse HEAD` and `git status --porcelain --untracked-files=no` in the checkout. Modified tracked files mark the build `dirty-checkout`. Untracked build output is expected in a built checkout and is not counted.
+- Provenance: the probe runs `git rev-parse HEAD` and `git status --porcelain --untracked-files=no` in the checkout. Modified tracked files mark the build `dirty-checkout`. Untracked build output is expected in a built checkout and is not counted by `git status`; instead `artifactsHash` is a SHA-256 over the files in `packages/*/dist`, which `prime-agent.sh` loads. It detects rebuilt or edited output, not whether that output matches the source; that would need a reproducible build.
 - Missing binary: the command exits 1 with a clear message.
 - CI: the live probe is not part of CI. The offline tests in `packages/endophasia/test/prime-rpc-probe.test.ts` and `prime-conformance.test.ts` need no Prime.
 

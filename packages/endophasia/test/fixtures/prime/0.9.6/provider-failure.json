@@ -3,10 +3,11 @@
 		"source": "prime-agent",
 		"version": "0.9.6",
 		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
+		"artifactsHash": "376c327e06c7523ed5ea7eb16232d4f166d711fcf6a05474d6472b514107bc09",
 		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.3.0",
+		"probeVersion": "0.4.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "provider-failure"
@@ -166,7 +167,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0e911-e9fe-75da-a5d2-1c58cf20b332",
+			"id": "01a0e9a5-9af0-7705-a22e-f6b21cd80f1a",
 			"keys": [
 				"cwd",
 				"id",
@@ -178,7 +179,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "1e0187ce",
+			"id": "08e9e79a",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -191,8 +192,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "e09327a0",
-			"parentId": "1e0187ce",
+			"id": "d685d7c7",
+			"parentId": "08e9e79a",
 			"keys": [
 				"id",
 				"parentId",
@@ -203,8 +204,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "3a475014",
-			"parentId": "e09327a0",
+			"id": "0893e280",
+			"parentId": "d685d7c7",
 			"keys": [
 				"id",
 				"parentId",
@@ -215,8 +216,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "052ba8ee",
-			"parentId": "3a475014",
+			"id": "6a8dde95",
+			"parentId": "0893e280",
 			"keys": [
 				"id",
 				"parentId",
@@ -227,8 +228,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "0a8e3384",
-			"parentId": "052ba8ee",
+			"id": "a42e506c",
+			"parentId": "6a8dde95",
 			"keys": [
 				"content",
 				"customType",
@@ -242,8 +243,8 @@
 		},
 		{
 			"type": "message",
-			"id": "bbca3092",
-			"parentId": "0a8e3384",
+			"id": "2b0d515c",
+			"parentId": "a42e506c",
 			"keys": [
 				"id",
 				"message",
@@ -255,8 +256,8 @@
 		},
 		{
 			"type": "message",
-			"id": "c2ce2496",
-			"parentId": "bbca3092",
+			"id": "0026de79",
+			"parentId": "2b0d515c",
 			"keys": [
 				"id",
 				"message",

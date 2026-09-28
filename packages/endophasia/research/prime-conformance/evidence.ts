@@ -5,7 +5,7 @@
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.3.0";
+export const PROBE_VERSION = "0.4.0";
 
 /**
  * How the Prime that ran is known:
@@ -21,6 +21,12 @@ export interface PrimeProvenanceV0 {
 	readonly version: string;
 	/** The Prime source commit (clean-checkout and dirty-checkout only). */
 	readonly commit?: string;
+	/**
+	 * For a checkout: SHA-256 over the git-ignored build output the source launcher loads (packages/*\/dist). A clean
+	 * tracked tree does not prove what ran, since the launcher imports those builds; the probe cannot prove they were
+	 * built from `commit`, but any different build output changes this hash and is reported as runtime drift.
+	 */
+	readonly artifactsHash?: string;
 	readonly build: PrimeBuildProvenanceV0;
 	readonly mode: "rpc";
 	readonly generatedBy: typeof PROBE_NAME;
@@ -102,6 +108,8 @@ export interface PrimeObservationsV0 {
 	readonly originalEntriesAfterFork?: number;
 	/** Entries of the fork's new file whose id also appears in the original file (copied path entries). */
 	readonly forkSharedEntryIds?: number;
+	/** Every entry the fork file shares by id with the original is identical to it (a copy, not a reused id). */
+	readonly forkSharedEntriesIdentical?: boolean;
 	readonly providerRequests?: number;
 }
 
@@ -178,6 +186,21 @@ function assistantProblems(label: string, assistant: unknown): string[] {
 
 function booleanProblem(label: string, value: unknown, field: string): string[] {
 	return typeof value === "boolean" ? [] : [`${label}: ${field} is not a boolean`];
+}
+
+/**
+ * `turn_end.message` and the preceding assistant `message_end` describe the same completion; evidence where they
+ * disagree (or a turn_end without its message_end) contradicts itself and cannot support a claim.
+ */
+function assistantAgreementProblems(events: readonly PrimeEvidenceEventV0[]): string[] {
+	let lastAssistant: string | undefined;
+	return events.flatMap((event, index) => {
+		if (event.type === "message_end" && event.role === "assistant") lastAssistant = JSON.stringify(event.assistant);
+		if (event.type !== "turn_end") return [];
+		const agrees = lastAssistant !== undefined && lastAssistant === JSON.stringify(event.assistant);
+		lastAssistant = undefined;
+		return agrees ? [] : [`event ${index} (turn_end): its assistant does not match the preceding message_end`];
+	});
 }
 
 /** Stats fields that do not hold a finite number. `contextUsageTokens` may legitimately be null or absent. */
@@ -300,8 +323,27 @@ export function evidenceProblemsV0(run: PrimeScenarioEvidenceV0): string[] {
 					...(event.messageRoles.some(missingText) ? [`${label}: message without role`] : []),
 					...(event.assistantStopReasons.some(missingText) ? [`${label}: assistant without stop reason`] : []),
 				];
-			default:
+			case "compaction_start":
+				return missingText(event.reason) ? [`${label}: compaction without reason`] : [];
+			case "auto_retry_start":
+				return Number.isFinite(event.attempt) && Number.isFinite(event.maxAttempts)
+					? []
+					: [`${label}: retry attempt counts are not finite numbers`];
+			case "auto_retry_end":
+				return [
+					...booleanProblem(label, event.success, "success"),
+					...(Number.isFinite(event.attempt) ? [] : [`${label}: retry attempt is not a finite number`]),
+				];
+			case "unknown":
+				return missingText(event.primeType) ? [`${label}: unknown event without its Prime type`] : [];
+			case "agent_start":
+			case "turn_start":
+			case "session_action_update":
+			case "extension_error":
 				return [];
+			default:
+				// Only the variants decode.ts produces are evidence; any other tag (e.g. in an edited fixture) is not.
+				return [`${label}: not an event kind the decoder produces`];
 		}
 	});
 	const stats = run.stats.flatMap((item) =>
@@ -309,6 +351,7 @@ export function evidenceProblemsV0(run: PrimeScenarioEvidenceV0): string[] {
 	);
 	return [
 		...events,
+		...assistantAgreementProblems(run.events),
 		...commandProblems(run.commands),
 		...entryProblems("final", run.sessionEntries),
 		...run.entrySnapshots.flatMap((snapshot) => entryProblems(`snapshot ${snapshot.label}`, snapshot.entries)),

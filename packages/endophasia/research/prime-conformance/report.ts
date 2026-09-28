@@ -80,7 +80,11 @@ export interface PrimeConformanceReportV0 {
 
 export function isVerifiedProvenanceV0(provenance: PrimeProvenanceV0): boolean {
 	return (
-		provenance.build === "clean-checkout" && typeof provenance.commit === "string" && provenance.commit.length > 0
+		provenance.build === "clean-checkout" &&
+		typeof provenance.commit === "string" &&
+		provenance.commit.length > 0 &&
+		typeof provenance.artifactsHash === "string" &&
+		provenance.artifactsHash.length > 0
 	);
 }
 
@@ -102,9 +106,12 @@ export function checkPrimeDriftV0(evidence: PrimeProvenanceV0, reference: PrimeP
 	}
 	const runtime =
 		reference.version !== evidence.version ||
-		(reference.commit !== undefined && evidence.commit !== undefined && reference.commit !== evidence.commit)
+		(reference.commit !== undefined && evidence.commit !== undefined && reference.commit !== evidence.commit) ||
+		(reference.artifactsHash !== undefined &&
+			evidence.artifactsHash !== undefined &&
+			reference.artifactsHash !== evidence.artifactsHash)
 			? "different"
-			: verified && evidence.commit === reference.commit
+			: verified && evidence.commit === reference.commit && evidence.artifactsHash === reference.artifactsHash
 				? "same"
 				: "unverifiable";
 	return {
@@ -139,7 +146,8 @@ function assertHomogeneous(evidence: readonly PrimeScenarioEvidenceV0[]): PrimeP
 		if (
 			other.version !== provenance.version ||
 			other.commit !== provenance.commit ||
-			other.build !== provenance.build
+			other.build !== provenance.build ||
+			other.artifactsHash !== provenance.artifactsHash
 		) {
 			throw new Error(`Evidence mixes Prime builds (${provenance.version} and ${other.version})`);
 		}
