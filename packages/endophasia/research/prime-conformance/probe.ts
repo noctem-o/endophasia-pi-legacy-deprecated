@@ -633,7 +633,11 @@ export function describePrimeV0(binary: PrimeBinaryV0): PrimeProvenanceV0 {
 			encoding: "utf8",
 			timeout: 60_000,
 		});
-		if (result.status === 0) version = /\d+\.\d+\.\d+\S*/.exec(`${result.stdout} ${result.stderr}`)?.[0] ?? "unknown";
+		// Semver only (with an optional pre-release or build suffix): the version names a fixture directory, so it must
+		// never carry a path separator.
+		if (result.status === 0)
+			version =
+				/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*(?![^\s])/.exec(`${result.stdout} ${result.stderr}`)?.[0] ?? "unknown";
 	} finally {
 		environment.dispose(binary);
 	}

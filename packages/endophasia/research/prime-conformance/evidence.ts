@@ -5,7 +5,7 @@
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.8.0";
+export const PROBE_VERSION = "0.9.0";
 
 /**
  * How the Prime that ran is known:

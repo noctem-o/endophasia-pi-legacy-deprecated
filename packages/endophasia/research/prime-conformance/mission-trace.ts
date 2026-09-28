@@ -177,6 +177,12 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 				run = undefined;
 				continue;
 			}
+			case "tool_execution_update": {
+				// Not mapped to a trace event, but still part of the tool lifecycle: only for a call active in this turn.
+				if (run?.turnId === undefined || !run.tools.has(item.toolCallId))
+					misplace(`tool_execution_update outside its active tool call at ${index}`);
+				continue;
+			}
 			case "unknown":
 				unmapped.push(`unknown Prime event ${item.primeType}`);
 				continue;

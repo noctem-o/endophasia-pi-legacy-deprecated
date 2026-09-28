@@ -378,6 +378,23 @@ describe("classification", () => {
 		expect(report.findings.find((finding) => finding.contract === "UsageLedgerRowV0")!.basis).toBe("contradicted");
 	});
 
+	it("checks tool identity on a partial run without tool-run", () => {
+		const run = fixture("tool-error");
+		const events = run.events.map((event) => {
+			if (event.type === "tool_execution_start" || event.type === "tool_execution_end")
+				return { ...event, toolCallId: "call_other" };
+			if (event.type === "turn_end")
+				return {
+					...event,
+					toolResults: event.toolResults.map((result) => ({ ...result, toolCallId: "call_other" })),
+				};
+			return event;
+		});
+		expect(derivePrimeFactsV0([{ ...run, events }]).toolCallIdentityNative).toBe(false);
+		expect(derivePrimeFactsV0([fixture("tool-error")]).toolCallIdentityNative).toBe(true);
+		expect(derivePrimeFactsV0([fixture("simple")]).toolCallIdentityNative).toBeUndefined();
+	});
+
 	it("checks tool identity on the error path too, not only in tool-run", () => {
 		const run = fixture("tool-error");
 		// Execution events and turn results agree with each other, but not with the assistant's tool call.
@@ -777,6 +794,22 @@ describe("publication gate", () => {
 			"invalid",
 		],
 		[
+			"a tool update after its turn ended",
+			() => {
+				const run = fixture("tool-run");
+				const end = run.events.find((event) => event.type === "tool_execution_end")!;
+				const turnEnd = run.events.findIndex((event) => event.type === "turn_end");
+				const events = [...run.events];
+				events.splice(turnEnd + 1, 0, {
+					type: "tool_execution_update",
+					toolCallId: end.type === "tool_execution_end" ? end.toolCallId : "",
+					toolName: "probe_tool",
+				});
+				return withScenario({ ...run, events });
+			},
+			"invalid",
+		],
+		[
 			"a run that ends inside an active turn",
 			() => {
 				const run = fixture("simple");
@@ -1099,6 +1132,18 @@ describe("command ordering", () => {
 		expect(describe).toHaveBeenCalledTimes(2);
 		expect(run.fixtureState()).toEqual(before);
 		expect(run.stderr.join("")).toContain("the Prime build changed while the probe ran");
+	});
+
+	it("refuses a reported version that is not a safe fixture directory name", async () => {
+		const run = harness(
+			fixtures.map((item) => structuredClone(item)),
+			{ version: "1.2.3/../../../outside" },
+		);
+		const before = run.fixtureState();
+		expect(await runPrimeConformanceCommandV0(["--write-fixtures"], run.deps)).toBe(1);
+		expect(run.probe).not.toHaveBeenCalled();
+		expect(run.fixtureState()).toEqual(before);
+		expect(run.stderr.join("")).toContain("not a safe fixture directory name");
 	});
 
 	it("refuses fixture writes from an invalid run", async () => {

@@ -385,7 +385,6 @@ const DOCUMENTED_EVENT_TYPES = new Set([
 
 export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[]): PrimeFactsV0 {
 	const runs = byScenario(evidence);
-	const toolRun = runs.get("tool-run");
 	const toolError = runs.get("tool-error");
 	const compaction = runs.get("compaction");
 	const fork = runs.get("fork");
@@ -393,37 +392,35 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 	const child = runs.get("child-usage-replay");
 	const reasoning = runs.get("reasoning-usage");
 
-	const toolCallIdentityNative =
-		toolRun === undefined
-			? undefined
-			: (() => {
-					// Every scenario that executes tools (tool-run, tool-error, abort-tool) is held to the same rule, so an
-					// error or abort path cannot carry identities the success path does not.
-					const identitiesNative = (run: PrimeScenarioEvidenceV0) => {
-						const called = run.events.flatMap((event) =>
-							event.type === "message_end" ? (event.assistant?.toolCalls ?? []) : [],
-						);
-						// Every execution phase (start, update, end) must name a tool call the assistant made.
-						const executed = run.events.flatMap((event) =>
-							event.type === "tool_execution_start" ||
-							event.type === "tool_execution_update" ||
-							event.type === "tool_execution_end"
-								? [event]
-								: [],
-						);
-						// The (id, name) pair must match; a missing id ("") never counts, even when both sides lack one.
-						return executed.every(
-							(execution) =>
-								execution.toolCallId !== "" &&
-								!execution.toolCallId.startsWith("adapter:") &&
-								called.some((call) => call.id === execution.toolCallId && call.name === execution.toolName),
-						);
-					};
-					return (
-						toolRun.events.some((event) => event.type === "tool_execution_end") &&
-						evidence.every(identitiesNative)
+	// Decided by any scenario that executed a tool, so a partial run (e.g. only tool-error) is still held to the rule.
+	const executesTools = evidence.some((run) => run.events.some((event) => event.type === "tool_execution_end"));
+	const toolCallIdentityNative = !executesTools
+		? undefined
+		: (() => {
+				// Every scenario that executes tools (tool-run, tool-error, abort-tool) is held to the same rule, so an
+				// error or abort path cannot carry identities the success path does not.
+				const identitiesNative = (run: PrimeScenarioEvidenceV0) => {
+					const called = run.events.flatMap((event) =>
+						event.type === "message_end" ? (event.assistant?.toolCalls ?? []) : [],
 					);
-				})();
+					// Every execution phase (start, update, end) must name a tool call the assistant made.
+					const executed = run.events.flatMap((event) =>
+						event.type === "tool_execution_start" ||
+						event.type === "tool_execution_update" ||
+						event.type === "tool_execution_end"
+							? [event]
+							: [],
+					);
+					// The (id, name) pair must match; a missing id ("") never counts, even when both sides lack one.
+					return executed.every(
+						(execution) =>
+							execution.toolCallId !== "" &&
+							!execution.toolCallId.startsWith("adapter:") &&
+							called.some((call) => call.id === execution.toolCallId && call.name === execution.toolName),
+					);
+				};
+				return evidence.every(identitiesNative);
+			})();
 
 	const toolErrorRecovered =
 		toolError === undefined

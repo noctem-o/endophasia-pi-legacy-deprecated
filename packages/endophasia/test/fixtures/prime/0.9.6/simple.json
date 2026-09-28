@@ -7,7 +7,7 @@
 		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.8.0",
+		"probeVersion": "0.9.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "simple"
@@ -162,7 +162,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0ea4e-4011-7006-8e21-ae087131bef4",
+			"id": "01a0ea60-9ab6-766c-a90f-3bdbdf8799cd",
 			"keys": [
 				"cwd",
 				"id",
@@ -174,7 +174,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "9614bcc4",
+			"id": "9ca7eea4",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -187,8 +187,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "39bede75",
-			"parentId": "9614bcc4",
+			"id": "ae40e721",
+			"parentId": "9ca7eea4",
 			"keys": [
 				"id",
 				"parentId",
@@ -199,8 +199,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "32a497b4",
-			"parentId": "39bede75",
+			"id": "b7ff93f2",
+			"parentId": "ae40e721",
 			"keys": [
 				"id",
 				"parentId",
@@ -211,8 +211,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "be026a90",
-			"parentId": "32a497b4",
+			"id": "5b4e05dc",
+			"parentId": "b7ff93f2",
 			"keys": [
 				"id",
 				"parentId",
@@ -223,8 +223,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "68baefff",
-			"parentId": "be026a90",
+			"id": "425de139",
+			"parentId": "5b4e05dc",
 			"keys": [
 				"content",
 				"customType",
@@ -238,8 +238,8 @@
 		},
 		{
 			"type": "message",
-			"id": "5947474e",
-			"parentId": "68baefff",
+			"id": "1debc0a6",
+			"parentId": "425de139",
 			"keys": [
 				"id",
 				"message",
@@ -251,8 +251,8 @@
 		},
 		{
 			"type": "message",
-			"id": "ac318595",
-			"parentId": "5947474e",
+			"id": "31cfffc5",
+			"parentId": "1debc0a6",
 			"keys": [
 				"id",
 				"message",

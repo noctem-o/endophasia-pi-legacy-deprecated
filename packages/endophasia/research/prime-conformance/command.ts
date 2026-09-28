@@ -5,7 +5,7 @@
 //   -> privacy violation: persist nothing, print only surfaces and counts, fail
 //   -> write the report -> publication gate -> fixtures only when publishable
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { PrimeBinaryV0 } from "./environment.ts";
 import type { PrimeProvenanceV0, PrimeScenarioEvidenceV0 } from "./evidence.ts";
 import type { PrimeProbeOptionsV0 } from "./probe.ts";
@@ -86,6 +86,10 @@ export async function runPrimeConformanceCommandV0(
 		return fail(`Prime Agent not found at ${binary.command}`);
 	const provenance = deps.describe(binary);
 	if (provenance.version === "unknown") return fail(`could not read a version from ${binary.description} --version`);
+	// The version names the fixture directory: it must be one safe path component that stays under fixtureRoot.
+	const fixtureDir = resolve(deps.fixtureRoot, provenance.version);
+	if (!/^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(provenance.version) || dirname(fixtureDir) !== resolve(deps.fixtureRoot))
+		return fail("the reported Prime version is not a safe fixture directory name");
 	deps.stdout(
 		`Prime Agent ${provenance.version}${provenance.commit ? ` @ ${provenance.commit}` : ""} (${provenance.build})\n`,
 	);
@@ -137,7 +141,6 @@ export async function runPrimeConformanceCommandV0(
 	writeFileSync(reportPath, `${JSON.stringify(report, null, "\t")}\n`);
 
 	const requestedScenarios = only.length > 0 ? only : deps.scenarios;
-	const fixtureDir = join(deps.fixtureRoot, provenance.version);
 	let retainedFixtures: PrimeScenarioEvidenceV0[] = [];
 	if (writeFixtures && only.length > 0 && existsSync(fixtureDir)) {
 		try {

@@ -11,7 +11,7 @@ The code under `packages/endophasia/research/prime-conformance/` is experimental
 | Endophasia base | `main` at `f82e0020740d6b78621244703ee0ddb659c0877a` |
 | Prime Agent | `PrimeIntellect-ai/prime-agent` `main` at `2d24ad4e6b2d1ee8e6919af6f108e980a14d550e`, version 0.9.6 |
 | Boundary | `prime-agent --mode rpc`, JSONL over stdio |
-| Probe | `prime-conformance-v0`, probe version 0.8.0 |
+| Probe | `prime-conformance-v0`, probe version 0.9.0 |
 | Platform of the committed evidence | linux-x64, Node v22.22.2 |
 
 Citations use two forms:
@@ -60,14 +60,14 @@ Citations use two forms:
    - refusals: only the two expected refusals, and only with the queued-input category.
    - every scenario: every assistant message comes from the probe's provider and model.
    - every scenario: each Prime process exits 0 once its RPC input ends, and its stdout closes. A crash, a timeout kill, a signal, or a stdout a descendant still holds open 2 s after exit fails the scenario, since records could still arrive.
-   - every scenario: a known event outside its lifecycle is invalid: a `tool_execution_end` after its `turn_end` or without its `tool_execution_start`, a repeated start for an active tool call, a `turn_end` with a tool call still active (tool calls belong to their turn), a `turn_start` inside an active turn, or an `agent_end` inside an active turn. Unknown event types remain forward-compatible evidence.
+   - every scenario: a known event outside its lifecycle is invalid: a `tool_execution_end` after its `turn_end` or without its `tool_execution_start`, a repeated start for an active tool call, a `tool_execution_update` for a call not active in the current turn, a `turn_end` with a tool call still active (tool calls belong to their turn), a `turn_start` inside an active turn, or an `agent_end` inside an active turn. Unknown event types remain forward-compatible evidence.
    - fork: the fork targets the latest user message found in the session file, not a position in Prime's list; the original file is snapshotted before and after and must be unchanged; the fork copies exactly the entries before the target.
 
    Invariants check that an operation occurred, not what Prime answered. A valid observation of unexpected Prime behavior is conformance evidence.
 4. **Provider expectations.** Each scenario declares its prompt markers, and its fake provider refuses anything else with HTTP 400, which fails the run: a request to any route other than `POST /v1/chat/completions`, an unreadable body, a request for any model other than the probe's, an unknown or foreign marker, a reply beyond the script, a step after a tool call whose tool result message (matching `tool_call_id`) is missing, or a scripted step (or an identical summary request within one compaction) requested a second time (Prime re-sending a request is evidence to inspect, not a step to serve twice). Summarization requests are accepted only while `compact` runs, and at most two distinct ones per compaction: Prime makes a history call, plus a turn-prefix call when the cut splits a turn (`prime:packages/coding-agent/src/core/compaction/compaction.ts:829-866`); the probe's compaction does split a turn. This rule is what exposed auto-refine: in probe 0.2.0 its request was quietly answered as a summary.
 5. **Exact predicates** (`classification.ts`). A positive fact requires every dimension both surfaces report to agree.
    - Exact usage: every assistant usage, both as emitted on `message_end` and as persisted in the session file, must equal the script through Prime's documented mapping. Each compaction entry must carry the sum of the summary requests the fake served (Prime sums its history and turn-prefix calls). The crafted child-usage file must still hold exactly its seeded parent, child and aggregate usage after Prime reopens it. A usage field Prime adds beyond the known ones makes usage not exact, since the projections would drop it.
-   - Tool identity checks every execution phase (start, update and end) against the assistant's tool calls, in every scenario that runs a tool (tool-run, tool-error, abort-tool).
+   - Tool identity checks every execution phase (start, update and end) against the assistant's tool calls, in every scenario that runs a tool (tool-run, tool-error, abort-tool). Any of them decides the fact, so a partial run without tool-run is still checked.
    - Compaction retention is proved from the session file snapshotted immediately before and after `compact`, so a later prompt cannot make up for a loss.
    - Fork identity: the entries the fork copies must be byte-for-byte identical to the originals. Otherwise the Usage finding is contradicted, since the de-duplication rule below would be wrong.
    - Audited revision: the conclusions drawn from Prime source hold only for the audited revision (0.9.6 at `2d24ad4e`). Evidence from any other commit, version or a binary leaves every finding unverified until Prime is re-audited and `AUDITED_PRIME` is updated.
@@ -104,6 +104,7 @@ The fake provider plants these sentinels in every payload class: `PROMPT_SENTINE
 - Arguments are parsed strictly. A `--scenario` without a name, an unknown scenario or an unknown flag fails before anything runs.
 - Provenance: the probe runs `git rev-parse HEAD` and `git status --porcelain --untracked-files=no` in the checkout. Modified tracked files mark the build `dirty-checkout`. Untracked build output is expected in a built checkout and is not counted by `git status`; instead `artifactsHash` is a SHA-256 over the files in `packages/*/dist`, which `prime-agent.sh` loads. A symlink there leaves the hash undefined (unverified provenance), since the code it points to is not hashed. It detects rebuilt or edited output, not whether that output matches the source; that would need a reproducible build. Provenance is described again after the scenarios; a change in commit, build state or hash during the run invalidates every scenario.
 - Missing binary: the command exits 1 with a clear message.
+- Version: only a semver string is read from `--version`, and it must be one safe path component under the fixture root, since it names the fixture directory.
 - CI: the live probe is not part of CI. The offline tests in `packages/endophasia/test/prime-rpc-probe.test.ts` and `prime-conformance.test.ts` need no Prime.
 
 ## Summary matrix
