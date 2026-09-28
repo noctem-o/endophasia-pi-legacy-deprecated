@@ -1,6 +1,9 @@
 // Research-only (Prime Runtime Conformance v0). Derives conformance facts from sanitized probe evidence and classifies
 // each Endophasia v0 contract on two axes. Nothing here is an Endophasia contract or runtime interface.
+
+import { PROBE_MODEL_COST } from "./environment.ts";
 import type { PrimeScenarioEvidenceV0, PrimeSessionEntryEvidenceV0, PrimeStatsEvidenceV0 } from "./evidence.ts";
+import { EXPECTED_ASSISTANT_USAGE, expectedPrimeUsageV0 } from "./fake-provider.ts";
 import { type MissionTraceMappingV0, mapPrimeMissionTraceV0 } from "./mission-trace.ts";
 import { rebuildPrimeRuntimeMetricsV0 } from "./projection.ts";
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
@@ -10,10 +13,27 @@ export type PrimeSupportV0 = "native" | "adapter-state" | "unavailable";
 /** Whether those facts mean what the contract says they mean. */
 export type PrimeSemanticFitV0 = "exact" | "qualified" | "incompatible";
 
+/**
+ * How the classification stands on this run's evidence:
+ * - established: every fact it rests on was observed with the value the classification assumes
+ * - unverified: some fact was not observed (its scenario did not run); the classification is not claimed
+ * - contradicted: some fact was observed with another value; Prime behaves differently from what the classification
+ *   describes, so it must be re-analysed and is not claimed
+ */
+export type PrimeFindingBasisV0 = "established" | "unverified" | "contradicted";
+
 export interface PrimeConformanceFindingV0 {
 	readonly contract: string;
-	readonly support: PrimeSupportV0;
-	readonly semanticFit: PrimeSemanticFitV0;
+	/** The established classification, or "undetermined" when it is unverified or contradicted. */
+	readonly support: PrimeSupportV0 | "undetermined";
+	readonly semanticFit: PrimeSemanticFitV0 | "undetermined";
+	readonly basis: PrimeFindingBasisV0;
+	/** The classification this analysis describes, as last established from verified evidence. */
+	readonly baseline: { readonly support: PrimeSupportV0; readonly semanticFit: PrimeSemanticFitV0 };
+	/** Required facts that were not observed. */
+	readonly missing: readonly string[];
+	/** Required facts observed with a value the classification does not assume. */
+	readonly contradictions: readonly string[];
 	/** Probe scenarios (`probe:<scenario>`) and pinned Prime source or docs (`prime:<path>:<line>`) behind the finding. */
 	readonly evidence: readonly string[];
 	/** State the adapter itself would have to own to produce the contract. */
@@ -22,6 +42,47 @@ export interface PrimeConformanceFindingV0 {
 	readonly qualifications: readonly string[];
 	/** Facts the contract needs that Prime does not provide. */
 	readonly unavailable: readonly string[];
+}
+
+/** One fact a classification rests on, and the value it assumes. */
+interface Requirement {
+	readonly fact: string;
+	/** true: holds; false: contradicted; undefined: not observed. */
+	holds(facts: PrimeFactsV0): boolean | undefined;
+}
+
+function expect<K extends keyof PrimeFactsV0>(key: K, expected: PrimeFactsV0[K]): Requirement {
+	return {
+		fact: `${key} = ${String(expected)}`,
+		holds: (facts) => (facts[key] === undefined ? undefined : facts[key] === expected),
+	};
+}
+
+type FindingAnalysis = Omit<
+	PrimeConformanceFindingV0,
+	"support" | "semanticFit" | "basis" | "baseline" | "missing" | "contradictions"
+> & {
+	readonly support: PrimeSupportV0;
+	readonly semanticFit: PrimeSemanticFitV0;
+	readonly requires: readonly Requirement[];
+};
+
+/** Claim an analysis's classification only when every fact it rests on was observed as assumed. */
+function settle(analysis: FindingAnalysis, facts: PrimeFactsV0): PrimeConformanceFindingV0 {
+	const { requires, support, semanticFit, ...rest } = analysis;
+	const missing = requires.filter((item) => item.holds(facts) === undefined).map((item) => item.fact);
+	const contradictions = requires.filter((item) => item.holds(facts) === false).map((item) => item.fact);
+	const basis: PrimeFindingBasisV0 =
+		contradictions.length > 0 ? "contradicted" : missing.length > 0 ? "unverified" : "established";
+	return {
+		...rest,
+		support: basis === "established" ? support : "undetermined",
+		semanticFit: basis === "established" ? semanticFit : "undetermined",
+		basis,
+		baseline: { support, semanticFit },
+		missing,
+		contradictions,
+	};
 }
 
 /** Prime source and docs the classification relies on, at the pinned commit. */
@@ -54,6 +115,8 @@ export const PRIME_SOURCE = {
 
 /** A fact is `undefined` when the scenario that establishes it was not run. */
 export interface PrimeFactsV0 {
+	/** Every assistant usage equals what the fake provider scripted, through Prime's documented mapping, in every field. */
+	readonly providerUsageDecodedExactly: boolean | undefined;
 	readonly toolCallIdentityNative: boolean | undefined;
 	readonly toolErrorRecovered: boolean | undefined;
 	readonly providerFailureStop: string | undefined;
@@ -152,6 +215,33 @@ function stableStatsEqual(a: PrimeStatsEvidenceV0, b: PrimeStatsEvidenceV0): boo
 		a.cost === b.cost &&
 		a.keys.join(",") === b.keys.join(",")
 	);
+}
+
+/**
+ * Compare every assistant message's usage with the fake provider's script, through Prime's documented mapping: a
+ * consistent misparse would otherwise pass, since stats and session entries are both copies of Prime's own numbers.
+ * Undefined when no scenario with a known script ran.
+ */
+function providerUsageDecodedExactly(evidence: readonly PrimeScenarioEvidenceV0[]): boolean | undefined {
+	const checked = evidence.filter((run) => EXPECTED_ASSISTANT_USAGE[run.provenance.scenario] !== undefined);
+	if (checked.length === 0) return undefined;
+	const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 };
+	const noCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+	return checked.every((run) => {
+		const expected = EXPECTED_ASSISTANT_USAGE[run.provenance.scenario]!.map((name) =>
+			name === null
+				? { ...zero, cost: noCost, extraKeys: [] }
+				: { ...expectedPrimeUsageV0(name, PROBE_MODEL_COST), extraKeys: [] },
+		);
+		const observed = run.events.flatMap((event) =>
+			event.type === "message_end" && event.assistant !== undefined
+				? [{ ...event.assistant.usage, extraKeys: [] }]
+				: [],
+		);
+		return (
+			observed.length === expected.length && observed.every((usage, index) => usageEqual(usage, expected[index]!))
+		);
+	});
 }
 
 function usageEqual(a: PrimeUsageEvidenceV0, b: PrimeUsageEvidenceV0): boolean {
@@ -292,6 +382,7 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 	);
 
 	return {
+		providerUsageDecodedExactly: providerUsageDecodedExactly(evidence),
 		toolCallIdentityNative,
 		toolErrorRecovered,
 		providerFailureStop: firstRunStop(runs.get("provider-failure")),
@@ -437,10 +528,24 @@ export function classifyPrimeConformanceV0(
 		checkAdapterIdentitiesV0(mapping).map((problem) => `${scenario}: ${problem}`),
 	);
 
-	const missionTrace: PrimeConformanceFindingV0 = {
+	const missionTrace: FindingAnalysis = {
 		contract: "MissionTraceEventV0",
 		support: "adapter-state",
 		semanticFit: "qualified",
+		requires: [
+			expect("toolCallIdentityNative", true),
+			expect("toolErrorRecovered", true),
+			expect("providerFailureStop", "error"),
+			expect("abortStreamStop", "aborted"),
+			expect("abortToolStop", "toolUse"),
+			expect("lengthStop", "length"),
+			expect("plainPromptAfterAbortAdmitted", false),
+			expect("plainPromptAfterCompactionAdmitted", false),
+			{
+				fact: "adapter identities unique, correlated and gap-free",
+				holds: () => (evidence.length === 0 ? undefined : identityProblems.length === 0),
+			},
+		],
 		evidence: [
 			`probe:tool-run: tool_execution_* (toolCallId, toolName) pairs are Prime's own and match the assistant tool calls: ${show(facts.toolCallIdentityNative)}`,
 			`probe:tool-error: tool_execution_end isError=true and the run recovers to stop: ${show(facts.toolErrorRecovered)}`,
@@ -477,11 +582,25 @@ export function classifyPrimeConformanceV0(
 		],
 	};
 
-	const runtimeMetrics: PrimeConformanceFindingV0 = {
+	const runtimeMetrics: FindingAnalysis = {
 		contract: "RuntimeMetricsV0",
 		support: "adapter-state",
 		semanticFit: "qualified",
+		requires: [
+			expect("providerUsageDecodedExactly", true),
+			expect("statsDropAfterCompaction", true),
+			expect("statsDropAfterFork", true),
+			expect("statsTotalRecomputed", true),
+			expect("compactionUsageDurable", true),
+			expect("compactionUsageInStats", false),
+			expect("reasoningFieldReported", false),
+			expect("childUsageFoldedIntoStats", true),
+			expect("reopenStatsEqual", true),
+			expect("rebuildMatchesStatsOnSinglePath", true),
+			expect("rebuildIncludesCompactionUsage", true),
+		],
 		evidence: [
+			`probe:*: every assistant usage equals the fake provider's scripted usage through Prime's documented mapping, in every field: ${show(facts.providerUsageDecodedExactly)}`,
 			`probe:compaction: get_session_stats totals decrease after compaction: ${show(facts.statsDropAfterCompaction)}`,
 			`probe:fork: get_session_stats totals decrease after fork: ${show(facts.statsDropAfterFork)}; fork writes a new session file: ${show(facts.forkNewFile)}`,
 			`probe:*: tokens.total equals input+output+cacheRead+cacheWrite in every stats read: ${show(facts.statsTotalRecomputed)}`,
@@ -523,10 +642,13 @@ export function classifyPrimeConformanceV0(
 		],
 	};
 
-	const operationOutcome: PrimeConformanceFindingV0 = {
+	const operationOutcome: FindingAnalysis = {
 		contract: "OperationOutcomeV0",
 		support: "unavailable",
 		semanticFit: "incompatible",
+		// The absence of a result lookup rests on Prime's RPC surface (source and docs); the probe must still see the
+		// abort-during-tool case that no Prime record can recover.
+		requires: [expect("abortToolStop", "toolUse"), expect("reopenEntryIdsStable", true)],
 		evidence: [
 			PRIME_SOURCE.rpcCommands,
 			PRIME_SOURCE.rpcEvents,
@@ -549,10 +671,21 @@ export function classifyPrimeConformanceV0(
 		],
 	};
 
-	const usage: PrimeConformanceFindingV0 = {
+	const usage: FindingAnalysis = {
 		contract: "UsageLedgerRowV0",
 		support: "adapter-state",
 		semanticFit: "qualified",
+		requires: [
+			expect("providerUsageDecodedExactly", true),
+			expect("reopenEntryIdsStable", true),
+			expect("compactionUsageDurable", true),
+			expect("childUsageRewritesEarlierRow", true),
+			expect("forkNewFile", true),
+			{
+				fact: "forkSharedEntryIds > 0",
+				holds: (facts) => (facts.forkSharedEntryIds === undefined ? undefined : facts.forkSharedEntryIds > 0),
+			},
+		],
 		evidence: [
 			`probe:multi-turn-reopen: entry ids stable across reopen: ${show(facts.reopenEntryIdsStable)}`,
 			`probe:compaction: compaction entry carries usage: ${show(facts.compactionUsageDurable)}`,
@@ -564,7 +697,7 @@ export function classifyPrimeConformanceV0(
 		],
 		adapterState: [
 			"Row id: the session entry id (8 hex, stable across reopen); a fork copies path entries with the same ids into its new file, so the id names one durable row across the file set only after de-duplication",
-			"Row sequence: the entry's line ordinal in the append-only session file, assigned by the adapter; not a Prime cursor",
+			"Row sequence: a durable adapter-owned sequence across the whole fork family; Prime has none, and a file's line ordinal is not session-global (the original and a fork file reuse the same ordinals)",
 			"Paging: the adapter reads the session file itself (Prime has no usage scan command)",
 			"Fork: rows of a forked session live in a new file whose copied prefix repeats the original's rows; the adapter must track the file set and de-duplicate",
 		],
@@ -577,13 +710,13 @@ export function classifyPrimeConformanceV0(
 			"Live observation needs the adapter to watch message_end/compaction_end and re-read the file for the durable row; events carry no sequence",
 		],
 		unavailable: [
-			"A native durable monotonic usage sequence or cursor",
+			"A native durable monotonic usage sequence or cursor, and any session-global one: line ordinals are per file",
 			"A native usage paging command",
 			"reasoning and cacheWrite1h counts",
 		],
 	};
 
-	return [missionTrace, runtimeMetrics, operationOutcome, usage];
+	return [missionTrace, runtimeMetrics, operationOutcome, usage].map((analysis) => settle(analysis, facts));
 }
 
 /** Every Prime event type the evidence contains, for the report's forward-compatibility section. */

@@ -149,6 +149,17 @@ describe("Mission Trace mapping", () => {
 			"run adapter:run-1 had no agent_end",
 		]);
 		expect(checkAdapterIdentitiesV0(mapPrimeMissionTraceV0({ evidence: fixture("compaction").events }))).toEqual([]);
+		// After turn_end the turn is closed: a late tool event is unmapped, never attached to the finished turn.
+		const late = mapPrimeMissionTraceV0({
+			evidence: [
+				{ type: "agent_start" },
+				{ type: "turn_start" },
+				fixture("simple").events.find((e) => e.type === "turn_end")!,
+				{ type: "tool_execution_end", toolCallId: "call_1", toolName: "probe_tool", isError: false },
+			],
+		});
+		expect(late.unmapped).toContain("tool_execution_end outside a turn at 3");
+		expect(late.events.some((event) => event.kind === "tool.finished")).toBe(false);
 	});
 });
 
@@ -218,7 +229,10 @@ describe("classification", () => {
 			["OperationOutcomeV0", "unavailable", "incompatible"],
 			["UsageLedgerRowV0", "adapter-state", "qualified"],
 		]);
+		expect(report.findings.every((finding) => finding.basis === "established")).toBe(true);
+		expect(report.findings.flatMap((finding) => [...finding.missing, ...finding.contradictions])).toEqual([]);
 		expect(report.facts).toMatchObject({
+			providerUsageDecodedExactly: true,
 			toolCallIdentityNative: true,
 			abortToolStop: "toolUse",
 			statsDropAfterCompaction: true,
@@ -241,6 +255,51 @@ describe("classification", () => {
 				finding.contract,
 			).toBe(false);
 		}
+	});
+
+	it("does not claim a classification whose facts were not all observed", () => {
+		const findings = classifyPrimeConformanceV0([fixture("simple")]);
+		for (const finding of findings) {
+			expect(finding, finding.contract).toMatchObject({
+				support: "undetermined",
+				semanticFit: "undetermined",
+				basis: "unverified",
+			});
+			expect(finding.missing.length, finding.contract).toBeGreaterThan(0);
+		}
+		expect(findings[0]!.baseline).toEqual({ support: "adapter-state", semanticFit: "qualified" });
+	});
+
+	it("withdraws a classification that valid evidence contradicts", () => {
+		const run = fixture("tool-run");
+		const renamed = {
+			...run,
+			events: run.events.map((event) =>
+				event.type === "tool_execution_end" ? { ...event, toolName: "other_tool" } : event,
+			),
+		};
+		const trace = buildPrimeConformanceReportV0(withScenario(renamed)).findings[0]!;
+		expect(trace).toMatchObject({
+			support: "undetermined",
+			basis: "contradicted",
+			contradictions: ["toolCallIdentityNative = true"],
+		});
+
+		// A consistent usage misparse: session entries and stats agree with each other, but not with the provider.
+		const simple = fixture("simple");
+		const zeroed = {
+			...simple,
+			events: simple.events.map((event) =>
+				event.type === "message_end" && event.assistant !== undefined
+					? { ...event, assistant: { ...event.assistant, usage: { ...event.assistant.usage, output: 0 } } }
+					: event,
+			),
+		};
+		const report = buildPrimeConformanceReportV0(withScenario(zeroed));
+		expect(report.facts.providerUsageDecodedExactly).toBe(false);
+		expect(
+			report.findings.filter((finding) => finding.basis === "contradicted").map((finding) => finding.contract),
+		).toEqual(["RuntimeMetricsV0", "UsageLedgerRowV0"]);
 	});
 
 	it("says unverified instead of guessing when a scenario did not run", () => {
@@ -694,6 +753,20 @@ describe("command ordering", () => {
 		expect(existsSync(binary.reportPath)).toBe(true);
 		expect(binary.fixtureState()).toEqual(before);
 		expect(binary.stderr.join("")).toContain("provenance is binary");
+	});
+
+	it("fails the check when valid evidence contradicts a classification", async () => {
+		const run = fixture("tool-run");
+		const renamed = {
+			...run,
+			events: run.events.map((event) =>
+				event.type === "tool_execution_start" ? { ...event, toolName: "other_tool" } : event,
+			),
+		};
+		const contradicted = harness(withScenario(renamed));
+		expect(await runPrimeConformanceCommandV0([], contradicted.deps)).toBe(1);
+		expect(existsSync(contradicted.reportPath)).toBe(true);
+		expect(contradicted.stderr.join("")).toContain("MissionTraceEventV0: toolCallIdentityNative = true");
 	});
 
 	it("refuses fixture writes from an invalid run", async () => {

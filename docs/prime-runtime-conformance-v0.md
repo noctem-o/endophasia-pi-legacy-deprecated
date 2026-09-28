@@ -59,7 +59,7 @@ Citations use two forms:
    - every scenario: each Prime process exits 0 once its RPC input ends. A crash, a timeout kill or a signal fails the scenario.
 
    Invariants check that an operation occurred, not what Prime answered. A valid observation of unexpected Prime behavior is conformance evidence.
-4. **Provider expectations.** Each scenario declares its prompt markers, and its fake provider refuses anything else with HTTP 400, which fails the run: an unreadable body, a request for any model other than the probe's, an unknown or foreign marker, or a reply beyond the script. Summarization requests are accepted only while `compact` runs. This rule is what exposed auto-refine: in probe 0.2.0 its request was quietly answered as a summary.
+4. **Provider expectations.** Each scenario declares its prompt markers, and its fake provider refuses anything else with HTTP 400, which fails the run: a request to any route other than `POST /v1/chat/completions`, an unreadable body, a request for any model other than the probe's, an unknown or foreign marker, or a reply beyond the script. Summarization requests are accepted only while `compact` runs. This rule is what exposed auto-refine: in probe 0.2.0 its request was quietly answered as a summary.
 5. **Exact predicates** (`classification.ts`). A positive fact requires every dimension both surfaces report to agree.
    - Tool identity checks every execution phase (start, update and end) against the assistant's tool calls.
    - Compaction retention is proved from the session file snapshotted immediately before and after `compact`, so a later prompt cannot make up for a loss.
@@ -110,6 +110,10 @@ Two axes. **Support** says where the facts come from: `native`, `adapter-state` 
 | `UsageLedgerRowV0` | adapter-state | qualified | Durable usage lives on session entries. There is no native sequence or cursor, and forks copy rows. |
 
 No contract is `native` + `exact`. The report (`findings[]`) carries the evidence, adapter-owned state, qualifications and unavailable facts behind each row. The sections below explain them.
+
+The classifications are not constants. Each one names the facts it rests on (for example, `toolCallIdentityNative = true` for Mission Trace, or `providerUsageDecodedExactly = true` for Runtime Metrics and Usage). A run claims a classification only when every one of those facts was observed with the assumed value (`basis: established`). If one was not observed, for example because its scenario did not run, the result is `undetermined` with `basis: unverified`. If valid evidence shows another value, it is `undetermined` with `basis: contradicted`, meaning Prime changed; the check then fails until the classification is re-analysed. The matrix above is the established result for Prime 0.9.6 at `2d24ad4e`.
+
+`providerUsageDecodedExactly` compares every assistant usage field with the fake provider's scripted usage, through Prime's documented mapping (input = prompt − cached − cacheWrite, and exact probe prices). Stats and session entries are both copies of Prime's own numbers, so without this comparison a consistent misparse would pass every other check.
 
 ## Mission Trace
 
@@ -239,7 +243,7 @@ Classification: `unavailable` / `incompatible`. An adapter record would be an ad
 **Adapter-owned state.**
 
 - **Row `id`.** The entry ID. It names one durable row across a session's files only after de-duplication, since a fork copies entries with their IDs (`probe:fork`).
-- **Row `sequence`.** The entry's 1-based line ordinal in the file, assigned by the adapter. It is not a Prime cursor. Prime rewrites the whole file atomically on format migration and session moves (`prime:packages/coding-agent/src/core/session-manager.ts:1812-1818,1917-1930`), so the ordinal is a stable cursor only while rewrites preserve order. The adapter must detect rewrites to re-validate it.
+- **Row `sequence`.** `UsageLedgerRowV0.sequence` must be session-global. Prime has no such sequence, and a file's line ordinal is not one: after a fork, the original and the fork file reuse the same ordinals. A truthful adapter needs its own durable sequence across the whole fork family. The candidate projection in this spike uses one file's 1-based line ordinal only to test a single file. Prime rewrites the whole file atomically on format migration and session moves (`prime:packages/coding-agent/src/core/session-manager.ts:1812-1818,1917-1930`), so the ordinal is a stable cursor only while rewrites preserve order. The adapter must detect rewrites to re-validate it.
 - **Paging.** The adapter reads the file itself. Prime has no usage scan.
 - **Live observation.** The adapter watches `message_end` and `compaction_end` and re-reads the file for the durable row. Events carry no sequence.
 

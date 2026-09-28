@@ -591,6 +591,8 @@ describe("fake provider expectations", () => {
 				await post(JSON.stringify({ model: "probe-model", messages: [user("summarize the conversation")] })),
 			).toBe(200);
 			fake.allowSummaries(false);
+			expect((await fetch(`${fake.baseUrl}/responses`, { method: "POST", body: "{}" })).status).toBe(404);
+			expect((await fetch(`${fake.baseUrl}/chat/completions`)).status).toBe(404);
 			expect(fake.requests).toEqual<FakeProviderRequestV0[]>([
 				{ kind: "scripted", marker: "simple", reply: 0 },
 				{ kind: "malformed" },
@@ -602,6 +604,8 @@ describe("fake provider expectations", () => {
 				{ kind: "unexpected", reason: "beyond-script" },
 				{ kind: "unexpected", reason: "summary-not-allowed" },
 				{ kind: "summary" },
+				{ kind: "unexpected", reason: "wrong-endpoint" },
+				{ kind: "unexpected", reason: "wrong-endpoint" },
 			]);
 		} finally {
 			await fake.close();

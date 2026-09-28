@@ -37,6 +37,63 @@ export const SCENARIO_USAGE: Readonly<Record<string, FakeUsageV0>> = {
 	summary: { prompt: 2_000, completion: 120, cached: 0, cacheWrite: 0 },
 };
 
+/**
+ * The usage Prime should record for one scripted response, derived from what the fake reports (OpenAI shape) through
+ * Prime's documented mapping (openai-completions.ts parseChunkUsage): input = prompt - cached - cacheWrite, cacheRead =
+ * cached, totalTokens recomputed, and cost = tokens x the probe model's per-million prices.
+ */
+export function expectedPrimeUsageV0(
+	name: string,
+	cost: {
+		readonly input: number;
+		readonly output: number;
+		readonly cacheRead: number;
+		readonly cacheWrite: number;
+	},
+): {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	totalTokens: number;
+	cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+} {
+	const usage = SCENARIO_USAGE[name];
+	if (usage === undefined) throw new Error(`no usage is scripted for ${name}`);
+	const input = usage.prompt - usage.cached - usage.cacheWrite;
+	const tokens = { input, output: usage.completion, cacheRead: usage.cached, cacheWrite: usage.cacheWrite };
+	const price = {
+		input: (tokens.input * cost.input) / 1_000_000,
+		output: (tokens.output * cost.output) / 1_000_000,
+		cacheRead: (tokens.cacheRead * cost.cacheRead) / 1_000_000,
+		cacheWrite: (tokens.cacheWrite * cost.cacheWrite) / 1_000_000,
+	};
+	return {
+		...tokens,
+		totalTokens: tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite,
+		cost: { ...price, total: price.input + price.output + price.cacheRead + price.cacheWrite },
+	};
+}
+
+/**
+ * For each probe scenario, the scripted usage behind each assistant message it produces, in order. `null` is an
+ * assistant message the fake reported no usage for (a provider failure, or a stream aborted before usage).
+ */
+export const EXPECTED_ASSISTANT_USAGE: Readonly<Record<string, readonly (string | null)[]>> = {
+	simple: ["simple"],
+	"tool-run": ["tool-call", "tool-answer"],
+	"tool-error": ["tool-call", "tool-answer"],
+	"provider-failure": [null],
+	"abort-stream": [null, "multi-b"],
+	"abort-tool": ["tool-call"],
+	"length-stop": ["length"],
+	"reasoning-usage": ["reasoning"],
+	"multi-turn-reopen": ["multi-a", "multi-b", "multi-c"],
+	compaction: ["multi-a", "multi-b", "multi-c"],
+	fork: ["multi-a", "multi-b", "multi-c"],
+	"child-usage-replay": [],
+};
+
 type Step =
 	| {
 			readonly kind: "text";
@@ -92,7 +149,8 @@ export type UnexpectedProviderRequestV0 =
 	| "marker-not-expected"
 	| "beyond-script"
 	| "summary-not-allowed"
-	| "wrong-model";
+	| "wrong-model"
+	| "wrong-endpoint";
 
 /** One request the fake received, classified. Only `scripted` and `summary` requests are answered with a completion. */
 export type FakeProviderRequestV0 =
@@ -173,6 +231,15 @@ export async function startFakeProviderV0(expectations: FakeProviderExpectations
 		const chunks: Buffer[] = [];
 		request.on("data", (chunk: Buffer) => chunks.push(chunk));
 		request.on("end", () => {
+			// Only the OpenAI Chat Completions route this provider is configured as; any other target is refused.
+			if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
+				requests.push({ kind: "unexpected", reason: "wrong-endpoint" });
+				response.writeHead(404, { "content-type": "application/json" });
+				response.end(
+					JSON.stringify({ error: { message: "unexpected probe endpoint", type: "invalid_request_error" } }),
+				);
+				return;
+			}
 			let body: { messages?: unknown; model?: unknown } | undefined;
 			try {
 				body = JSON.parse(Buffer.concat(chunks).toString("utf8"));

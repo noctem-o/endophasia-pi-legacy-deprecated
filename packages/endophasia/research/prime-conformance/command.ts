@@ -140,7 +140,9 @@ export async function runPrimeConformanceCommandV0(
 	const assessment = assessPrimeEvidenceV0({ report, requestedScenarios, retainedFixtures });
 
 	for (const finding of report.findings) {
-		deps.stdout(`${finding.contract.padEnd(22)} ${finding.support.padEnd(14)} ${finding.semanticFit}\n`);
+		deps.stdout(
+			`${finding.contract.padEnd(22)} ${finding.support.padEnd(14)} ${finding.semanticFit.padEnd(13)} ${finding.basis}\n`,
+		);
 	}
 	const { drift } = report;
 	deps.stdout(
@@ -157,5 +159,14 @@ export async function runPrimeConformanceCommandV0(
 		deps.stdout(`fixtures written to ${fixtureDir}\n`);
 	}
 	if (assessment.invalid.length > 0) return fail(`\n${assessment.invalid.join("\n")}`);
+	// Valid evidence that contradicts a classification means Prime changed: the check fails until it is re-analysed.
+	const contradicted = report.findings.filter((finding) => finding.basis === "contradicted");
+	if (contradicted.length > 0) {
+		return fail(
+			`Prime contradicts the recorded classification:\n${contradicted
+				.map((finding) => `${finding.contract}: ${finding.contradictions.join(", ")}`)
+				.join("\n")}`,
+		);
+	}
 	return 0;
 }

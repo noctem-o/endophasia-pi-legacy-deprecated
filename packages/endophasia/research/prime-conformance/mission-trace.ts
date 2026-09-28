@@ -62,7 +62,7 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 	const abortAfter = [...(input.abortRequestedAfter ?? [])];
 	let sequence = 0;
 	let runCount = 0;
-	let run: { id: string; turns: number; turnId?: string; abortRequested: boolean } | undefined;
+	let run: { id: string; turns: number; turnId: string | undefined; abortRequested: boolean } | undefined;
 	const lane = PRIME_ROOT_LANE_LABEL;
 	const push = (event: TraceInputV0): void => {
 		events.push({ ...event, schemaVersion: "mission-trace.v0", sequence: ++sequence } as MissionTraceEventV0);
@@ -75,7 +75,7 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 		switch (item.type) {
 			case "agent_start": {
 				runCount += 1;
-				run = { id: `${ADAPTER_ID_PREFIX}run-${runCount}`, turns: 0, abortRequested: false };
+				run = { id: `${ADAPTER_ID_PREFIX}run-${runCount}`, turns: 0, turnId: undefined, abortRequested: false };
 				// Abort requests before this run belong to earlier runs.
 				for (let i = abortAfter.length - 1; i >= 0; i--) if (abortAfter[i]! < index) abortAfter.splice(i, 1);
 				push({ kind: "mission.started", lane, runId: run.id });
@@ -124,6 +124,8 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 					continue;
 				}
 				push({ kind: "turn.finished", lane, runId: run.id, turnId: run.turnId });
+				// A finished turn accepts no more events: anything before the next turn_start is unmapped.
+				run.turnId = undefined;
 				continue;
 			}
 			case "agent_end": {

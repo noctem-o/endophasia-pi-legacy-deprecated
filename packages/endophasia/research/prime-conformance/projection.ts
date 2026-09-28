@@ -19,8 +19,9 @@ function rowUsage(usage: PrimeUsageEvidenceV0): UsageLedgerRowV0["usage"] {
 }
 
 /**
- * One candidate row per durable usage-bearing entry, in file order. `sequence` is the adapter-assigned line ordinal
- * (1-based) in the append-only session file, not a Prime cursor. Assistant rows use the usage as written in the file:
+ * One candidate row per durable usage-bearing entry of ONE session file, in file order. `sequence` is that file's
+ * 1-based line ordinal: it is not a Prime cursor and not session-global (a fork file reuses the original's ordinals),
+ * so it does not satisfy UsageLedgerRowV0.sequence across a fork family; the finding lists that as adapter state. Assistant rows use the usage as written in the file:
  * Prime's reload-time child folding is not applied, and each child_usage_attributed entry is its own row.
  */
 export function projectPrimeUsageRowsV0(entries: readonly PrimeSessionEntryEvidenceV0[]): UsageLedgerRowV0[] {
