@@ -16,12 +16,13 @@ import { createUnixTransportFactory, type UnixServerRoute } from "@earendil-work
 import { isServerId, type ServerId } from "@earendil-works/pi-protocol";
 import {
 	ServerError as RoutedServerError,
-	type Server,
+	Server,
 	type ServerHost,
+	type ServerListener,
 	SessionAmbiguousError,
 	SessionNotFoundError,
 } from "@earendil-works/pi-server";
-import { createUnixServer, getUnixSocketPath } from "@earendil-works/pi-server/unix";
+import { createUnixListener, getUnixSocketPath } from "@earendil-works/pi-server/unix";
 import lockfile from "proper-lockfile";
 import type { AuthInput } from "../cli/experimental/command-options.ts";
 import { getAgentDir } from "../config.ts";
@@ -348,6 +349,11 @@ export interface StartServerOptions {
 	/** Explicit plugin packages. Undefined restores the logical server profile; an empty list clears it. */
 	readonly pluginPackages?: readonly string[];
 	/**
+	 * Trusted application listeners served alongside the server's Unix socket, which is always present. Their
+	 * connections share the same Pi server, routing and connection-count lifetime.
+	 */
+	readonly additionalListeners?: readonly ServerListener[];
+	/**
 	 * Trusted module that this server's newly launched Session workers run instead of the built-in entry. It is started
 	 * as an ordinary Session worker internal process and must run the Session worker. Workers discovered from a
 	 * replaced server are not checked against it. Automatic cold activation does not accept it.
@@ -373,6 +379,7 @@ interface StartServerBackendOptions {
 	): Promise<ResolvedSessionPlugins>;
 	removeSessionPlugins(metadata: JsonlSessionMetadata): Promise<void>;
 	reloadPresentationFacetBundles(packagePaths: readonly string[]): Promise<readonly FacetBundleArtifact[]>;
+	readonly additionalListeners?: readonly ServerListener[];
 }
 
 interface RunningServerBackend extends RunningServer {
@@ -476,10 +483,9 @@ async function startServerBackend(
 		if (errors.length === 1) throw errors[0];
 		if (errors.length > 1) throw new AggregateError(errors, "Experimental session catalog cleanup failed");
 	};
-	const server = createUnixServer(host, {
+	const server = new Server(host, {
 		serverId,
-		path: socketPath,
-		mode: 0o600,
+		listeners: [createUnixListener({ path: socketPath, mode: 0o600 }), ...(options.additionalListeners ?? [])],
 		onConnectionCountChanged,
 	});
 	try {
@@ -635,6 +641,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 				resolveSessionPlugins,
 				removeSessionPlugins,
 				reloadPresentationFacetBundles,
+				additionalListeners: options.additionalListeners,
 			},
 			workers,
 			(count) => lifetime.setConnectionCount(count),

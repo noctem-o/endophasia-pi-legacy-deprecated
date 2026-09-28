@@ -156,6 +156,33 @@ describe("Endophasia Presentation Client v0", () => {
 		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
 	});
 
+	it("contains a throwing diagnostic observer without changing the attachment lifecycle", async () => {
+		const server = await startServer({ ...workerModel, directory: await temporaryDirectory("endophasia-observer-") });
+		servers.push(server);
+		let observed!: (error: Error) => void;
+		const firstError = new Promise<Error>((resolve) => {
+			observed = resolve;
+		});
+		const presentation = await openEndophasiaPresentationClientV0({
+			serverId: server.serverId,
+			transportFactory: createUnixTransportFactory({ path: server.socketPath }),
+			onError(error) {
+				observed(error);
+				throw new Error("observer exploded");
+			},
+		});
+		presentations.push(presentation);
+
+		// The missing Inspector fails the Session rebind, a real service-source error routed to the observer.
+		await expect(presentation.attach("observed", BACKGROUND_CONTEXT)).rejects.toThrow(
+			"Remote service endophasia.inspector.v0 is not allowlisted",
+		);
+		await expect(firstError).resolves.toBeInstanceOf(Error);
+		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
+		expect(presentation.connection.value).toMatchObject({ status: "connected" });
+		await expect(presentation.dispose()).resolves.toBeUndefined();
+	});
+
 	it("loads in plain Node with coding-agent's source resolver preloaded, without Vitest aliases", async () => {
 		const resolver = new URL("../../coding-agent/src/experimental/source-resolver.ts", import.meta.url);
 		const client = new URL("../presentation/client.ts", import.meta.url);

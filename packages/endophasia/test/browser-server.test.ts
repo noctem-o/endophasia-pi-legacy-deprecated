@@ -1,0 +1,237 @@
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { JsonlSessionRepo } from "@earendil-works/pi-agent-core";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import { Client } from "@earendil-works/pi-client";
+import { createUnixTransportFactory } from "@earendil-works/pi-client/unix";
+import type { RunningServer } from "@earendil-works/pi-coding-agent/experimental/server";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { WebSocket } from "ws";
+import { type EndophasiaPresentationClientV0, openEndophasiaPresentationClientV0 } from "../presentation/client.ts";
+import { type BrowserWebSocket, createBrowserWebSocketTransportFactory } from "../presentation/websocket-transport.ts";
+import { type RunningEndophasiaBrowserServer, startEndophasiaBrowserServer } from "../runtime/browser-server.ts";
+
+const ORIGIN = "http://127.0.0.1:5173";
+const directories: string[] = [];
+const servers: RunningServer[] = [];
+const presentations: EndophasiaPresentationClientV0[] = [];
+const workerModel = { provider: "anthropic", model: "claude-sonnet-4-5" } as const;
+
+beforeEach(async () => {
+	// The standard worker resolves its configured model offline from a local API-key credential.
+	const agentDir = await temporaryDirectory("endophasia-browser-agent-");
+	await writeFile(join(agentDir, "auth.json"), JSON.stringify({ anthropic: { type: "api_key", key: "test-key" } }), {
+		mode: 0o600,
+	});
+	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
+	vi.stubEnv("PI_OFFLINE", "1");
+	await createSessions(join(agentDir, "experimental", "sessions"), ["browser", "unix"]);
+});
+
+afterEach(async () => {
+	for (const presentation of presentations.splice(0)) await presentation.dispose();
+	for (const server of servers.splice(0)) await server.close();
+	vi.unstubAllEnvs();
+	for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
+});
+
+async function temporaryDirectory(prefix: string): Promise<string> {
+	const directory = await mkdtemp(join("/tmp", prefix));
+	directories.push(directory);
+	return directory;
+}
+
+async function createSessions(sessionsRoot: string, ids: readonly string[]): Promise<void> {
+	await mkdir(sessionsRoot, { recursive: true });
+	const fileSystem = new NodeExecutionEnv({ cwd: process.cwd() });
+	const repo = new JsonlSessionRepo({ fileSystem, sessionsRoot });
+	try {
+		for (const id of ids) {
+			await (await repo.create({ id, cwd: process.cwd() }, BACKGROUND_CONTEXT)).close(BACKGROUND_CONTEXT);
+		}
+	} finally {
+		await repo.close(BACKGROUND_CONTEXT);
+		await fileSystem.cleanup(BACKGROUND_CONTEXT);
+	}
+}
+
+async function startBrowserServer(): Promise<RunningEndophasiaBrowserServer> {
+	const server = await startEndophasiaBrowserServer({
+		...workerModel,
+		directory: await temporaryDirectory("endophasia-browser-server-"),
+		browser: { allowedOrigins: [ORIGIN] },
+	});
+	servers.push(server);
+	return server;
+}
+
+/** Node's global WebSocket sends no Origin header; tests stand in for a browser page served from ORIGIN. */
+function browserTransport(url: string, origin = ORIGIN) {
+	return createBrowserWebSocketTransportFactory({
+		url,
+		webSocketFactory: (socketUrl): BrowserWebSocket => new WebSocket(socketUrl, { origin, perMessageDeflate: false }),
+	});
+}
+
+async function openPresentation(
+	serverId: string,
+	transportFactory: Parameters<typeof openEndophasiaPresentationClientV0>[0]["transportFactory"],
+	errors: Error[],
+): Promise<EndophasiaPresentationClientV0> {
+	const presentation = await openEndophasiaPresentationClientV0({
+		serverId,
+		transportFactory,
+		onError: (error) => errors.push(error),
+	});
+	presentations.push(presentation);
+	return presentation;
+}
+
+async function observe(presentation: EndophasiaPresentationClientV0, sessionId: string): Promise<void> {
+	await presentation.attach(sessionId, BACKGROUND_CONTEXT);
+	expect(presentation.attachment.value).toEqual({ status: "attached", sessionId });
+	expect(presentation.transcript.value?.snapshot).toMatchObject({ lane: "main", operation: null });
+	expect(presentation.models.value?.configuration.model).toEqual({
+		provider: "anthropic",
+		modelId: "claude-sonnet-4-5",
+	});
+	expect(await presentation.sessionOverview(BACKGROUND_CONTEXT)).toMatchObject({
+		schemaVersion: "session-overview.v0",
+		consistency: "per-lane",
+		lanes: [{ name: "main", operation: null }],
+		counts: { lanes: 1, activeOperations: 0, abortingOperations: 0 },
+	});
+}
+
+describe("Endophasia browser server", () => {
+	it("serves the Presentation Client over loopback WebSocket beside the unchanged Unix listener", async () => {
+		const server = await startBrowserServer();
+		expect(server.browser.url).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/pi\/[A-Za-z0-9_-]{43}$/);
+		expect(server.socketPath).toEqual(expect.any(String));
+
+		const errors: Error[] = [];
+		const browser = await openPresentation(server.serverId, browserTransport(server.browser.url), errors);
+		const unix = await openPresentation(
+			server.serverId,
+			createUnixTransportFactory({ path: server.socketPath }),
+			errors,
+		);
+		for (const presentation of [browser, unix]) {
+			expect(presentation.connection.value).toMatchObject({ status: "connected" });
+			expect(presentation.sessions.value?.sessions.map((session) => session.sessionId).sort()).toEqual([
+				"browser",
+				"unix",
+			]);
+		}
+
+		// Both transports reach the same Pi server and its Endophasia Session workers at once.
+		await Promise.all([observe(browser, "browser"), observe(unix, "unix")]);
+		expect([...server.workerPids.keys()].sort()).toEqual(["browser", "unix"]);
+
+		await browser.detach(BACKGROUND_CONTEXT);
+		expect(browser.attachment.value).toEqual({ status: "detached" });
+		await expect.poll(() => [...server.workerPids.keys()], { timeout: 10_000 }).toEqual(["unix"]);
+		expect(unix.attachment.value).toEqual({ status: "attached", sessionId: "unix" });
+
+		await browser.dispose();
+		await unix.dispose();
+		expect(errors).toEqual([]);
+		await expect.poll(() => server.workerPids.size, { timeout: 10_000 }).toBe(0);
+	});
+
+	it("admits the transport by capability but still verifies the Pi server identity", async () => {
+		const server = await startBrowserServer();
+		// The capability URL admits the bytes; the Pi handshake then refuses a different, well-formed server identity.
+		const handshake = Client.connect({
+			serverId: randomUUID(),
+			transportFactory: browserTransport(server.browser.url),
+		});
+		await expect(handshake).rejects.toThrow();
+		await expect(handshake).rejects.not.toThrow("WebSocket transport");
+
+		const client = await Client.connect({
+			serverId: server.serverId,
+			transportFactory: browserTransport(server.browser.url),
+		});
+		await client.dispose();
+	});
+
+	it("refuses unlisted origins, Origin-less clients and other capabilities", async () => {
+		const server = await startBrowserServer();
+		const url = new URL(server.browser.url);
+		await expect(
+			Client.connect({
+				serverId: server.serverId,
+				transportFactory: browserTransport(server.browser.url, "http://127.0.0.1:5174"),
+			}),
+		).rejects.toThrow("WebSocket transport failed");
+		// The default factory uses the platform WebSocket, which in Node sends no Origin.
+		await expect(
+			Client.connect({
+				serverId: server.serverId,
+				transportFactory: createBrowserWebSocketTransportFactory({ url: server.browser.url }),
+			}),
+		).rejects.toThrow("WebSocket transport failed");
+		await expect(
+			Client.connect({
+				serverId: server.serverId,
+				transportFactory: browserTransport(`ws://${url.host}/pi/${"A".repeat(43)}`),
+			}),
+		).rejects.toThrow("WebSocket transport failed");
+
+		// A second browser server issues a different capability, which this one does not accept.
+		const other = await startBrowserServer();
+		await expect(
+			Client.connect({
+				serverId: server.serverId,
+				transportFactory: browserTransport(`ws://${url.host}${new URL(other.browser.url).pathname}`),
+			}),
+		).rejects.toThrow("WebSocket transport failed");
+	});
+
+	it("rejects invalid origins before starting the server", async () => {
+		const directory = await temporaryDirectory("endophasia-browser-invalid-");
+		await expect(
+			startEndophasiaBrowserServer({ ...workerModel, directory, browser: { allowedOrigins: ["*"] } }),
+		).rejects.toThrow(TypeError);
+		await expect(
+			startEndophasiaBrowserServer({ ...workerModel, directory, browser: { allowedOrigins: [] } }),
+		).rejects.toThrow(TypeError);
+		expect(await readdir(directory)).toEqual([]);
+	});
+
+	it("stops accepting browser connections when the server closes", async () => {
+		const server = await startBrowserServer();
+		const client = await Client.connect({
+			serverId: server.serverId,
+			transportFactory: browserTransport(server.browser.url),
+		});
+		await server.close();
+		await expect.poll(() => client.connectionState).not.toBe("connected");
+		await client.dispose();
+		await expect(
+			Client.connect({ serverId: server.serverId, transportFactory: browserTransport(server.browser.url) }),
+		).rejects.toThrow();
+	});
+
+	it("loads in plain Node with coding-agent's source resolver preloaded, without Vitest aliases", async () => {
+		const resolver = new URL("../../coding-agent/src/experimental/source-resolver.ts", import.meta.url);
+		const script = `
+			import { startEndophasiaBrowserServer } from ${JSON.stringify(new URL("../runtime/browser-server.ts", import.meta.url).href)};
+			import { createBrowserWebSocketTransportFactory } from ${JSON.stringify(new URL("../presentation/websocket-transport.ts", import.meta.url).href)};
+			console.log(typeof startEndophasiaBrowserServer, typeof createBrowserWebSocketTransportFactory);
+		`;
+		const { stdout } = await promisify(execFile)(process.execPath, [
+			"--import",
+			resolver.href,
+			"--input-type=module",
+			"--eval",
+			script,
+		]);
+		expect(stdout.trim()).toBe("function function");
+	});
+});

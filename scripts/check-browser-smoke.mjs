@@ -6,6 +6,7 @@ import { build } from "esbuild";
 const outputPath = join(tmpdir(), "pi-browser-smoke.js");
 const durableOutputPath = join(tmpdir(), "pi-durable-browser-smoke.js");
 const agentTreeshakeOutputPath = join(tmpdir(), "pi-agent-treeshake-smoke.js");
+const endophasiaOutputPath = join(tmpdir(), "pi-endophasia-browser-smoke.js");
 const errorLogPath = join(tmpdir(), "pi-browser-smoke-errors.log");
 const generatedCatalogDataDir = join(process.cwd(), "packages/ai/src/providers/data");
 
@@ -139,6 +140,40 @@ try {
 		throw new Error(
 			`Agent selective-provider bundle SDKs: expected only @anthropic-ai/sdk, found ${includedAiSdkPackages.join(", ") || "none"}`,
 		);
+	}
+
+	const endophasiaBuild = await build({
+		entryPoints: ["scripts/endophasia-browser-transport-smoke-entry.ts"],
+		bundle: true,
+		platform: "browser",
+		format: "esm",
+		logLevel: "silent",
+		metafile: true,
+		outfile: endophasiaOutputPath,
+		write: false,
+	});
+	const endophasiaInputs = endophasiaBuild.metafile.inputs;
+	for (const expectedInput of [
+		"packages/endophasia/presentation/websocket-transport.ts",
+		"packages/endophasia/presentation/client.ts",
+	]) {
+		if (!findInput(endophasiaInputs, expectedInput)) {
+			throw new Error(`Endophasia browser bundle does not include ${expectedInput}`);
+		}
+	}
+	const forbiddenEndophasiaInputs = Object.keys(endophasiaInputs).filter((input) => {
+		const normalized = normalizePath(input);
+		return (
+			normalized.startsWith("node:") ||
+			normalized.includes("node_modules/ws/") ||
+			normalized.includes("packages/endophasia/runtime/") ||
+			normalized.includes("packages/server/") ||
+			normalized.endsWith("packages/client/src/unix.ts") ||
+			normalized.endsWith("packages/coding-agent/src/experimental/server.ts")
+		);
+	});
+	if (forbiddenEndophasiaInputs.length > 0) {
+		throw new Error(`Endophasia browser bundle unexpectedly includes ${forbiddenEndophasiaInputs.join(", ")}`);
 	}
 
 	process.exit(0);
