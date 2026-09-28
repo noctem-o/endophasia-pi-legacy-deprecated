@@ -552,9 +552,16 @@ export interface AccountingView {
 	readonly rows: readonly AccountingRowView[];
 }
 
-/** A count with en-US grouping and every fraction digit kept, so the displayed value is the reported value. */
+/**
+ * A count exactly as reported: JavaScript's round-trippable form, with en-US grouping added only to the integer part of
+ * a plain decimal. Exponent forms such as 1e-21 are kept as they are, so no value is rounded.
+ */
 function formatCount(value: number): string {
-	return value.toLocaleString("en-US", { maximumFractionDigits: 20 });
+	const text = String(value);
+	const plain = /^(-?)(\d+)(\.\d+)?$/.exec(text);
+	if (plain === null) return text;
+	const [, sign, integer = "", fraction = ""] = plain;
+	return `${sign}${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}${fraction}`;
 }
 
 /**

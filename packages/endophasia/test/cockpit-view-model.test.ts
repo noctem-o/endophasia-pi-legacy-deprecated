@@ -649,6 +649,20 @@ describe("Session Accounting projection", () => {
 		);
 		expect(view.rows.find((row) => row.label === "Input tokens")?.value).toBe("1,234.5");
 		expect(view.rows.find((row) => row.label === "Accounted cost")?.value).toBe("0.000123456789");
+		// Tiny and huge adjustments keep their exact round-trippable form instead of rounding to 0 or -0.
+		const extremes = projectRuntimeMetrics(
+			{
+				...base,
+				usage: { ...base.usage, input: 1e-21, output: -1e-21, cacheRead: 1e21, cacheWrite: 0.1 + 0.2 },
+			},
+			0,
+		);
+		const value = (label: string) => extremes.rows.find((row) => row.label === label)?.value;
+		expect(value("Input tokens")).toBe("1e-21");
+		expect(value("Output tokens")).toBe("-1e-21");
+		expect(value("Cache read")).toBe("1e+21");
+		expect(value("Cache write")).toBe("0.30000000000000004");
+		expect(Number(value("Reported total")?.replaceAll(",", ""))).toBe(base.usage.totalTokens);
 		const text = JSON.stringify(view);
 		expect(text).not.toMatch(/[$£€%]|main|lane|context|invoice|bill/i);
 	});
