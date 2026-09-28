@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	AgentHarness,
 	type AgentHarness as AgentHarnessType,
+	type Events,
 	type HarnessEventType,
 } from "../../agent/src/harness/agent-harness.ts";
 import { BACKGROUND_CONTEXT } from "../../agent/src/harness/context.ts";
@@ -32,14 +33,20 @@ import {
 	createEndophasiaInspectorFacetV0,
 	createEndophasiaMissionTraceFacetV0,
 	createEndophasiaRuntimeFactsFacetV0,
+	createEndophasiaUsageFacetV0,
 	EndophasiaInspectorV0,
 	EndophasiaMissionTraceV0,
 	EndophasiaRuntimeFactsV0,
+	EndophasiaUsageV0,
 	type MissionTraceObservationV0,
+	readUsageLedgerV0,
 	type SessionOverviewV0,
+	type UsageObservationV0,
 } from "../src/index.ts";
 
 const sessions: Session[] = [];
+/** The Session behind each fixture harness, which a real worker pairs with it for the Usage facet. */
+const sessionOf = new WeakMap<AgentHarnessType, Session>();
 const workers: SessionWorkerServices[] = [];
 const scope = { serverConnectionId: "server-1", attachmentId: "attachment-1" };
 const sessionOverviewCall = { serviceId: EndophasiaInspectorV0.id, member: "sessionOverview", args: [] };
@@ -65,6 +72,7 @@ async function fixture(): Promise<{ harness: AgentHarnessType; faux: ReturnType<
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const { harness } = await AgentHarness.create({ session, models, model: faux.getModel() }, BACKGROUND_CONTEXT);
+	sessionOf.set(harness, session);
 	return { harness, faux };
 }
 
@@ -79,8 +87,11 @@ async function worker(
 		readonly observed?: Pick<AgentHarnessType, "lanes">;
 		readonly withInspector?: boolean;
 		readonly plugin?: Parameters<typeof defineFacet>[0];
+		readonly usageEvents?: Pick<Events, "on">;
 	} = {},
 ): Promise<SessionWorkerServices> {
+	const session = sessionOf.get(harness);
+	if (session === undefined) throw new Error("Unknown fixture harness");
 	const lane = await harness.lane("main", BACKGROUND_CONTEXT);
 	const main = await harness.lane("main", BACKGROUND_CONTEXT);
 	const services = await createSessionWorkerServices({
@@ -93,6 +104,11 @@ async function worker(
 						createEndophasiaInspectorFacetV0(options.observed ?? harness),
 						createEndophasiaMissionTraceFacetV0(harness),
 						createEndophasiaRuntimeFactsFacetV0(main),
+						// As the worker's host runtime provides them: events of this harness, usage reads of its Session.
+						createEndophasiaUsageFacetV0({
+							events: options.usageEvents ?? harness.events,
+							session: { scanUsage: (query, context) => session.scanUsage(query, context) },
+						}),
 					],
 		facetLoader: options.plugin === undefined ? undefined : createStaticFacetLoader([defineFacet(options.plugin)]),
 		publish: async () => {},
@@ -115,17 +131,22 @@ async function remoteOverview(services: SessionWorkerServices, context: Context)
 }
 
 describe("Endophasia Inspector v0 in a Session worker", () => {
-	it("adds exactly the Inspector, Mission Trace and Runtime Facts services to the worker's generated catalogue", async () => {
+	it("adds exactly the Endophasia host services to the worker's generated catalogue", async () => {
 		const { harness } = await fixture();
 		const without = await catalogueIds(await worker(harness, { withInspector: false }));
 		const withEndophasia = await catalogueIds(await worker(harness));
-		const endophasia = [EndophasiaInspectorV0.id, EndophasiaMissionTraceV0.id, EndophasiaRuntimeFactsV0.id];
+		const endophasia = [
+			EndophasiaInspectorV0.id,
+			EndophasiaMissionTraceV0.id,
+			EndophasiaRuntimeFactsV0.id,
+			EndophasiaUsageV0.id,
+		];
 		for (const id of endophasia) {
 			expect(without).not.toContain(id);
 			expect(withEndophasia.filter((entry) => entry === id)).toHaveLength(1);
 		}
 		expect(withEndophasia.filter((id) => !without.includes(id)).sort()).toEqual(endophasia.sort());
-		expect(withEndophasia).toHaveLength(without.length + 3);
+		expect(withEndophasia).toHaveLength(without.length + 4);
 	});
 
 	it("reacquires the established main lane for Runtime Facts without creating a lane or mutating Pi", async () => {
@@ -315,5 +336,59 @@ describe("Endophasia Inspector v0 in a Session worker", () => {
 		expect(afterSecond?.events.map(({ sequence }) => sequence)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 		expect(afterSecond?.events.slice(0, 5)).toEqual(afterReload?.events);
 		expect(new Set(afterSecond?.events.map(({ runId }) => runId)).size).toBe(2);
+	});
+
+	it("keeps one host Usage feed across plugin reloads, continuing from the durable ledger", async () => {
+		const { harness } = await fixture();
+		const session = sessionOf.get(harness)!;
+		const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+		let usageListeners = 0;
+		const usageEvents: Pick<Events, "on"> = {
+			on: ((type: HarnessEventType, listener: Parameters<Events["on"]>[1]) => {
+				if (type === "usage") usageListeners++;
+				const off = harness.events.on(type, listener);
+				return () => {
+					if (type === "usage") usageListeners--;
+					off();
+				};
+			}) as Events["on"],
+		};
+		const seen: UsageObservationV0[] = [];
+		const services = await worker(harness, {
+			usageEvents,
+			plugin: {
+				id: "@test/usage-reader",
+				setup(env) {
+					const usageService = env.use(EndophasiaUsageV0);
+					env.onActivate(() => {
+						if (usageService.state.value !== undefined) seen.push(usageService.state.value);
+					});
+				},
+			},
+		});
+		const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2 };
+		const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+		await lane.recordUsage({ ...usage, cost }, undefined, BACKGROUND_CONTEXT);
+		expect(usageListeners).toBe(1);
+
+		const reload = () =>
+			services.invoke({ serviceId: SessionPlugins.id, member: "reload", args: [] }, scope, BACKGROUND_CONTEXT);
+		await reload();
+		expect((await catalogueIds(services)).filter((id) => id === EndophasiaUsageV0.id)).toHaveLength(1);
+		expect(usageListeners).toBe(1);
+		const durableAfterFirst = (await readUsageLedgerV0(session, undefined, BACKGROUND_CONTEXT)).rows;
+		expect(seen.at(-1)?.rows).toEqual(durableAfterFirst);
+
+		await lane.recordUsage({ ...usage, totalTokens: 5, cost }, undefined, BACKGROUND_CONTEXT);
+		await reload();
+		expect(usageListeners).toBe(1);
+		const durable = (await readUsageLedgerV0(session, undefined, BACKGROUND_CONTEXT)).rows;
+		// Identity is the durable row and its sequence: the same rows, once each, in ledger order.
+		expect(durable).toHaveLength(2);
+		expect(seen.at(-1)?.rows).toEqual(durable);
+
+		workers.splice(workers.indexOf(services), 1);
+		await services.dispose();
+		expect(usageListeners).toBe(0);
 	});
 });

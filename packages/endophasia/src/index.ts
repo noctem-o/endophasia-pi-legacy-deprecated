@@ -34,6 +34,7 @@ export type {
 	SteeringStateV0,
 } from "./steering.ts";
 export { captureSteeringStateV0, queueFollowUpV0, steerV0, stopV0 } from "./steering.ts";
+export { createEndophasiaUsageFacetV0 } from "./usage-facet.ts";
 export type {
 	UsageFeedListenerV0,
 	UsageFeedOptionsV0,
@@ -43,3 +44,5 @@ export type {
 export { attachUsageFeedV0 } from "./usage-feed.ts";
 export type { UsageLedgerPageV0, UsageLedgerQueryV0, UsageLedgerRowV0 } from "./usage-ledger.ts";
 export { readUsageLedgerV0 } from "./usage-ledger.ts";
+export type { UsageObservationV0 } from "./usage-service.ts";
+export { EndophasiaUsageV0, USAGE_REPLICATED_ROW_LIMIT } from "./usage-service.ts";
