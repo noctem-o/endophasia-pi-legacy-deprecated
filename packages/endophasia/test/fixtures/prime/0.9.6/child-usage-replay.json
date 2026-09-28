@@ -7,7 +7,7 @@
 		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.6.0",
+		"probeVersion": "0.7.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "child-usage-replay"
@@ -172,7 +172,7 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "227ba3a8",
+			"id": "fa4b4e45",
 			"parentId": "a0000003",
 			"keys": [
 				"id",
@@ -184,8 +184,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "fef026c9",
-			"parentId": "227ba3a8",
+			"id": "771ec60c",
+			"parentId": "fa4b4e45",
 			"keys": [
 				"id",
 				"parentId",
@@ -196,8 +196,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "b94ac3a7",
-			"parentId": "fef026c9",
+			"id": "47fb2e21",
+			"parentId": "771ec60c",
 			"keys": [
 				"content",
 				"customType",

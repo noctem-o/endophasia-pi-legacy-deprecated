@@ -156,6 +156,9 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 					misplace(`turn_end outside a turn at ${index}`);
 					continue;
 				}
+				// Tool calls belong to their turn: one still open at turn_end could otherwise finish in a later turn.
+				if (run.tools.size > 0) misplace(`turn_end with ${run.tools.size} tool call(s) still active at ${index}`);
+				run.tools.clear();
 				push({ kind: "turn.finished", lane, runId: run.id, turnId: run.turnId });
 				// A finished turn accepts no more events: anything before the next turn_start is unmapped.
 				run.turnId = undefined;
@@ -166,6 +169,8 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 					misplace(`agent_end outside a run at ${index}`);
 					continue;
 				}
+				// A run ends after its turns: an active turn here would be a turn.started never finished.
+				if (run.turnId !== undefined) misplace(`agent_end inside an active turn at ${index}`);
 				const terminal = classifyTerminal(run.id, item.assistantStopReasons.at(-1), run.abortRequested);
 				terminals.push(terminal);
 				if (terminal.status !== undefined) push({ kind: `mission.${terminal.status}`, lane, runId: run.id });

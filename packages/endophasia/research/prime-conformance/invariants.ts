@@ -171,6 +171,15 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		succeeded("switch_session"),
 		succeeded("get_messages"),
 		observed("messagesAfterReopen", "entryIdsStableAcrossReopen"),
+		(run) => {
+			// The reopened process must restore the whole conversation recorded before the first process closed.
+			const recorded = run.stats.find((item) => item.label === "after-multi-c")?.totalMessages;
+			const reopened = run.stats.find((item) => item.label === "after-reopen")?.totalMessages;
+			const restored = run.observations.messagesAfterReopen;
+			return recorded !== undefined && restored === recorded && reopened === recorded
+				? []
+				: [`reopen restored ${restored ?? "no"} of ${recorded ?? "an unknown number of"} messages`];
+		},
 		(run) => (run.observations.reopenedIntendedSession === true ? [] : ["the intended session was not reopened"]),
 		refusals(0),
 	],

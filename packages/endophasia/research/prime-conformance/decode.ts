@@ -397,6 +397,9 @@ export function decodePrimeSessionFileV0(content: string): PrimeSessionEntryEvid
 	const seen = new Set<string>();
 	for (const [index, entry] of entries.entries()) {
 		if (seen.has(entry.id)) throw new PrimeDecodeError(`session line ${index + 1} repeats an entry id`);
+		// The tree only links backwards, to a non-header entry: a dangling parent means a corrupt session tree.
+		if (typeof entry.parentId === "string" && (!seen.has(entry.parentId) || entry.parentId === entries[0]?.id))
+			throw new PrimeDecodeError(`session line ${index + 1}.parentId names no earlier entry`);
 		seen.add(entry.id);
 	}
 	return entries;

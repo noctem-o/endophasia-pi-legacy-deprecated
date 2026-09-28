@@ -140,6 +140,32 @@ const SCRIPTS: Readonly<Record<string, readonly Step[]>> = {
 interface ChatMessage {
 	readonly role?: unknown;
 	readonly content?: unknown;
+	readonly tool_calls?: unknown;
+	readonly tool_call_id?: unknown;
+}
+
+/**
+ * Every tool call an assistant message after the prompt made is answered by a following tool message with its id,
+ * before the next assistant message. Without them a real provider could not continue the exchange.
+ */
+function toolResultsComplete(messages: readonly ChatMessage[]): boolean {
+	return messages.every((message, index) => {
+		if (message.role !== "assistant" || !Array.isArray(message.tool_calls)) return true;
+		const next = messages.slice(index + 1);
+		const until = next.findIndex((later) => later.role === "assistant");
+		const answered = new Set(
+			(until === -1 ? next : next.slice(0, until)).flatMap((later) =>
+				later.role === "tool" && typeof later.tool_call_id === "string" ? [later.tool_call_id] : [],
+			),
+		);
+		return message.tool_calls.every(
+			(call) =>
+				call !== null &&
+				typeof call === "object" &&
+				"id" in call &&
+				answered.has(String((call as { id: unknown }).id)),
+		);
+	});
 }
 
 const SCENARIO_MARKER = /^\s*SCENARIO:([a-z-]+)/;
@@ -162,7 +188,8 @@ export type UnexpectedProviderRequestV0 =
 	| "summary-not-allowed"
 	| "wrong-model"
 	| "wrong-endpoint"
-	| "repeated-step";
+	| "repeated-step"
+	| "missing-tool-result";
 
 /** One request the fake received, classified. Only `scripted` and `summary` requests are answered with a completion. */
 export type FakeProviderRequestV0 =
@@ -205,7 +232,9 @@ export function selectStepV0(
 	if (script === undefined) return { request: { kind: "unexpected", reason: "unknown-marker" } };
 	if (!expectations.markers.includes(marker))
 		return { request: { kind: "unexpected", reason: "marker-not-expected" } };
-	const reply = messages.slice(lastUser + 1).filter((message) => message.role === "assistant").length;
+	const after = messages.slice(lastUser + 1);
+	const reply = after.filter((message) => message.role === "assistant").length;
+	if (!toolResultsComplete(after)) return { request: { kind: "unexpected", reason: "missing-tool-result" } };
 	const step = script[reply];
 	if (step === undefined) return { request: { kind: "unexpected", reason: "beyond-script" } };
 	return { request: { kind: "scripted", marker, reply }, step };

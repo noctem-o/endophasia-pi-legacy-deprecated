@@ -5,7 +5,7 @@
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.6.0";
+export const PROBE_VERSION = "0.7.0";
 
 /**
  * How the Prime that ran is known:
@@ -228,6 +228,26 @@ function runAgreementProblems(events: readonly PrimeEvidenceEventV0[]): string[]
 	});
 }
 
+/**
+ * A turn's `toolResults` and its `tool_execution_end` events describe the same completed calls: the same ids, names
+ * and error flags. Evidence where the two Prime surfaces disagree contradicts itself.
+ */
+function turnToolAgreementProblems(events: readonly PrimeEvidenceEventV0[]): string[] {
+	let executed: string[] = [];
+	return events.flatMap((event, index) => {
+		if (event.type === "turn_start") executed = [];
+		if (event.type === "tool_execution_end")
+			executed.push(JSON.stringify([event.toolCallId, event.toolName, event.isError]));
+		if (event.type !== "turn_end") return [];
+		const results = (event.toolResults ?? []).map((result) =>
+			JSON.stringify([result.toolCallId, result.toolName, result.isError]),
+		);
+		const agrees = JSON.stringify([...results].sort()) === JSON.stringify([...executed].sort());
+		executed = [];
+		return agrees ? [] : [`event ${index} (turn_end): its tool results do not match the turn's tool executions`];
+	});
+}
+
 /** Stats fields that do not hold a non-negative finite number. `contextUsageTokens` may be null or absent. */
 export function invalidStatsFieldsV0(stats: PrimeStatsEvidenceV0): string[] {
 	const fields: Record<string, unknown> = {
@@ -251,6 +271,11 @@ function entryProblems(where: string, entries: readonly PrimeSessionEntryEvidenc
 	const duplicates = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
 	return [
 		...duplicates.map(() => `${where}: an entry id repeats within one session file`),
+		...entries.flatMap((entry, index) =>
+			typeof entry.parentId === "string" && !entries.slice(1, index).some((earlier) => earlier.id === entry.parentId)
+				? [`${where} entry ${index}: parentId names no earlier entry`]
+				: [],
+		),
 		...entries.flatMap((entry, index) =>
 			(entry.type === "session") === (index === 0)
 				? []
@@ -381,6 +406,7 @@ export function evidenceProblemsV0(run: PrimeScenarioEvidenceV0): string[] {
 		...events,
 		...assistantAgreementProblems(run.events),
 		...runAgreementProblems(run.events),
+		...turnToolAgreementProblems(run.events),
 		...commandProblems(run.commands),
 		...entryProblems("final", run.sessionEntries),
 		...run.entrySnapshots.flatMap((snapshot) => entryProblems(`snapshot ${snapshot.label}`, snapshot.entries)),

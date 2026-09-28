@@ -583,17 +583,21 @@ export async function runPrimeProbeV0(options: PrimeProbeOptionsV0): Promise<Pri
 
 /**
  * SHA-256 over the git-ignored build output the source launcher loads: every file under packages/<name>/dist, by
- * relative path and content, in a stable order. Undefined when there is none.
+ * relative path and content, in a stable order. Undefined when there is none, or when any entry is a symlink: its
+ * target is not hashed, so the build it loads is unverifiable.
  */
-function hashBuildOutput(checkout: string): string | undefined {
+export function hashBuildOutputV0(checkout: string): string | undefined {
 	const hash = createHash("sha256");
 	let files = 0;
+	let symlinks = 0;
 	const walk = (directory: string): void => {
 		for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
 			a.name.localeCompare(b.name),
 		)) {
 			const path = join(directory, entry.name);
-			if (entry.isDirectory()) walk(path);
+			// Node follows a symlink to code this walk would not hash, so any link makes the build output unverifiable.
+			if (entry.isSymbolicLink()) symlinks++;
+			else if (entry.isDirectory()) walk(path);
 			else if (entry.isFile()) {
 				hash.update(relative(checkout, path)).update("\0").update(readFileSync(path)).update("\0");
 				files++;
@@ -605,7 +609,7 @@ function hashBuildOutput(checkout: string): string | undefined {
 		const dist = join(packages, name, "dist");
 		if (existsSync(dist)) walk(dist);
 	}
-	return files === 0 ? undefined : hash.digest("hex");
+	return files === 0 || symlinks > 0 ? undefined : hash.digest("hex");
 }
 
 function git(checkout: string, args: readonly string[]): string {
@@ -641,7 +645,7 @@ export function describePrimeV0(binary: PrimeBinaryV0): PrimeProvenanceV0 {
 			// from HEAD cannot be proved here.
 			const dirty = git(binary.checkout, ["status", "--porcelain", "--untracked-files=no"]).length > 0;
 			commit = head;
-			artifactsHash = hashBuildOutput(binary.checkout);
+			artifactsHash = hashBuildOutputV0(binary.checkout);
 			build = dirty ? "dirty-checkout" : "clean-checkout";
 		} catch {
 			// Neither the commit nor cleanliness is known: stays unverified-checkout, with no commit.

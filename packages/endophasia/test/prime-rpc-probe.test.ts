@@ -33,6 +33,7 @@ import {
 	abnormalExitV0,
 	confinedSessionFileV0,
 	failureTextV0,
+	hashBuildOutputV0,
 	PrimeProbeFailureV0,
 } from "../research/prime-conformance/probe.ts";
 import { classifyPrimeRecordV0, type PrimeRpcResponseV0 } from "../research/prime-conformance/protocol.ts";
@@ -458,6 +459,11 @@ describe("strict session-file decoding", () => {
 		// Exactly one header, on line 1: a concatenated file carries a second one.
 		expectDecodeError(() => decodePrimeSessionFileV0(`${file(header, lines.user, { ...header, id: "s2" })}\n`));
 		expectDecodeError(() => decodePrimeSessionFileV0(`${file(lines.user)}\n`));
+		// Parents link backwards to a non-header entry: a dangling or header parent means a corrupt tree.
+		expectDecodeError(() =>
+			decodePrimeSessionFileV0(`${file(header, lines.user, { ...lines.assistant, parentId: "missing-entry" })}\n`),
+		);
+		expectDecodeError(() => decodePrimeSessionFileV0(`${file(header, { ...lines.user, parentId: header.id })}\n`));
 		expectDecodeError(() => decodePrimeSessionLineV0(JSON.stringify(mutate(lines.assistant!, ["parentId"], "")), 2));
 		const accounting = { type: "future_entry", id: "f1", parentId: "a2", timestamp: "t", usage };
 		expect(() => decodePrimeSessionLineV0(JSON.stringify(accounting), 3)).toThrow(
@@ -582,6 +588,42 @@ describe("strict command-response decoding", () => {
 
 describe("fake provider expectations", () => {
 	const user = (content: string) => ({ role: "user", content });
+
+	it("serves the step after a tool call only once the tool result is sent", async () => {
+		const fake = await startFakeProviderV0({ markers: ["tool-run"], model: "probe-model" });
+		try {
+			const post = async (messages: unknown[]) => {
+				const reply = await fetch(`${fake.baseUrl}/chat/completions`, {
+					method: "POST",
+					body: JSON.stringify({ model: "probe-model", messages }),
+					headers: { "content-type": "application/json" },
+				});
+				await reply.text();
+				return reply.status;
+			};
+			const call = { role: "assistant", content: "", tool_calls: [{ id: "call_probe_1", type: "function" }] };
+			expect(await post([user("SCENARIO:tool-run x")])).toBe(200);
+			expect(await post([user("SCENARIO:tool-run x"), call])).toBe(400);
+			expect(
+				await post([user("SCENARIO:tool-run x"), call, { role: "tool", tool_call_id: "call_other", content: "r" }]),
+			).toBe(400);
+			expect(
+				await post([
+					user("SCENARIO:tool-run x"),
+					call,
+					{ role: "tool", tool_call_id: "call_probe_1", content: "r" },
+				]),
+			).toBe(200);
+			expect(fake.requests).toEqual<FakeProviderRequestV0[]>([
+				{ kind: "scripted", marker: "tool-run", reply: 0 },
+				{ kind: "unexpected", reason: "missing-tool-result" },
+				{ kind: "unexpected", reason: "missing-tool-result" },
+				{ kind: "scripted", marker: "tool-run", reply: 1 },
+			]);
+		} finally {
+			await fake.close();
+		}
+	});
 
 	it("serves only the scenario's scripted requests, and summaries only while allowed", async () => {
 		const fake = await startFakeProviderV0({ markers: ["simple"], model: "probe-model" });
@@ -709,6 +751,25 @@ describe("isolated environment", () => {
 			expect(environment.env.LOCALAPPDATA?.startsWith(environment.env.HOME!)).toBe(true);
 		} finally {
 			rmSync(environment.root, { recursive: true, force: true });
+		}
+	});
+
+	it("hashes the build output, and treats a symlinked artifact as unverifiable", () => {
+		const root = mkdtempSync(join(tmpdir(), "prime-dist-"));
+		try {
+			const dist = join(root, "packages", "agent", "dist");
+			mkdirSync(dist, { recursive: true });
+			expect(hashBuildOutputV0(root)).toBeUndefined();
+			writeFileSync(join(dist, "index.js"), "export {};\n");
+			const first = hashBuildOutputV0(root);
+			expect(first).toMatch(/^[0-9a-f]{64}$/);
+			writeFileSync(join(dist, "index.js"), "export const changed = 1;\n");
+			expect(hashBuildOutputV0(root)).not.toBe(first);
+			writeFileSync(join(root, "elsewhere.js"), "export {};\n");
+			symlinkSync(join(root, "elsewhere.js"), join(dist, "linked.js"));
+			expect(hashBuildOutputV0(root)).toBeUndefined();
+		} finally {
+			rmSync(root, { recursive: true, force: true });
 		}
 	});
 

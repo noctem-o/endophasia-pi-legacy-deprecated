@@ -537,6 +537,11 @@ const INVARIANT_MUTATIONS: readonly Mutation[] = [
 	],
 	[
 		"multi-turn-reopen",
+		"an empty conversation restored",
+		(r) => ({ ...r, observations: { ...r.observations, messagesAfterReopen: 0 } }),
+	],
+	[
+		"multi-turn-reopen",
 		"messages never counted",
 		(r) => ({ ...r, observations: { ...r.observations, messagesAfterReopen: undefined } }),
 	],
@@ -738,6 +743,54 @@ describe("publication gate", () => {
 				const [moved] = events.splice(end, 1);
 				events.splice(turnEnd, 0, moved!);
 				return withScenario({ ...run, events });
+			},
+			"invalid",
+		],
+		[
+			"a run that ends inside an active turn",
+			() => {
+				const run = fixture("simple");
+				return withScenario({ ...run, events: run.events.filter((event) => event.type !== "turn_end") });
+			},
+			"invalid",
+		],
+		[
+			"a tool completion moved into the next turn",
+			() => {
+				const run = fixture("tool-run");
+				const end = run.events.findIndex((event) => event.type === "tool_execution_end");
+				const events = [...run.events];
+				const [moved] = events.splice(end, 1);
+				const nextTurn = events.findIndex((event, index) => index >= end && event.type === "turn_start");
+				events.splice(nextTurn + 1, 0, moved!);
+				return withScenario({ ...run, events });
+			},
+			"invalid",
+		],
+		[
+			"turn tool results that disagree with the tool executions",
+			() => {
+				const run = fixture("tool-run");
+				const events = run.events.map((event) =>
+					event.type === "turn_end" && event.toolResults.length > 0
+						? {
+								...event,
+								toolResults: event.toolResults.map((result) => ({ ...result, isError: !result.isError })),
+							}
+						: event,
+				);
+				return withScenario({ ...run, events });
+			},
+			"invalid",
+		],
+		[
+			"a dangling session parent",
+			() => {
+				const run = fixture("simple");
+				const sessionEntries = run.sessionEntries.map((entry) =>
+					entry.type === "message" && entry.role === "assistant" ? { ...entry, parentId: "missing-entry" } : entry,
+				);
+				return withScenario({ ...run, sessionEntries });
 			},
 			"invalid",
 		],
