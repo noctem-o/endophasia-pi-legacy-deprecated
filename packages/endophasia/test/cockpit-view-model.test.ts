@@ -14,11 +14,13 @@ import {
 	projectModels,
 	projectOperation,
 	projectQueues,
+	projectRuntimeMetrics,
 	projectSessionOverview,
 	projectSessions,
 	projectTranscriptEntry,
 	projectVisibleTranscript,
 } from "../cockpit/view-model.ts";
+import type { RuntimeMetricsV0 } from "../src/runtime-metrics.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 
 const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: {} };
@@ -561,5 +563,107 @@ describe("cockpit Mission Trace projection", () => {
 		expect(short.window).toBeUndefined();
 		expect(short.truncated).toBe("Earlier worker-lifetime trace events are outside the replicated window.");
 		expect(projectMissionTrace({ events: [] }).truncated).toBeUndefined();
+	});
+});
+
+describe("Session Accounting projection", () => {
+	const base: RuntimeMetricsV0 = {
+		schemaVersion: "runtime-metrics.v0",
+		scope: "session",
+		messageCount: 47,
+		usage: {
+			input: 128_400,
+			output: 18_700,
+			cacheRead: 91_200,
+			cacheWrite: 12_100,
+			totalTokens: 154_800,
+			cost: { input: 0.5, output: 0.25, cacheRead: 0.125, cacheWrite: 0.0625, total: 0.9375 },
+		},
+	};
+
+	it("shows the reported values exactly, with grouped counts and a currency-free cost", () => {
+		const view = projectRuntimeMetrics(base, new Date(2026, 0, 1, 9, 5, 7).getTime());
+		expect(view.capturedAt).toBe("09:05:07");
+		expect(view.rows).toEqual([
+			{ label: "Persisted messages", value: "47" },
+			{ label: "Input tokens", value: "128,400" },
+			{ label: "Output tokens", value: "18,700" },
+			{ label: "Cache read", value: "91,200" },
+			{ label: "Cache write", value: "12,100" },
+			{ label: "Reported total", value: "154,800" },
+			{ label: "Accounted cost", value: "0.9375" },
+		]);
+		// The reported total is shown as reported, even though it is not the sum of the components.
+		expect(base.usage.input + base.usage.output + base.usage.cacheRead + base.usage.cacheWrite).not.toBe(154_800);
+	});
+
+	it("shows reasoning and 1h cache write only when present", () => {
+		const withOptional = projectRuntimeMetrics(
+			{ ...base, usage: { ...base.usage, reasoning: 7_400, cacheWrite1h: 3_200 } },
+			0,
+		);
+		expect(withOptional.rows.map((row) => row.label)).toEqual([
+			"Persisted messages",
+			"Input tokens",
+			"Output tokens",
+			"Cache read",
+			"Cache write",
+			"Reasoning",
+			"1h cache write",
+			"Reported total",
+			"Accounted cost",
+		]);
+		expect(withOptional.rows.find((row) => row.label === "Reasoning")?.value).toBe("7,400");
+		expect(withOptional.rows.find((row) => row.label === "1h cache write")?.value).toBe("3,200");
+		expect(projectRuntimeMetrics(base, 0).rows.map((row) => row.label)).not.toContain("Reasoning");
+		// Zero is a reported value, not an absent one.
+		expect(
+			projectRuntimeMetrics({ ...base, usage: { ...base.usage, reasoning: 0 } }, 0).rows.find(
+				(row) => row.label === "Reasoning",
+			)?.value,
+		).toBe("0");
+	});
+
+	it("renders negative corrections as reported, assuming nothing is monotonic", () => {
+		const view = projectRuntimeMetrics(
+			{
+				...base,
+				usage: {
+					...base.usage,
+					input: -9,
+					totalTokens: -1_280,
+					cost: { ...base.usage.cost, total: -15.125 },
+				},
+			},
+			0,
+		);
+		expect(view.rows.find((row) => row.label === "Input tokens")?.value).toBe("-9");
+		expect(view.rows.find((row) => row.label === "Reported total")?.value).toBe("-1,280");
+		expect(view.rows.find((row) => row.label === "Accounted cost")?.value).toBe("-15.125");
+	});
+
+	it("never rounds, adds a currency, a percentage, a lane or a context claim", () => {
+		const view = projectRuntimeMetrics(
+			{ ...base, usage: { ...base.usage, input: 1_234.5, cost: { ...base.usage.cost, total: 0.000123456789 } } },
+			0,
+		);
+		expect(view.rows.find((row) => row.label === "Input tokens")?.value).toBe("1,234.5");
+		expect(view.rows.find((row) => row.label === "Accounted cost")?.value).toBe("0.000123456789");
+		// Tiny and huge adjustments keep their exact round-trippable form instead of rounding to 0 or -0.
+		const extremes = projectRuntimeMetrics(
+			{
+				...base,
+				usage: { ...base.usage, input: 1e-21, output: -1e-21, cacheRead: 1e21, cacheWrite: 0.1 + 0.2 },
+			},
+			0,
+		);
+		const value = (label: string) => extremes.rows.find((row) => row.label === label)?.value;
+		expect(value("Input tokens")).toBe("1e-21");
+		expect(value("Output tokens")).toBe("-1e-21");
+		expect(value("Cache read")).toBe("1e+21");
+		expect(value("Cache write")).toBe("0.30000000000000004");
+		expect(Number(value("Reported total")?.replaceAll(",", ""))).toBe(base.usage.totalTokens);
+		const text = JSON.stringify(view);
+		expect(text).not.toMatch(/[$£€%]|main|lane|context|invoice|bill/i);
 	});
 });

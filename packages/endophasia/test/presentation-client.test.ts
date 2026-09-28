@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { JsonlSessionRepo } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
@@ -10,6 +11,7 @@ import { type RunningServer, startServer } from "@earendil-works/pi-coding-agent
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { type EndophasiaPresentationClientV0, openEndophasiaPresentationClientV0 } from "../presentation/client.ts";
 import { startEndophasiaServer } from "../runtime/server.ts";
+import type { OperationOutcomeV0, RuntimeMetricsV0 } from "../src/index.ts";
 
 const directories: string[] = [];
 const servers: RunningServer[] = [];
@@ -105,12 +107,25 @@ describe("Endophasia Presentation Client v0", () => {
 				lanes: [{ name: "main", operation: null }],
 				counts: { lanes: 1, activeOperations: 0, abortingOperations: 0 },
 			});
+			// Runtime Facts are request/response reads of this Session: its zero baseline, and no unknown outcome.
+			expect(await presentation.runtimeMetrics(BACKGROUND_CONTEXT)).toMatchObject({
+				schemaVersion: "runtime-metrics.v0",
+				scope: "session",
+				messageCount: 0,
+				usage: { totalTokens: 0, cost: { total: 0 } },
+			});
+			expect(await presentation.operationOutcome("no-such-operation", BACKGROUND_CONTEXT)).toBeNull();
 		};
 		await observe("observed");
 
 		await presentation.detach(BACKGROUND_CONTEXT);
 		expect(presentation.attachment.value).toEqual({ status: "detached" });
 		await expect(Promise.resolve().then(() => presentation.sessionOverview(BACKGROUND_CONTEXT))).rejects.toThrow();
+		// Detached, there is no Session to read: no zero metrics or null outcome is fabricated.
+		await expect(Promise.resolve().then(() => presentation.runtimeMetrics(BACKGROUND_CONTEXT))).rejects.toThrow();
+		await expect(
+			Promise.resolve().then(() => presentation.operationOutcome("no-such-operation", BACKGROUND_CONTEXT)),
+		).rejects.toThrow();
 
 		// Later attachment generations rebind every Session service, including the Inspector.
 		await observe("other");
@@ -142,7 +157,16 @@ describe("Endophasia Presentation Client v0", () => {
 			| "attach"
 			| "detach"
 			| "sessionOverview"
+			| "runtimeMetrics"
+			| "operationOutcome"
 			| "dispose"
+		>();
+		// Runtime Facts are read-only requests returning their schemas, not the underlying service object.
+		expectTypeOf<EndophasiaPresentationClientV0["runtimeMetrics"]>().toEqualTypeOf<
+			(context: Context) => Promise<RuntimeMetricsV0>
+		>();
+		expectTypeOf<EndophasiaPresentationClientV0["operationOutcome"]>().toEqualTypeOf<
+			(operationId: string, context: Context) => Promise<OperationOutcomeV0 | null>
 		>();
 		expectTypeOf<keyof EndophasiaPresentationClientV0["models"]>().toEqualTypeOf<"value" | "subscribe">();
 		expectTypeOf<keyof EndophasiaPresentationClientV0["transcript"]>().toEqualTypeOf<"value" | "subscribe">();
@@ -172,12 +196,32 @@ describe("Endophasia Presentation Client v0", () => {
 		});
 		servers.push(server);
 		const presentation = await open(server);
+		// The worker lacks both Mission Trace and Runtime Facts; either missing service degrades the attachment.
 		await expect(presentation.attach("observed", BACKGROUND_CONTEXT)).rejects.toThrow(
-			"Remote service endophasia.mission-trace.v0 is not allowlisted",
+			/Remote service endophasia\.(mission-trace|runtime-facts)\.v0 is not allowlisted/,
 		);
 		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
 		// A missing capability is not reported as a real trace with zero events.
 		expect(presentation.missionTrace.value).toBeUndefined();
+	});
+
+	it("requires Runtime Facts: a worker without them degrades instead of fabricating zero metrics", async () => {
+		const server = await startServer({
+			...workerModel,
+			directory: await temporaryDirectory("endophasia-no-facts-"),
+			sessionWorkerEntryUrl: new URL("./fixtures/inspector-and-trace-session-worker.ts", import.meta.url),
+		});
+		servers.push(server);
+		const presentation = await open(server);
+		await expect(presentation.attach("observed", BACKGROUND_CONTEXT)).rejects.toThrow(
+			"Remote service endophasia.runtime-facts.v0 is not allowlisted",
+		);
+		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
+		// A missing capability is never reported as zero accounting or as "no durable result".
+		await expect(Promise.resolve().then(() => presentation.runtimeMetrics(BACKGROUND_CONTEXT))).rejects.toThrow();
+		await expect(
+			Promise.resolve().then(() => presentation.operationOutcome("any", BACKGROUND_CONTEXT)),
+		).rejects.toThrow();
 	});
 
 	it("contains a throwing diagnostic observer without changing the attachment lifecycle", async () => {

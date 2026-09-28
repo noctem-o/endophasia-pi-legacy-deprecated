@@ -224,11 +224,13 @@ describe("Standard Cockpit source boundaries", () => {
 					specifier === "../presentation/client.ts" ||
 					specifier === "../presentation/websocket-transport.ts" ||
 					specifier === "@earendil-works/chord/context" ||
-					// Types only: Pi's replicated state shapes and the Session Overview and Mission Trace schemas.
+					// Types only: Pi's replicated state shapes and the Session Overview, Mission Trace and Runtime Metrics
+					// schemas.
 					(typeOnly &&
 						(specifier === "@earendil-works/chord" ||
 							specifier === "../src/session-overview.ts" ||
 							specifier === "../src/mission-trace-service.ts" ||
+							specifier === "../src/runtime-metrics.ts" ||
 							specifier.startsWith("@earendil-works/pi-coding-agent/experimental/services/")));
 				expect(allowed, `${file} imports ${typeOnly ? "type " : ""}${specifier}`).toBe(true);
 			}
