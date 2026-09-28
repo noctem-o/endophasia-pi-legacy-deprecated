@@ -326,6 +326,33 @@ describe("classification", () => {
 		}
 	});
 
+	it("binds the usage persisted in the session file to the script, not only the live events", () => {
+		const simple = fixture("simple");
+		const zeroed = {
+			...simple,
+			sessionEntries: simple.sessionEntries.map((entry) =>
+				entry.type === "message" && entry.role === "assistant" && entry.usage !== undefined
+					? { ...entry, usage: { ...entry.usage, output: 0 } }
+					: entry,
+			),
+		};
+		const report = buildPrimeConformanceReportV0(withScenario(zeroed));
+		expect(report.facts.providerUsageDecodedExactly).toBe(false);
+		expect(report.findings.find((finding) => finding.contract === "UsageLedgerRowV0")!.basis).toBe("contradicted");
+	});
+
+	it("rejects a full audited run whose facts stay unresolved", () => {
+		const compaction = fixture("compaction");
+		const odd = withStats(compaction, "after-compaction", (stats) => ({ ...stats, cost: stats.cost + 1 }));
+		const report = buildPrimeConformanceReportV0(withScenario(odd));
+		const unresolved = report.findings.filter((finding) => finding.basis === "unverified");
+		expect(unresolved.length).toBeGreaterThan(0);
+		const assessment = assess(withScenario(odd));
+		expect(assessment.invalid.some((item) => item.includes("unresolved on a full run"))).toBe(true);
+		// The same unresolved facts on a partial run are only "not run".
+		expect(assess([fixture("simple")], ["simple"]).invalid).toEqual([]);
+	});
+
 	it("says unverified instead of guessing when a scenario did not run", () => {
 		const facts = derivePrimeFactsV0([fixture("simple")]);
 		expect(facts.statsDropAfterCompaction).toBeUndefined();
@@ -440,6 +467,28 @@ type Mutation = readonly [string, string, (run: PrimeScenarioEvidenceV0) => Prim
 const INVARIANT_MUTATIONS: readonly Mutation[] = [
 	["fork", "no new session file", (r) => ({ ...r, observations: { ...r.observations, forkCreatedNewFile: false } })],
 	["fork", "no fork target", (r) => ({ ...r, observations: { ...r.observations, forkTargets: 0 } })],
+	[
+		"fork",
+		"original file gained a row during the fork",
+		(r) => ({
+			...r,
+			entrySnapshots: r.entrySnapshots.map((s) =>
+				s.label === "fork-original-after"
+					? { ...s, entries: [...s.entries, { ...s.entries.at(-1)!, id: "ffffffff" }] }
+					: s,
+			),
+		}),
+	],
+	["fork", "no fork snapshots", (r) => ({ ...r, entrySnapshots: [] })],
+	[
+		"fork",
+		"forked at another entry than the latest user message",
+		(r) => {
+			const copied = new Set(r.entrySnapshots[0]!.entries.map((entry) => entry.id));
+			const lastCopied = r.sessionEntries.findLastIndex((entry) => entry.type !== "session" && copied.has(entry.id));
+			return { ...r, sessionEntries: r.sessionEntries.filter((_entry, index) => index !== lastCopied) };
+		},
+	],
 	["fork", "fork never succeeded", (r) => ({ ...r, commands: r.commands.filter((c) => c.command !== "fork") })],
 	[
 		"multi-turn-reopen",
@@ -638,6 +687,37 @@ describe("publication gate", () => {
 			"a clean checkout without a build output hash",
 			() => withProvenance(fixtures, { artifactsHash: undefined }),
 			"unpublishable",
+		],
+		[
+			"a known event outside its lifecycle",
+			() => {
+				const run = fixture("tool-run");
+				const end = run.events.findIndex((event) => event.type === "tool_execution_end");
+				const turnEnd = run.events.findIndex((event, index) => index > end && event.type === "turn_end");
+				const events = [...run.events];
+				const [moved] = events.splice(end, 1);
+				events.splice(turnEnd, 0, moved!);
+				return withScenario({ ...run, events });
+			},
+			"invalid",
+		],
+		[
+			"a negative persisted summary usage",
+			() => {
+				const run = fixture("compaction");
+				const negate = (entries: typeof run.sessionEntries) =>
+					entries.map((entry) =>
+						entry.type === "compaction" && entry.usage !== undefined
+							? { ...entry, usage: { ...entry.usage, output: -entry.usage.output } }
+							: entry,
+					);
+				return withScenario({
+					...run,
+					sessionEntries: negate(run.sessionEntries),
+					entrySnapshots: run.entrySnapshots.map((s) => ({ ...s, entries: negate(s.entries) })),
+				});
+			},
+			"invalid",
 		],
 		["a missing requested scenario", () => fixtures.filter((run) => run.provenance.scenario !== "fork"), "invalid"],
 		["binary provenance", () => withProvenance(fixtures, { build: "binary", commit: undefined }), "unpublishable"],
@@ -838,6 +918,20 @@ describe("command ordering", () => {
 		expect(await runPrimeConformanceCommandV0([], contradicted.deps)).toBe(1);
 		expect(existsSync(contradicted.reportPath)).toBe(true);
 		expect(contradicted.stderr.join("")).toContain("MissionTraceEventV0: toolCallIdentityNative = true");
+	});
+
+	it("invalidates a run whose Prime build changed while the probe ran", async () => {
+		const run = harness(fixtures.map((item) => structuredClone(item)));
+		const described = run.deps.describe({ command: "prime-agent", leadingArgs: [], description: "prime-agent" });
+		const describe = vi
+			.fn()
+			.mockReturnValueOnce(described)
+			.mockReturnValue({ ...described, artifactsHash: "0".repeat(64) });
+		const before = run.fixtureState();
+		expect(await runPrimeConformanceCommandV0(["--write-fixtures"], { ...run.deps, describe })).toBe(1);
+		expect(describe).toHaveBeenCalledTimes(2);
+		expect(run.fixtureState()).toEqual(before);
+		expect(run.stderr.join("")).toContain("the Prime build changed while the probe ran");
 	});
 
 	it("refuses fixture writes from an invalid run", async () => {

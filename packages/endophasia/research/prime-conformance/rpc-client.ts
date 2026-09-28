@@ -60,6 +60,7 @@ export class PrimeRpcClientV0 {
 	readonly #onEvent: PrimeRpcClientOptionsV0["onEvent"];
 	#nextId = 0;
 	#exit: PrimeRpcExitV0 | undefined;
+	#drainTimedOut = false;
 	stderr = "";
 
 	constructor(options: PrimeRpcClientOptionsV0) {
@@ -85,7 +86,10 @@ export class PrimeRpcClientV0 {
 			// A descendant that inherited stdout could hold it open, so the wait after exit is bounded.
 			this.#child.on("exit", (code, signal) => {
 				const exit = this.#settle({ code, signal });
-				setTimeout(() => resolve(exit), STDOUT_DRAIN_GRACE_MS).unref();
+				setTimeout(() => {
+					this.#drainTimedOut = true;
+					resolve(exit);
+				}, STDOUT_DRAIN_GRACE_MS).unref();
 			});
 			this.#child.on("close", (code, signal) => resolve(this.#settle({ code, signal })));
 			// A spawn failure never emits exit; pending requests must fail now, not at their timeout.
@@ -103,6 +107,14 @@ export class PrimeRpcClientV0 {
 			this.#pending.delete(id);
 		}
 		return this.#exit;
+	}
+
+	/**
+	 * True when `exited` settled because stdout was still open after the drain grace period: records could still
+	 * arrive, so what was decoded is not known to be complete.
+	 */
+	get drainTimedOut(): boolean {
+		return this.#drainTimedOut;
 	}
 
 	get pid(): number | undefined {

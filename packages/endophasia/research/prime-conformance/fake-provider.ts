@@ -1,6 +1,7 @@
 // Research-only (Prime Runtime Conformance v0). A deterministic loopback OpenAI Chat Completions endpoint that Prime
 // is pointed at through its documented models.json custom-provider seam. It listens on 127.0.0.1 only, so no probe
 // content leaves the machine and no API credits are spent.
+import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -92,6 +93,16 @@ export const EXPECTED_ASSISTANT_USAGE: Readonly<Record<string, readonly (string 
 	compaction: ["multi-a", "multi-b", "multi-c"],
 	fork: ["multi-a", "multi-b", "multi-c"],
 	"child-usage-replay": [],
+};
+
+/**
+ * For each scenario, the scripted usage behind each assistant entry in the session file the evidence keeps, in file
+ * order. It differs from the live messages only for the fork, whose kept file is the fork: it copies the first
+ * exchange and adds the prompt made on the fork. child-usage-replay is absent: its file is crafted by the probe.
+ */
+export const EXPECTED_PERSISTED_USAGE: Readonly<Record<string, readonly (string | null)[]>> = {
+	...Object.fromEntries(Object.entries(EXPECTED_ASSISTANT_USAGE).filter(([name]) => name !== "child-usage-replay")),
+	fork: ["multi-a", "multi-c"],
 };
 
 type Step =
@@ -217,15 +228,24 @@ export interface FakeProviderV0 {
 	readonly baseUrl: string;
 	/** Every request received, classified, in order. */
 	readonly requests: readonly FakeProviderRequestV0[];
-	/** Open or close the phase in which marker-less summarization requests are expected (manual compaction). */
+	/**
+	 * Open or close the phase in which marker-less summarization requests are expected (one manual compaction). Prime
+	 * makes one history call, plus one turn-prefix call when the cut splits a turn
+	 * (prime:packages/coding-agent/src/core/compaction/compaction.ts:829-866): at most two distinct requests. The same
+	 * request twice in one phase (a retry or double dispatch) is a repeated step; a third is beyond the script.
+	 */
 	allowSummaries(allowed: boolean): void;
 	close(): Promise<void>;
 }
+
+const MAX_SUMMARIES_PER_COMPACTION = 2;
 
 /** Start the fake on an ephemeral loopback port, serving exactly one scenario's expected requests. */
 export async function startFakeProviderV0(expectations: FakeProviderExpectationsV0): Promise<FakeProviderV0> {
 	const requests: FakeProviderRequestV0[] = [];
 	let summariesAllowed = false;
+	let summaryPhase = 0;
+	let summariesInPhase = 0;
 	const served = new Set<string>();
 	let callCounter = 0;
 	const open = new Set<ServerResponse>();
@@ -261,12 +281,18 @@ export async function startFakeProviderV0(expectations: FakeProviderExpectations
 				refuse("unexpected probe model");
 				return;
 			}
-			const selected = selectStepV0(body.messages as ChatMessage[], expectations, summariesAllowed);
-			// Each scripted step is served once: a second request for it (a double dispatch) is unexpected, so its spend
-			// cannot vanish from the evidence.
+			let selected = selectStepV0(body.messages as ChatMessage[], expectations, summariesAllowed);
+			// Each scripted step, and the one summary of a compaction phase, is served once: a second request for it (a
+			// retry or double dispatch) is unexpected, so its spend cannot vanish from the evidence.
 			const stepKey =
-				selected.request.kind === "scripted" ? `${selected.request.marker}#${selected.request.reply}` : undefined;
+				selected.request.kind === "scripted"
+					? `${selected.request.marker}#${selected.request.reply}`
+					: selected.request.kind === "summary"
+						? `summary@${summaryPhase}:${createHash("sha256").update(JSON.stringify(body.messages)).digest("hex")}`
+						: undefined;
 			const repeated = stepKey !== undefined && served.has(stepKey);
+			if (!repeated && selected.request.kind === "summary" && ++summariesInPhase > MAX_SUMMARIES_PER_COMPACTION)
+				selected = { request: { kind: "unexpected", reason: "beyond-script" } };
 			if (stepKey !== undefined) served.add(stepKey);
 			const classified: FakeProviderRequestV0 = repeated
 				? { kind: "unexpected", reason: "repeated-step" }
@@ -339,6 +365,10 @@ export async function startFakeProviderV0(expectations: FakeProviderExpectations
 		baseUrl: `http://127.0.0.1:${port}/v1`,
 		requests,
 		allowSummaries(allowed) {
+			if (allowed && !summariesAllowed) {
+				summaryPhase++;
+				summariesInPhase = 0;
+			}
 			summariesAllowed = allowed;
 		},
 		async close() {

@@ -5,7 +5,7 @@
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.4.0";
+export const PROBE_VERSION = "0.5.0";
 
 /**
  * How the Prime that ran is known:
@@ -166,7 +166,7 @@ function usageProblems(label: string, usage: unknown, required: boolean): string
 		"cost.total": cost.total,
 	};
 	return Object.entries(fields).flatMap(([name, field]) =>
-		typeof field === "number" && Number.isFinite(field) ? [] : [`${label}: usage ${name} is not a finite number`],
+		isCountV0(field) ? [] : [`${label}: usage ${name} is not a non-negative finite number`],
 	);
 }
 
@@ -203,7 +203,12 @@ function assistantAgreementProblems(events: readonly PrimeEvidenceEventV0[]): st
 	});
 }
 
-/** Stats fields that do not hold a finite number. `contextUsageTokens` may legitimately be null or absent. */
+/** A count, cost or attempt: finite and never negative. */
+export function isCountV0(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+/** Stats fields that do not hold a non-negative finite number. `contextUsageTokens` may be null or absent. */
 export function invalidStatsFieldsV0(stats: PrimeStatsEvidenceV0): string[] {
 	const fields: Record<string, unknown> = {
 		userMessages: stats.userMessages,
@@ -218,9 +223,7 @@ export function invalidStatsFieldsV0(stats: PrimeStatsEvidenceV0): string[] {
 		"tokens.total": stats.tokens?.total,
 		cost: stats.cost,
 	};
-	return Object.entries(fields).flatMap(([name, value]) =>
-		typeof value === "number" && Number.isFinite(value) ? [] : [name],
-	);
+	return Object.entries(fields).flatMap(([name, value]) => (isCountV0(value) ? [] : [name]));
 }
 
 function entryProblems(where: string, entries: readonly PrimeSessionEntryEvidenceV0[]): string[] {
@@ -277,7 +280,7 @@ function commandProblems(commands: readonly PrimeCommandEvidenceV0[]): string[] 
 
 /**
  * Evidence that is not structurally what decode.ts would produce: a missing identity, a missing required usage object,
- * a non-boolean flag or a non-finite number. Any problem means the evidence must not be accepted.
+ * a non-boolean flag or a negative or non-finite number. Any problem means the evidence must not be accepted.
  */
 export function evidenceProblemsV0(run: PrimeScenarioEvidenceV0): string[] {
 	const events = run.events.flatMap((event, index) => {
@@ -326,13 +329,13 @@ export function evidenceProblemsV0(run: PrimeScenarioEvidenceV0): string[] {
 			case "compaction_start":
 				return missingText(event.reason) ? [`${label}: compaction without reason`] : [];
 			case "auto_retry_start":
-				return Number.isFinite(event.attempt) && Number.isFinite(event.maxAttempts)
+				return isCountV0(event.attempt) && isCountV0(event.maxAttempts)
 					? []
-					: [`${label}: retry attempt counts are not finite numbers`];
+					: [`${label}: retry attempt counts are not non-negative finite numbers`];
 			case "auto_retry_end":
 				return [
 					...booleanProblem(label, event.success, "success"),
-					...(Number.isFinite(event.attempt) ? [] : [`${label}: retry attempt is not a finite number`]),
+					...(isCountV0(event.attempt) ? [] : [`${label}: retry attempt is not a non-negative finite number`]),
 				];
 			case "unknown":
 				return missingText(event.primeType) ? [`${label}: unknown event without its Prime type`] : [];
@@ -347,7 +350,7 @@ export function evidenceProblemsV0(run: PrimeScenarioEvidenceV0): string[] {
 		}
 	});
 	const stats = run.stats.flatMap((item) =>
-		invalidStatsFieldsV0(item).map((field) => `stats ${item.label}: ${field} is not a finite number`),
+		invalidStatsFieldsV0(item).map((field) => `stats ${item.label}: ${field} is not a non-negative finite number`),
 	);
 	return [
 		...events,

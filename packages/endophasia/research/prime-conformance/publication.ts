@@ -5,6 +5,7 @@
 // - Provenance is uncertain (a binary, a dirty checkout, another probe revision, a mixed fixture set): the run may be
 //   inspected, but it cannot certify or refresh the reference.
 import { PROBE_NAME, PROBE_VERSION, type PrimeProvenanceV0, type PrimeScenarioEvidenceV0 } from "./evidence.ts";
+import { SCENARIO_NAMES_WITH_INVARIANTS } from "./invariants.ts";
 import { buildPrimeConformanceReportV0, isVerifiedProvenanceV0, type PrimeConformanceReportV0 } from "./report.ts";
 
 export interface PrimeEvidenceAssessmentV0 {
@@ -49,6 +50,7 @@ export function assessPrimeEvidenceV0(input: PrimeEvidenceAssessmentInputV0): Pr
 			.filter((name) => !input.requestedScenarios.includes(name))
 			.map((name) => `${name}: produced but not requested`),
 		...reportProblems(report),
+		...unresolvedProblems(report, input.requestedScenarios),
 	];
 	const { provenance } = report;
 	const unpublishable = [
@@ -78,6 +80,19 @@ function reportProblems(report: PrimeConformanceReportV0): string[] {
 			(violation) => `privacy: ${violation.matches} probe sentinel match(es) in ${violation.surface}`,
 		),
 	];
+}
+
+/**
+ * A full run on the audited revision has every scenario a fact depends on, so a fact left unresolved there is an
+ * observed value that fits no recognized outcome (e.g. a post-compaction cost equal to neither candidate). That is not
+ * "not run": it is evidence the classification cannot account for, and must not pass as a clean run.
+ */
+function unresolvedProblems(report: PrimeConformanceReportV0, requested: readonly string[]): string[] {
+	const fullRun = SCENARIO_NAMES_WITH_INVARIANTS.every((name) => requested.includes(name));
+	if (!fullRun || report.facts.auditedRevision !== true) return [];
+	return report.findings
+		.filter((finding) => finding.basis === "unverified")
+		.map((finding) => `${finding.contract}: unresolved on a full run: ${finding.missing.join(", ")}`);
 }
 
 /**

@@ -227,6 +227,9 @@ class ProbeSession {
 			this.#run.protocolErrors.push(...this.client.protocolErrors);
 			const abnormal = abnormalExitV0(exit);
 			if (abnormal !== undefined) this.#run.failures.push(abnormal);
+			// An inherited stdout held open past the grace period: later records would be lost, so evidence is incomplete.
+			if (this.client.drainTimedOut)
+				this.#run.failures.push("Prime RPC stdout did not close after the process exited");
 		})();
 		return this.#closed;
 	}
@@ -466,10 +469,16 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			await session.prompt("multi-b");
 			await session.stats("before-fork");
 			const originalFile = await session.sessionFile();
-			// The fork is the operation under test: no target, a cancelled fork or no new session fails the scenario.
+			const beforeFork = readSessionEntries(originalFile);
+			run.entrySnapshots.push({ label: "fork-original-before", entries: beforeFork });
+			// The fork is the operation under test: no target, a cancelled fork or no new session fails the scenario. The
+			// target is the second user message, identified in the file, never by its position in Prime's list.
+			const target = beforeFork.findLast((entry) => entry.type === "message" && entry.role === "user")?.id;
 			const targets = decodePrimeForkTargetsV0(await session.lookup("get_fork_messages"));
 			run.observations.forkTargets = targets.length;
-			requirePrimeNotCancelledV0(await session.command({ type: "fork", entryId: targets.at(-1) }));
+			if (target === undefined || !targets.includes(target))
+				throw new Error("get_fork_messages does not offer the latest user message");
+			requirePrimeNotCancelledV0(await session.command({ type: "fork", entryId: target }));
 			await session.stats("after-fork");
 			const forkFile = await session.sessionFile();
 			run.observations.forkCreatedNewFile = !sameFile(forkFile, originalFile);
@@ -477,6 +486,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			await session.stats("after-fork-prompt");
 			run.sessionEntries = readSessionEntries(forkFile);
 			const original = readSessionEntries(originalFile);
+			run.entrySnapshots.push({ label: "fork-original-after", entries: original });
 			run.observations.originalEntriesAfterFork = original.length;
 			const originalIds = new Set(original.flatMap((entry) => (entry.type === "session" ? [] : [entry.id])));
 			const shared = run.sessionEntries.filter((entry) => entry.type !== "session" && originalIds.has(entry.id));

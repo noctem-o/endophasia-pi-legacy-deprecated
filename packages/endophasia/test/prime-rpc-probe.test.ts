@@ -277,6 +277,21 @@ describe("PrimeRpcClientV0", () => {
 		await rpc.close();
 		expect(rpc.protocolErrors).toEqual(["Malformed JSON (9 characters)"]);
 	});
+
+	it("reports an exit whose stdout a descendant kept open", async () => {
+		const rpc = new PrimeRpcClientV0({
+			command: "sh",
+			args: ["-c", "sleep 5 & exit 0"],
+			env: { PATH: process.env.PATH },
+			cwd: process.cwd(),
+		});
+		expect(await rpc.exited).toEqual({ code: 0, signal: null });
+		expect(rpc.drainTimedOut).toBe(true);
+		const clean = client("trailing-exit");
+		await clean.request({ type: "get_state" });
+		await clean.close();
+		expect(clean.drainTimedOut).toBe(false);
+	});
 });
 
 describe("strict Prime decoders", () => {
@@ -317,6 +332,8 @@ describe("strict Prime decoders", () => {
 		["message_end", ["message", "usage", "output"], Number.NaN, "NaN usage field"],
 		["message_end", ["message", "usage", "cost", "total"], Number.POSITIVE_INFINITY, "infinite cost"],
 		["message_end", ["message", "usage", "input"], "1", "string usage field"],
+		["message_end", ["message", "usage", "output"], -1, "negative usage field"],
+		["message_end", ["message", "usage", "cost", "input"], -0.5, "negative cost"],
 		["message_end", ["message", "stopReason"], undefined, "missing stop reason"],
 		["message_end", ["message", "content", 2, "id"], undefined, "tool call without id"],
 		["message_end", ["message", "content", 2, "name"], "", "tool call with empty name"],
@@ -352,7 +369,7 @@ describe("strict Prime decoders", () => {
 	it("names field paths, never values, in decode errors", () => {
 		const broken = mutate(events.message_end!, ["message", "usage", "output"], SENTINELS.prompt);
 		expect(() => decodePrimeEventV0("message_end", broken)).toThrow(
-			"message_end.message.usage.output is not a finite number",
+			"message_end.message.usage.output is not a non-negative finite number",
 		);
 		try {
 			decodePrimeEventV0("message_end", broken);
@@ -601,6 +618,21 @@ describe("fake provider expectations", () => {
 			expect(
 				await post(JSON.stringify({ model: "probe-model", messages: [user("summarize the conversation")] })),
 			).toBe(200);
+			// The same summary request twice within one compaction (a retry or double dispatch) is a repeated step.
+			expect(
+				await post(JSON.stringify({ model: "probe-model", messages: [user("summarize the conversation")] })),
+			).toBe(400);
+			fake.allowSummaries(false);
+			// The next compaction phase gets its own summaries: a split turn adds a distinct turn-prefix request, and
+			// nothing beyond those two is served.
+			fake.allowSummaries(true);
+			expect(
+				await post(JSON.stringify({ model: "probe-model", messages: [user("summarize the conversation")] })),
+			).toBe(200);
+			expect(await post(JSON.stringify({ model: "probe-model", messages: [user("summarize the prefix")] }))).toBe(
+				200,
+			);
+			expect(await post(JSON.stringify({ model: "probe-model", messages: [user("summarize again")] }))).toBe(400);
 			fake.allowSummaries(false);
 			expect((await fetch(`${fake.baseUrl}/responses`, { method: "POST", body: "{}" })).status).toBe(404);
 			expect((await fetch(`${fake.baseUrl}/chat/completions`)).status).toBe(404);
@@ -616,6 +648,10 @@ describe("fake provider expectations", () => {
 				{ kind: "unexpected", reason: "beyond-script" },
 				{ kind: "unexpected", reason: "summary-not-allowed" },
 				{ kind: "summary" },
+				{ kind: "unexpected", reason: "repeated-step" },
+				{ kind: "summary" },
+				{ kind: "summary" },
+				{ kind: "unexpected", reason: "beyond-script" },
 				{ kind: "unexpected", reason: "wrong-endpoint" },
 				{ kind: "unexpected", reason: "wrong-endpoint" },
 			]);

@@ -90,13 +90,24 @@ export async function runPrimeConformanceCommandV0(
 		`Prime Agent ${provenance.version}${provenance.commit ? ` @ ${provenance.commit}` : ""} (${provenance.build})\n`,
 	);
 
-	const evidence = await deps.probe({
+	const probed = await deps.probe({
 		binary,
 		provenance,
 		retain,
 		...(only.length > 0 ? { only } : {}),
 		log: (message) => deps.stdout(`  ${message}\n`),
 	});
+	// Provenance is described once, before the scenarios run; a rebuild or checkout change during the run would mean
+	// the scenarios exercised different builds under one recorded provenance, so every scenario is then invalid.
+	const described = deps.describe(binary);
+	const buildChanged =
+		described.version !== provenance.version ||
+		described.commit !== provenance.commit ||
+		described.build !== provenance.build ||
+		described.artifactsHash !== provenance.artifactsHash;
+	const evidence = buildChanged
+		? probed.map((run) => ({ ...run, failures: [...run.failures, "the Prime build changed while the probe ran"] }))
+		: probed;
 
 	const referenceDir = join(deps.fixtureRoot, FIXTURE_PRIME_VERSION);
 	let reference: PrimeProvenanceV0 | undefined;

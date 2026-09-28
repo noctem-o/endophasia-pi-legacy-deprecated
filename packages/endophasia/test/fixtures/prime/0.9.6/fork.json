@@ -7,7 +7,7 @@
 		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.4.0",
+		"probeVersion": "0.5.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "fork"
@@ -430,7 +430,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0e9a6-d871-707c-b159-da25e0d827d7",
+			"id": "01a0e9e8-2fbd-72d6-b6d9-92d83f5e7a86",
 			"keys": [
 				"cwd",
 				"id",
@@ -443,7 +443,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "22edc344",
+			"id": "fab1fba3",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -456,8 +456,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "9c4981ab",
-			"parentId": "22edc344",
+			"id": "fbc5cd7a",
+			"parentId": "fab1fba3",
 			"keys": [
 				"id",
 				"parentId",
@@ -468,8 +468,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "6a7b8110",
-			"parentId": "9c4981ab",
+			"id": "f1c6874e",
+			"parentId": "fbc5cd7a",
 			"keys": [
 				"id",
 				"parentId",
@@ -480,8 +480,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "a19c0c4e",
-			"parentId": "6a7b8110",
+			"id": "b59e10bf",
+			"parentId": "f1c6874e",
 			"keys": [
 				"id",
 				"parentId",
@@ -492,8 +492,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "436a32f5",
-			"parentId": "a19c0c4e",
+			"id": "4818cc62",
+			"parentId": "b59e10bf",
 			"keys": [
 				"content",
 				"customType",
@@ -507,8 +507,8 @@
 		},
 		{
 			"type": "message",
-			"id": "6defe535",
-			"parentId": "436a32f5",
+			"id": "33789cd1",
+			"parentId": "4818cc62",
 			"keys": [
 				"id",
 				"message",
@@ -520,8 +520,8 @@
 		},
 		{
 			"type": "message",
-			"id": "634f61a4",
-			"parentId": "6defe535",
+			"id": "43099fd7",
+			"parentId": "33789cd1",
 			"keys": [
 				"id",
 				"message",
@@ -549,8 +549,8 @@
 		},
 		{
 			"type": "message",
-			"id": "0d019412",
-			"parentId": "634f61a4",
+			"id": "8b6548e0",
+			"parentId": "43099fd7",
 			"keys": [
 				"id",
 				"message",
@@ -562,8 +562,8 @@
 		},
 		{
 			"type": "message",
-			"id": "42685c74",
-			"parentId": "0d019412",
+			"id": "2cd5be9e",
+			"parentId": "8b6548e0",
 			"keys": [
 				"id",
 				"message",
@@ -590,7 +590,338 @@
 			}
 		}
 	],
-	"entrySnapshots": [],
+	"entrySnapshots": [
+		{
+			"label": "fork-original-before",
+			"entries": [
+				{
+					"type": "session",
+					"id": "01a0e9e8-2c64-72ca-b96a-c36be6d6b25e",
+					"keys": [
+						"cwd",
+						"id",
+						"rlmDepth",
+						"timestamp",
+						"type",
+						"version"
+					]
+				},
+				{
+					"type": "model_change",
+					"id": "fab1fba3",
+					"parentId": null,
+					"keys": [
+						"id",
+						"modelId",
+						"parentId",
+						"provider",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "thinking_level_change",
+					"id": "fbc5cd7a",
+					"parentId": "fab1fba3",
+					"keys": [
+						"id",
+						"parentId",
+						"thinkingLevel",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "service_tier_change",
+					"id": "f1c6874e",
+					"parentId": "fbc5cd7a",
+					"keys": [
+						"id",
+						"parentId",
+						"serviceTier",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "session_state",
+					"id": "b59e10bf",
+					"parentId": "f1c6874e",
+					"keys": [
+						"id",
+						"parentId",
+						"state",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "custom_message",
+					"id": "4818cc62",
+					"parentId": "b59e10bf",
+					"keys": [
+						"content",
+						"customType",
+						"details",
+						"display",
+						"id",
+						"parentId",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "message",
+					"id": "33789cd1",
+					"parentId": "4818cc62",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "user"
+				},
+				{
+					"type": "message",
+					"id": "43099fd7",
+					"parentId": "33789cd1",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "assistant",
+					"stopReason": "stop",
+					"usage": {
+						"input": 500,
+						"output": 7,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"totalTokens": 507,
+						"cost": {
+							"input": 500,
+							"output": 14,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 514
+						},
+						"extraKeys": []
+					}
+				},
+				{
+					"type": "message",
+					"id": "8f19874d",
+					"parentId": "43099fd7",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "user"
+				},
+				{
+					"type": "message",
+					"id": "a52ddfb8",
+					"parentId": "8f19874d",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "assistant",
+					"stopReason": "stop",
+					"usage": {
+						"input": 400,
+						"output": 11,
+						"cacheRead": 250,
+						"cacheWrite": 50,
+						"totalTokens": 711,
+						"cost": {
+							"input": 400,
+							"output": 22,
+							"cacheRead": 125,
+							"cacheWrite": 12.5,
+							"total": 559.5
+						},
+						"extraKeys": []
+					}
+				}
+			]
+		},
+		{
+			"label": "fork-original-after",
+			"entries": [
+				{
+					"type": "session",
+					"id": "01a0e9e8-2c64-72ca-b96a-c36be6d6b25e",
+					"keys": [
+						"cwd",
+						"id",
+						"rlmDepth",
+						"timestamp",
+						"type",
+						"version"
+					]
+				},
+				{
+					"type": "model_change",
+					"id": "fab1fba3",
+					"parentId": null,
+					"keys": [
+						"id",
+						"modelId",
+						"parentId",
+						"provider",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "thinking_level_change",
+					"id": "fbc5cd7a",
+					"parentId": "fab1fba3",
+					"keys": [
+						"id",
+						"parentId",
+						"thinkingLevel",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "service_tier_change",
+					"id": "f1c6874e",
+					"parentId": "fbc5cd7a",
+					"keys": [
+						"id",
+						"parentId",
+						"serviceTier",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "session_state",
+					"id": "b59e10bf",
+					"parentId": "f1c6874e",
+					"keys": [
+						"id",
+						"parentId",
+						"state",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "custom_message",
+					"id": "4818cc62",
+					"parentId": "b59e10bf",
+					"keys": [
+						"content",
+						"customType",
+						"details",
+						"display",
+						"id",
+						"parentId",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "message",
+					"id": "33789cd1",
+					"parentId": "4818cc62",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "user"
+				},
+				{
+					"type": "message",
+					"id": "43099fd7",
+					"parentId": "33789cd1",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "assistant",
+					"stopReason": "stop",
+					"usage": {
+						"input": 500,
+						"output": 7,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"totalTokens": 507,
+						"cost": {
+							"input": 500,
+							"output": 14,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 514
+						},
+						"extraKeys": []
+					}
+				},
+				{
+					"type": "message",
+					"id": "8f19874d",
+					"parentId": "43099fd7",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "user"
+				},
+				{
+					"type": "message",
+					"id": "a52ddfb8",
+					"parentId": "8f19874d",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "assistant",
+					"stopReason": "stop",
+					"usage": {
+						"input": 400,
+						"output": 11,
+						"cacheRead": 250,
+						"cacheWrite": 50,
+						"totalTokens": 711,
+						"cost": {
+							"input": 400,
+							"output": 22,
+							"cacheRead": 125,
+							"cacheWrite": 12.5,
+							"total": 559.5
+						},
+						"extraKeys": []
+					}
+				}
+			]
+		}
+	],
 	"stateKeys": [
 		"autoCompactionEnabled",
 		"followUpMode",

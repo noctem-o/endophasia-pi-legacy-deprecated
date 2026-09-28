@@ -3,7 +3,7 @@
 
 import { PROBE_MODEL_COST } from "./environment.ts";
 import type { PrimeScenarioEvidenceV0, PrimeSessionEntryEvidenceV0, PrimeStatsEvidenceV0 } from "./evidence.ts";
-import { EXPECTED_ASSISTANT_USAGE, expectedPrimeUsageV0 } from "./fake-provider.ts";
+import { EXPECTED_ASSISTANT_USAGE, EXPECTED_PERSISTED_USAGE, expectedPrimeUsageV0 } from "./fake-provider.ts";
 import { type MissionTraceMappingV0, mapPrimeMissionTraceV0 } from "./mission-trace.ts";
 import { rebuildPrimeRuntimeMetricsV0 } from "./projection.ts";
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
@@ -234,28 +234,36 @@ function stableStatsEqual(a: PrimeStatsEvidenceV0, b: PrimeStatsEvidenceV0): boo
 }
 
 /**
- * Compare every assistant message's usage with the fake provider's script, through Prime's documented mapping: a
- * consistent misparse would otherwise pass, since stats and session entries are both copies of Prime's own numbers.
- * Undefined when no scenario with a known script ran.
+ * Compare every assistant message's usage, both as emitted live and as persisted in the session file, with the fake
+ * provider's script, through Prime's documented mapping: a consistent misparse (or a file that persists other numbers
+ * than the events report) would otherwise pass, since stats and session entries are both copies of Prime's own
+ * numbers. Undefined when no scenario with a known script ran.
  */
 function providerUsageDecodedExactly(evidence: readonly PrimeScenarioEvidenceV0[]): boolean | undefined {
 	const checked = evidence.filter((run) => EXPECTED_ASSISTANT_USAGE[run.provenance.scenario] !== undefined);
 	if (checked.length === 0) return undefined;
 	const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 };
 	const noCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
-	return checked.every((run) => {
-		const expected = EXPECTED_ASSISTANT_USAGE[run.provenance.scenario]!.map((name) =>
+	const script = (names: readonly (string | null)[]): PrimeUsageEvidenceV0[] =>
+		names.map((name) =>
 			name === null
 				? { ...zero, cost: noCost, extraKeys: [] }
 				: { ...expectedPrimeUsageV0(name, PROBE_MODEL_COST), extraKeys: [] },
 		);
-		const observed = run.events.flatMap((event) =>
-			event.type === "message_end" && event.assistant !== undefined
-				? [{ ...event.assistant.usage, extraKeys: [] }]
-				: [],
+	const matches = (observed: readonly (PrimeUsageEvidenceV0 | undefined)[], expected: PrimeUsageEvidenceV0[]) =>
+		observed.length === expected.length &&
+		observed.every((usage, index) => usage !== undefined && usageEqual(usage, expected[index]!));
+	return checked.every((run) => {
+		const live = run.events.flatMap((event) =>
+			event.type === "message_end" && event.assistant !== undefined ? [event.assistant.usage] : [],
+		);
+		const persistedScript = EXPECTED_PERSISTED_USAGE[run.provenance.scenario];
+		const persisted = run.sessionEntries.flatMap((entry) =>
+			entry.type === "message" && entry.role === "assistant" ? [entry.usage] : [],
 		);
 		return (
-			observed.length === expected.length && observed.every((usage, index) => usageEqual(usage, expected[index]!))
+			matches(live, script(EXPECTED_ASSISTANT_USAGE[run.provenance.scenario]!)) &&
+			(persistedScript === undefined || matches(persisted, script(persistedScript)))
 		);
 	});
 }

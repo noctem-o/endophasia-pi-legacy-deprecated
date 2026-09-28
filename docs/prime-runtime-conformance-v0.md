@@ -11,7 +11,7 @@ The code under `packages/endophasia/research/prime-conformance/` is experimental
 | Endophasia base | `main` at `f82e0020740d6b78621244703ee0ddb659c0877a` |
 | Prime Agent | `PrimeIntellect-ai/prime-agent` `main` at `2d24ad4e6b2d1ee8e6919af6f108e980a14d550e`, version 0.9.6 |
 | Boundary | `prime-agent --mode rpc`, JSONL over stdio |
-| Probe | `prime-conformance-v0`, probe version 0.4.0 |
+| Probe | `prime-conformance-v0`, probe version 0.5.0 |
 | Platform of the committed evidence | linux-x64, Node v22.22.2 |
 
 Citations use two forms:
@@ -42,7 +42,7 @@ Citations use two forms:
 
 1. **Strict decoding** (`decode.ts`). Every event, command response and session-file line the probe relies on is validated against Prime's own types at the pinned commit before it is reduced to evidence.
    - Types checked: `AgentEvent`, `AssistantMessage`, `ToolResultMessage`, `Usage`, `SessionStats` and `SessionEntryBase`.
-   - Failures: a missing required field, a non-boolean flag, a non-finite number or an empty identity throws `PrimeDecodeError`. Its message names the field path, never the value.
+   - Failures: a missing required field, a non-boolean flag, a negative or non-finite number or an empty identity throws `PrimeDecodeError`. Every number kept is a count, a cost or an attempt. Its message names the field path, never the value.
    - `fork` and `switch_session` must answer `cancelled: false`, because both can report success when an extension cancelled them.
    - Session lines: malformed JSON, a missing type, a malformed `id`, or a `parentId` that is neither a non-empty string nor null fails.
    - Session files: a blank line, a missing final newline or an entry id repeated within one file fails.
@@ -59,16 +59,19 @@ Citations use two forms:
    - aborts: the abort was requested at the intended moment and acknowledged.
    - refusals: only the two expected refusals, and only with the queued-input category.
    - every scenario: every assistant message comes from the probe's provider and model.
-   - every scenario: each Prime process exits 0 once its RPC input ends. A crash, a timeout kill or a signal fails the scenario.
+   - every scenario: each Prime process exits 0 once its RPC input ends, and its stdout closes. A crash, a timeout kill, a signal, or a stdout a descendant still holds open 2 s after exit fails the scenario, since records could still arrive.
+   - every scenario: a known event outside its lifecycle (for example a `tool_execution_end` after its `turn_end`) is invalid. Unknown event types remain forward-compatible evidence.
+   - fork: the fork targets the latest user message found in the session file, not a position in Prime's list; the original file is snapshotted before and after and must be unchanged; the fork copies exactly the entries before the target.
 
    Invariants check that an operation occurred, not what Prime answered. A valid observation of unexpected Prime behavior is conformance evidence.
-4. **Provider expectations.** Each scenario declares its prompt markers, and its fake provider refuses anything else with HTTP 400, which fails the run: a request to any route other than `POST /v1/chat/completions`, an unreadable body, a request for any model other than the probe's, an unknown or foreign marker, a reply beyond the script, or a scripted step requested a second time (Prime re-sending a request is evidence to inspect, not a step to serve twice). Summarization requests are accepted only while `compact` runs. This rule is what exposed auto-refine: in probe 0.2.0 its request was quietly answered as a summary.
+4. **Provider expectations.** Each scenario declares its prompt markers, and its fake provider refuses anything else with HTTP 400, which fails the run: a request to any route other than `POST /v1/chat/completions`, an unreadable body, a request for any model other than the probe's, an unknown or foreign marker, a reply beyond the script, or a scripted step (or an identical summary request within one compaction) requested a second time (Prime re-sending a request is evidence to inspect, not a step to serve twice). Summarization requests are accepted only while `compact` runs, and at most two distinct ones per compaction: Prime makes a history call, plus a turn-prefix call when the cut splits a turn (`prime:packages/coding-agent/src/core/compaction/compaction.ts:829-866`); the probe's compaction does split a turn. This rule is what exposed auto-refine: in probe 0.2.0 its request was quietly answered as a summary.
 5. **Exact predicates** (`classification.ts`). A positive fact requires every dimension both surfaces report to agree.
+   - Exact usage: every assistant usage, both as emitted on `message_end` and as persisted in the session file, must equal the script through Prime's documented mapping.
    - Tool identity checks every execution phase (start, update and end) against the assistant's tool calls.
    - Compaction retention is proved from the session file snapshotted immediately before and after `compact`, so a later prompt cannot make up for a loss.
    - Fork identity: the entries the fork copies must be byte-for-byte identical to the originals. Otherwise the Usage finding is contradicted, since the de-duplication rule below would be wrong.
    - Audited revision: the conclusions drawn from Prime source hold only for the audited revision (0.9.6 at `2d24ad4e`). Evidence from any other commit, version or a binary leaves every finding unverified until Prime is re-audited and `AUDITED_PRIME` is updated.
-   - An undecidable fact is left undefined and reported as unverified, never guessed.
+   - An undecidable fact is left undefined and reported as unverified, never guessed. On a full run from the audited revision every scenario ran, so an unresolved fact means an observed value that fits no recognized outcome: that run is invalid, not merely unverified.
 6. **Publication gate** (`publication.ts`). This is the only path to the committed reference. It separates three cases:
    - invalid evidence: failures, protocol errors, structural problems, identity problems or privacy leaks;
    - unpublishable evidence: provenance other than a clean checkout at a known commit with a build output hash, another probe version, or a partial refresh that would mix provenance with the fixtures it keeps or keep fixtures that no longer pass this gate themselves;
@@ -99,7 +102,7 @@ The fake provider plants these sentinels in every payload class: `PROMPT_SENTINE
 - Refresh fixtures: add `--write-fixtures`. This passes through the publication gate, so it needs a fully valid run from a clean `PRIME_AGENT_ROOT` checkout at a known commit. A `PRIME_AGENT_BIN` run can inspect but not refresh. A full refresh replaces the whole set, including fixtures of scenarios that no longer exist. A `--scenario` refresh is refused if it would mix provenance with the fixtures it keeps.
 - Drift is reported on three independent axes: `runtime` (`same`, `different`, or `unverifiable` when the build cannot be matched to the reference commit, as with a binary or a dirty checkout), `probe` (a different probe version is stale evidence even when Prime is unchanged) and `environment` (platform and Node). `provenanceVerified` says whether this run's build is a clean checkout at a known commit with a build output hash. A different build output hash at the same commit is runtime drift `different`.
 - Arguments are parsed strictly. A `--scenario` without a name, an unknown scenario or an unknown flag fails before anything runs.
-- Provenance: the probe runs `git rev-parse HEAD` and `git status --porcelain --untracked-files=no` in the checkout. Modified tracked files mark the build `dirty-checkout`. Untracked build output is expected in a built checkout and is not counted by `git status`; instead `artifactsHash` is a SHA-256 over the files in `packages/*/dist`, which `prime-agent.sh` loads. It detects rebuilt or edited output, not whether that output matches the source; that would need a reproducible build.
+- Provenance: the probe runs `git rev-parse HEAD` and `git status --porcelain --untracked-files=no` in the checkout. Modified tracked files mark the build `dirty-checkout`. Untracked build output is expected in a built checkout and is not counted by `git status`; instead `artifactsHash` is a SHA-256 over the files in `packages/*/dist`, which `prime-agent.sh` loads. It detects rebuilt or edited output, not whether that output matches the source; that would need a reproducible build. Provenance is described again after the scenarios; a change in commit, build state or hash during the run invalidates every scenario.
 - Missing binary: the command exits 1 with a clear message.
 - CI: the live probe is not part of CI. The offline tests in `packages/endophasia/test/prime-rpc-probe.test.ts` and `prime-conformance.test.ts` need no Prime.
 

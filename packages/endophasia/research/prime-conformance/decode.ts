@@ -59,9 +59,10 @@ function flag(value: unknown, path: string): boolean {
 	return value;
 }
 
-function finite(value: unknown, path: string): number {
-	if (typeof value !== "number" || !Number.isFinite(value))
-		throw new PrimeDecodeError(`${path} is not a finite number`);
+/** Every number the probe keeps is a count, a cost or an attempt: finite and never negative. */
+function count(value: unknown, path: string): number {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 0)
+		throw new PrimeDecodeError(`${path} is not a non-negative finite number`);
 	return value;
 }
 
@@ -72,17 +73,17 @@ export function decodePrimeUsageV0(value: unknown, path: string): PrimeUsageEvid
 	const usage = object(value, path);
 	const cost = object(usage.cost, `${path}.cost`);
 	return {
-		input: finite(usage.input, `${path}.input`),
-		output: finite(usage.output, `${path}.output`),
-		cacheRead: finite(usage.cacheRead, `${path}.cacheRead`),
-		cacheWrite: finite(usage.cacheWrite, `${path}.cacheWrite`),
-		totalTokens: finite(usage.totalTokens, `${path}.totalTokens`),
+		input: count(usage.input, `${path}.input`),
+		output: count(usage.output, `${path}.output`),
+		cacheRead: count(usage.cacheRead, `${path}.cacheRead`),
+		cacheWrite: count(usage.cacheWrite, `${path}.cacheWrite`),
+		totalTokens: count(usage.totalTokens, `${path}.totalTokens`),
 		cost: {
-			input: finite(cost.input, `${path}.cost.input`),
-			output: finite(cost.output, `${path}.cost.output`),
-			cacheRead: finite(cost.cacheRead, `${path}.cost.cacheRead`),
-			cacheWrite: finite(cost.cacheWrite, `${path}.cost.cacheWrite`),
-			total: finite(cost.total, `${path}.cost.total`),
+			input: count(cost.input, `${path}.cost.input`),
+			output: count(cost.output, `${path}.cost.output`),
+			cacheRead: count(cost.cacheRead, `${path}.cost.cacheRead`),
+			cacheWrite: count(cost.cacheWrite, `${path}.cost.cacheWrite`),
+			total: count(cost.total, `${path}.cost.total`),
 		},
 		extraKeys: Object.keys(usage)
 			.filter((key) => !USAGE_KEYS.has(key))
@@ -198,14 +199,14 @@ export function decodePrimeEventV0(type: string, event: Json): PrimeEvidenceEven
 		case "auto_retry_start":
 			return {
 				type,
-				attempt: finite(event.attempt, "auto_retry_start.attempt"),
-				maxAttempts: finite(event.maxAttempts, "auto_retry_start.maxAttempts"),
+				attempt: count(event.attempt, "auto_retry_start.attempt"),
+				maxAttempts: count(event.maxAttempts, "auto_retry_start.maxAttempts"),
 			};
 		case "auto_retry_end":
 			return {
 				type,
 				success: flag(event.success, "auto_retry_end.success"),
-				attempt: finite(event.attempt, "auto_retry_end.attempt"),
+				attempt: count(event.attempt, "auto_retry_end.attempt"),
 			};
 		// Known, but no claim reads their fields: recorded by type only.
 		case "session_action_update":
@@ -232,23 +233,23 @@ export function decodePrimeStatsV0(label: string, response: PrimeRpcResponseV0):
 	if (stats.contextUsage !== undefined) {
 		const context = object(stats.contextUsage, "get_session_stats.data.contextUsage");
 		contextUsageTokens =
-			context.tokens === null ? null : finite(context.tokens, "get_session_stats.data.contextUsage.tokens");
+			context.tokens === null ? null : count(context.tokens, "get_session_stats.data.contextUsage.tokens");
 	}
 	return {
 		label,
-		userMessages: finite(stats.userMessages, "get_session_stats.data.userMessages"),
-		assistantMessages: finite(stats.assistantMessages, "get_session_stats.data.assistantMessages"),
-		toolCalls: finite(stats.toolCalls, "get_session_stats.data.toolCalls"),
-		toolResults: finite(stats.toolResults, "get_session_stats.data.toolResults"),
-		totalMessages: finite(stats.totalMessages, "get_session_stats.data.totalMessages"),
+		userMessages: count(stats.userMessages, "get_session_stats.data.userMessages"),
+		assistantMessages: count(stats.assistantMessages, "get_session_stats.data.assistantMessages"),
+		toolCalls: count(stats.toolCalls, "get_session_stats.data.toolCalls"),
+		toolResults: count(stats.toolResults, "get_session_stats.data.toolResults"),
+		totalMessages: count(stats.totalMessages, "get_session_stats.data.totalMessages"),
 		tokens: {
-			input: finite(tokens.input, "get_session_stats.data.tokens.input"),
-			output: finite(tokens.output, "get_session_stats.data.tokens.output"),
-			cacheRead: finite(tokens.cacheRead, "get_session_stats.data.tokens.cacheRead"),
-			cacheWrite: finite(tokens.cacheWrite, "get_session_stats.data.tokens.cacheWrite"),
-			total: finite(tokens.total, "get_session_stats.data.tokens.total"),
+			input: count(tokens.input, "get_session_stats.data.tokens.input"),
+			output: count(tokens.output, "get_session_stats.data.tokens.output"),
+			cacheRead: count(tokens.cacheRead, "get_session_stats.data.tokens.cacheRead"),
+			cacheWrite: count(tokens.cacheWrite, "get_session_stats.data.tokens.cacheWrite"),
+			total: count(tokens.total, "get_session_stats.data.tokens.total"),
 		},
-		cost: finite(stats.cost, "get_session_stats.data.cost"),
+		cost: count(stats.cost, "get_session_stats.data.cost"),
 		contextUsageTokens,
 		keys: Object.keys(stats).sort(),
 	};
@@ -290,7 +291,7 @@ export function requirePrimeNotCancelledV0(response: PrimeRpcResponseV0): void {
 /** compact: a successful compaction names the first kept entry. */
 export function decodePrimeCompactionResultV0(response: PrimeRpcResponseV0): { firstKeptEntryId: string } {
 	const result = data(response);
-	finite(result.tokensBefore, "compact.data.tokensBefore");
+	count(result.tokensBefore, "compact.data.tokensBefore");
 	return { firstKeptEntryId: text(result.firstKeptEntryId, "compact.data.firstKeptEntryId") };
 }
 

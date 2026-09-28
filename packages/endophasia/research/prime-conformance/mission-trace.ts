@@ -42,6 +42,11 @@ export interface MissionTraceMappingV0 {
 	readonly terminals: readonly CandidateTerminalV0[];
 	/** Prime evidence the mapping could not place without inventing facts. */
 	readonly unmapped: readonly string[];
+	/**
+	 * The subset of `unmapped` that is a known event outside its lifecycle (or a run that never ended). Unknown event
+	 * types are forward compatibility; a misplaced known event means the evidence does not describe a coherent run.
+	 */
+	readonly misplaced: readonly string[];
 }
 
 export interface MissionTraceMappingInputV0 {
@@ -59,6 +64,11 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 	const events: MissionTraceEventV0[] = [];
 	const terminals: CandidateTerminalV0[] = [];
 	const unmapped: string[] = [];
+	const misplaced: string[] = [];
+	const misplace = (problem: string): void => {
+		unmapped.push(problem);
+		misplaced.push(problem);
+	};
 	const abortAfter = [...(input.abortRequestedAfter ?? [])];
 	let sequence = 0;
 	let runCount = 0;
@@ -83,7 +93,7 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 			}
 			case "turn_start": {
 				if (run === undefined) {
-					unmapped.push(`turn_start outside a run at ${index}`);
+					misplace(`turn_start outside a run at ${index}`);
 					continue;
 				}
 				run.turns += 1;
@@ -94,7 +104,7 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 			case "message_end": {
 				if (item.role !== "assistant" || item.assistant === undefined) continue;
 				if (run === undefined) {
-					unmapped.push(`assistant message_end outside a run at ${index}`);
+					misplace(`assistant message_end outside a run at ${index}`);
 					continue;
 				}
 				push({ kind: "model.completed", lane, runId: run.id });
@@ -102,7 +112,7 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 			}
 			case "tool_execution_start": {
 				if (run?.turnId === undefined) {
-					unmapped.push(`${item.type} outside a turn at ${index}`);
+					misplace(`${item.type} outside a turn at ${index}`);
 					continue;
 				}
 				const { toolCallId, toolName } = item;
@@ -111,7 +121,7 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 			}
 			case "tool_execution_end": {
 				if (run?.turnId === undefined) {
-					unmapped.push(`${item.type} outside a turn at ${index}`);
+					misplace(`${item.type} outside a turn at ${index}`);
 					continue;
 				}
 				const { toolCallId, toolName, isError } = item;
@@ -120,7 +130,7 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 			}
 			case "turn_end": {
 				if (run?.turnId === undefined) {
-					unmapped.push(`turn_end outside a turn at ${index}`);
+					misplace(`turn_end outside a turn at ${index}`);
 					continue;
 				}
 				push({ kind: "turn.finished", lane, runId: run.id, turnId: run.turnId });
@@ -130,7 +140,7 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 			}
 			case "agent_end": {
 				if (run === undefined) {
-					unmapped.push(`agent_end outside a run at ${index}`);
+					misplace(`agent_end outside a run at ${index}`);
 					continue;
 				}
 				const terminal = classifyTerminal(run.id, item.assistantStopReasons.at(-1), run.abortRequested);
@@ -146,8 +156,8 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 				continue;
 		}
 	}
-	if (run !== undefined) unmapped.push(`run ${run.id} had no agent_end`);
-	return { events, terminals, unmapped };
+	if (run !== undefined) misplace(`run ${run.id} had no agent_end`);
+	return { events, terminals, unmapped, misplaced };
 }
 
 function classifyTerminal(

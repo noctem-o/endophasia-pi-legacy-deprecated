@@ -186,7 +186,7 @@ export function buildPrimeConformanceReportV0(
 			unmapped: mapping.unmapped,
 			observations: item.observations,
 			failures: [...item.failures, ...invariantFailures],
-			identityProblems: checkAdapterIdentitiesV0(mapping),
+			identityProblems: [...checkAdapterIdentitiesV0(mapping), ...mapping.misplaced],
 			evidenceProblems: evidenceProblemsV0(item),
 			protocolErrors: item.protocolErrors,
 		};

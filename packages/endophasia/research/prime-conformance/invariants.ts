@@ -99,6 +99,34 @@ function compactionSnapshots(): Invariant {
 	};
 }
 
+/**
+ * Forking leaves the original file unchanged (a row appended there would be spend the evidence drops), and the fork
+ * copies exactly the original's entries before the latest user message, the intended target.
+ */
+function forkSnapshots(): Invariant {
+	return (run) => {
+		const before = run.entrySnapshots.find((snapshot) => snapshot.label === "fork-original-before")?.entries;
+		const after = run.entrySnapshots.find((snapshot) => snapshot.label === "fork-original-after")?.entries;
+		if (before === undefined || after === undefined) return ["missing fork snapshots"];
+		const target = before.findLastIndex((entry) => entry.type === "message" && entry.role === "user");
+		const expected = before
+			.slice(0, Math.max(target, 0))
+			.flatMap((entry) => (entry.type === "session" ? [] : [entry.id]));
+		const originalIds = new Set(before.map((entry) => entry.id));
+		const copied = run.sessionEntries.flatMap((entry) =>
+			entry.type !== "session" && originalIds.has(entry.id) ? [entry.id] : [],
+		);
+		return [
+			...(JSON.stringify(after) === JSON.stringify(before)
+				? []
+				: ["the original session file changed across the fork"]),
+			...(target > 0 && JSON.stringify(copied) === JSON.stringify(expected)
+				? []
+				: ["the fork did not copy exactly the entries before the latest user message"]),
+		];
+	};
+}
+
 /** Every assistant message came from the probe's deterministic model, never another provider or model. */
 function probeModel(): Invariant {
 	return (run) =>
@@ -158,6 +186,7 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		runs(3),
 		stats("before-fork", "after-fork", "after-fork-prompt"),
 		succeeded("fork"),
+		forkSnapshots(),
 		observed("originalEntriesAfterFork", "forkSharedEntryIds"),
 		(run) => ((run.observations.forkTargets ?? 0) >= 1 ? [] : ["no fork target was offered"]),
 		(run) => (run.observations.forkCreatedNewFile === true ? [] : ["the fork produced no new session file"]),
