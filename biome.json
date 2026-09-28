@@ -33,6 +33,7 @@
 			"packages/endophasia/presentation/**/*.ts",
 			"packages/endophasia/cockpit/**/*.ts",
 			"packages/endophasia/cockpit/**/*.css",
+			"packages/endophasia/research/**/*.ts",
 			"packages/session-backends/*/src/**/*.ts",
 			"packages/session-backends/*/test/**/*.ts",
 			"packages/coding-agent/examples/**/*.ts",

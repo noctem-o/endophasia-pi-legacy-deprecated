@@ -1,0 +1,150 @@
+// Research-only (Prime Runtime Conformance v0). A minimal client for `prime-agent --mode rpc` over a process boundary:
+// just enough to drive the conformance scenarios. It is not a Prime SDK and not an Endophasia runtime adapter.
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { encodeJsonlRecordV0, JsonlDecoderV0 } from "./jsonl.ts";
+import { classifyPrimeRecordV0, type PrimeRpcResponseV0 } from "./protocol.ts";
+
+export interface PrimeRpcClientOptionsV0 {
+	readonly command: string;
+	readonly args: readonly string[];
+	readonly env: NodeJS.ProcessEnv;
+	readonly cwd: string;
+	/** Every non-response record, in arrival order. Raw Prime events: sanitize before keeping anything. */
+	readonly onEvent?: (type: string, event: Record<string, unknown>) => void;
+}
+
+export interface PrimeRpcExitV0 {
+	readonly code: number | null;
+	readonly signal: NodeJS.Signals | null;
+}
+
+export class PrimeRpcExitError extends Error {
+	readonly exit: PrimeRpcExitV0;
+	constructor(command: string, exit: PrimeRpcExitV0) {
+		super(`Prime RPC process exited before responding to ${command} (code ${exit.code}, signal ${exit.signal})`);
+		this.name = "PrimeRpcExitError";
+		this.exit = exit;
+	}
+}
+
+interface Pending {
+	readonly command: string;
+	resolve(response: PrimeRpcResponseV0): void;
+	reject(error: Error): void;
+	readonly timer: ReturnType<typeof setTimeout>;
+}
+
+export class PrimeRpcClientV0 {
+	/** Protocol violations observed: malformed records, responses without or with unknown/duplicate ids. */
+	readonly protocolErrors: string[] = [];
+	readonly exited: Promise<PrimeRpcExitV0>;
+	readonly #child: ChildProcessWithoutNullStreams;
+	readonly #decoder = new JsonlDecoderV0();
+	readonly #pending = new Map<string, Pending>();
+	readonly #settledIds = new Set<string>();
+	readonly #onEvent: PrimeRpcClientOptionsV0["onEvent"];
+	#nextId = 0;
+	#exit: PrimeRpcExitV0 | undefined;
+	stderr = "";
+
+	constructor(options: PrimeRpcClientOptionsV0) {
+		this.#onEvent = options.onEvent;
+		this.#child = spawn(options.command, [...options.args], {
+			cwd: options.cwd,
+			env: options.env,
+			stdio: ["pipe", "pipe", "pipe"],
+		});
+		this.#child.stdout.on("data", (chunk: Buffer) => this.#receive(this.#decoder.push(chunk)));
+		this.#child.stdout.on("end", () => this.#receive(this.#decoder.end()));
+		// Kept only for diagnosing a failed launch; never written to evidence.
+		this.#child.stderr.on("data", (chunk: Buffer) => {
+			this.stderr = (this.stderr + chunk.toString("utf8")).slice(-4_000);
+		});
+		this.#child.stdin.on("error", () => {});
+		this.exited = new Promise((resolve) => {
+			this.#child.on("exit", (code, signal) => {
+				this.#exit = { code, signal };
+				for (const [id, pending] of this.#pending) {
+					clearTimeout(pending.timer);
+					pending.reject(new PrimeRpcExitError(pending.command, this.#exit));
+					this.#pending.delete(id);
+				}
+				resolve(this.#exit);
+			});
+			this.#child.on("error", () => {
+				this.#exit ??= { code: null, signal: null };
+				resolve(this.#exit);
+			});
+		});
+	}
+
+	get pid(): number | undefined {
+		return this.#child.pid;
+	}
+
+	/** Send one command and resolve with its correlated response. A `success: false` response resolves, not rejects. */
+	request(
+		command: { readonly type: string } & Record<string, unknown>,
+		timeoutMs = 60_000,
+	): Promise<PrimeRpcResponseV0> {
+		if (this.#exit !== undefined) {
+			return Promise.reject(new PrimeRpcExitError(command.type, this.#exit));
+		}
+		const id = `probe-${++this.#nextId}`;
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.#pending.delete(id);
+				reject(new Error(`Prime RPC ${command.type} timed out after ${timeoutMs} ms`));
+			}, timeoutMs);
+			this.#pending.set(id, { command: command.type, resolve, reject, timer });
+			this.#child.stdin.write(encodeJsonlRecordV0({ ...command, id }));
+		});
+	}
+
+	/** Close stdin and wait for exit; kill the process if it does not exit in time. */
+	async close(timeoutMs = 10_000): Promise<PrimeRpcExitV0> {
+		if (this.#exit !== undefined) return this.#exit;
+		this.#child.stdin.end();
+		const timer = setTimeout(() => this.#child.kill("SIGKILL"), timeoutMs);
+		try {
+			return await this.exited;
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
+	#receive(records: ReturnType<JsonlDecoderV0["push"]>): void {
+		for (const decoded of records) {
+			if (decoded.kind === "invalid") {
+				this.protocolErrors.push(`${decoded.error} (${decoded.length} characters)`);
+				continue;
+			}
+			const record = classifyPrimeRecordV0(decoded.value);
+			if (record.kind === "invalid") {
+				this.protocolErrors.push(record.reason);
+				continue;
+			}
+			if (record.kind === "event") {
+				this.#onEvent?.(record.type, record.event);
+				continue;
+			}
+			const { id } = record.response;
+			if (id === undefined) {
+				// Prime reports a parse failure of a command without an id; nothing is waiting for it by id.
+				this.protocolErrors.push(`Response without id for ${record.response.command}`);
+				continue;
+			}
+			const pending = this.#pending.get(id);
+			if (pending === undefined) {
+				this.protocolErrors.push(
+					this.#settledIds.has(id) ? `Duplicate response for ${id}` : `Response for unknown id ${id}`,
+				);
+				continue;
+			}
+			clearTimeout(pending.timer);
+			this.#pending.delete(id);
+			this.#settledIds.add(id);
+			pending.resolve(record.response);
+		}
+	}
+}
