@@ -1,0 +1,217 @@
+{
+	"provenance": {
+		"source": "prime-agent",
+		"version": "0.9.6",
+		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
+		"mode": "rpc",
+		"generatedBy": "prime-conformance-v0",
+		"probeVersion": "0.1.0",
+		"platform": "linux-x64",
+		"node": "v22.22.2",
+		"scenario": "child-usage-replay"
+	},
+	"description": "A crafted durable session holding one child_usage_attributed entry, reopened by a real Prime process (no live RLM child).",
+	"events": [],
+	"abortRequestedAfter": [],
+	"commands": [
+		{
+			"command": "switch_session",
+			"success": true,
+			"dataKeys": [
+				"cancelled"
+			]
+		},
+		{
+			"command": "get_session_stats",
+			"success": true,
+			"dataKeys": [
+				"assistantMessages",
+				"contextUsage",
+				"cost",
+				"sessionFile",
+				"sessionId",
+				"tokens",
+				"toolCalls",
+				"toolResults",
+				"totalMessages",
+				"userMessages"
+			]
+		}
+	],
+	"stats": [
+		{
+			"label": "after-open",
+			"userMessages": 1,
+			"assistantMessages": 1,
+			"toolCalls": 0,
+			"toolResults": 0,
+			"totalMessages": 3,
+			"tokens": {
+				"input": 1400,
+				"output": 70,
+				"cacheRead": 0,
+				"cacheWrite": 0,
+				"total": 1470
+			},
+			"cost": 1540,
+			"contextUsageTokens": 1519,
+			"keys": [
+				"assistantMessages",
+				"contextUsage",
+				"cost",
+				"sessionFile",
+				"sessionId",
+				"tokens",
+				"toolCalls",
+				"toolResults",
+				"totalMessages",
+				"userMessages"
+			]
+		}
+	],
+	"sessionEntries": [
+		{
+			"type": "session",
+			"id": "01a0e89c-0000-7000-8000-00000000c41d",
+			"keys": [
+				"cwd",
+				"id",
+				"timestamp",
+				"type",
+				"version"
+			]
+		},
+		{
+			"type": "message",
+			"id": "a0000001",
+			"parentId": null,
+			"role": "user",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "message",
+			"id": "a0000002",
+			"parentId": "a0000001",
+			"role": "assistant",
+			"stopReason": "stop",
+			"usage": {
+				"input": 1000,
+				"output": 50,
+				"cacheRead": 0,
+				"cacheWrite": 0,
+				"totalTokens": 1050,
+				"cost": {
+					"input": 1000,
+					"output": 100,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"total": 1100
+				},
+				"extraKeys": []
+			},
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "child_usage_attributed",
+			"id": "a0000003",
+			"parentId": "a0000002",
+			"targetId": "a0000002",
+			"childUsage": {
+				"input": 400,
+				"output": 20,
+				"cacheRead": 0,
+				"cacheWrite": 0,
+				"totalTokens": 420,
+				"cost": {
+					"input": 400,
+					"output": 40,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"total": 440
+				},
+				"extraKeys": []
+			},
+			"aggregateUsage": {
+				"input": 1400,
+				"output": 70,
+				"cacheRead": 0,
+				"cacheWrite": 0,
+				"totalTokens": 1050,
+				"cost": {
+					"input": 1400,
+					"output": 140,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"total": 1540
+				},
+				"extraKeys": []
+			},
+			"keys": [
+				"aggregateUsage",
+				"childUsage",
+				"id",
+				"parentId",
+				"targetId",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "thinking_level_change",
+			"id": "c0a22e92",
+			"parentId": "a0000003",
+			"keys": [
+				"id",
+				"parentId",
+				"thinkingLevel",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "service_tier_change",
+			"id": "89debce4",
+			"parentId": "c0a22e92",
+			"keys": [
+				"id",
+				"parentId",
+				"serviceTier",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "custom_message",
+			"id": "30d9eb29",
+			"parentId": "89debce4",
+			"keys": [
+				"content",
+				"customType",
+				"details",
+				"display",
+				"id",
+				"parentId",
+				"timestamp",
+				"type"
+			]
+		}
+	],
+	"stateKeys": [],
+	"protocolErrors": [],
+	"notes": [
+		"crafted session opened: true",
+		"provider requests: 0"
+	]
+}

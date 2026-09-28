@@ -1,0 +1,298 @@
+{
+	"provenance": {
+		"source": "prime-agent",
+		"version": "0.9.6",
+		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
+		"mode": "rpc",
+		"generatedBy": "prime-conformance-v0",
+		"probeVersion": "0.1.0",
+		"platform": "linux-x64",
+		"node": "v22.22.2",
+		"scenario": "reasoning-usage"
+	},
+	"description": "The provider reports reasoning tokens and reasoning content.",
+	"events": [
+		{
+			"type": "agent_start"
+		},
+		{
+			"type": "turn_start"
+		},
+		{
+			"type": "message_start",
+			"role": "custom"
+		},
+		{
+			"type": "message_end",
+			"role": "custom"
+		},
+		{
+			"type": "message_start",
+			"role": "user"
+		},
+		{
+			"type": "message_end",
+			"role": "user"
+		},
+		{
+			"type": "message_start",
+			"role": "assistant"
+		},
+		{
+			"type": "message_end",
+			"role": "assistant",
+			"assistant": {
+				"stopReason": "stop",
+				"provider": "probe-local",
+				"model": "probe-model",
+				"usage": {
+					"input": 600,
+					"output": 90,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 690,
+					"cost": {
+						"input": 600,
+						"output": 180,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 780
+					},
+					"extraKeys": []
+				},
+				"toolCalls": [],
+				"hasErrorMessage": false
+			}
+		},
+		{
+			"type": "turn_end",
+			"assistant": {
+				"stopReason": "stop",
+				"provider": "probe-local",
+				"model": "probe-model",
+				"usage": {
+					"input": 600,
+					"output": 90,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 690,
+					"cost": {
+						"input": 600,
+						"output": 180,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 780
+					},
+					"extraKeys": []
+				},
+				"toolCalls": [],
+				"hasErrorMessage": false
+			},
+			"toolResults": []
+		},
+		{
+			"type": "agent_end",
+			"messageRoles": [
+				"custom",
+				"user",
+				"assistant"
+			],
+			"assistantStopReasons": [
+				"stop"
+			]
+		}
+	],
+	"abortRequestedAfter": [],
+	"commands": [
+		{
+			"command": "prompt",
+			"success": true,
+			"dataKeys": []
+		},
+		{
+			"command": "get_session_stats",
+			"success": true,
+			"dataKeys": [
+				"assistantMessages",
+				"contextUsage",
+				"cost",
+				"sessionFile",
+				"sessionId",
+				"tokens",
+				"toolCalls",
+				"toolResults",
+				"totalMessages",
+				"userMessages"
+			]
+		}
+	],
+	"stats": [
+		{
+			"label": "after",
+			"userMessages": 1,
+			"assistantMessages": 1,
+			"toolCalls": 0,
+			"toolResults": 0,
+			"totalMessages": 3,
+			"tokens": {
+				"input": 600,
+				"output": 90,
+				"cacheRead": 0,
+				"cacheWrite": 0,
+				"total": 690
+			},
+			"cost": 780,
+			"contextUsageTokens": 690,
+			"keys": [
+				"assistantMessages",
+				"contextUsage",
+				"cost",
+				"sessionFile",
+				"sessionId",
+				"tokens",
+				"toolCalls",
+				"toolResults",
+				"totalMessages",
+				"userMessages"
+			]
+		}
+	],
+	"sessionEntries": [
+		{
+			"type": "session",
+			"id": "01a0e8b4-b8f4-736e-a412-9db153d42e05",
+			"keys": [
+				"cwd",
+				"id",
+				"rlmDepth",
+				"timestamp",
+				"type",
+				"version"
+			]
+		},
+		{
+			"type": "model_change",
+			"id": "5c460280",
+			"parentId": null,
+			"keys": [
+				"id",
+				"modelId",
+				"parentId",
+				"provider",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "thinking_level_change",
+			"id": "81d9fcff",
+			"parentId": "5c460280",
+			"keys": [
+				"id",
+				"parentId",
+				"thinkingLevel",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "service_tier_change",
+			"id": "880e7d82",
+			"parentId": "81d9fcff",
+			"keys": [
+				"id",
+				"parentId",
+				"serviceTier",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "session_state",
+			"id": "8996be4c",
+			"parentId": "880e7d82",
+			"keys": [
+				"id",
+				"parentId",
+				"state",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "custom_message",
+			"id": "2b98ebc9",
+			"parentId": "8996be4c",
+			"keys": [
+				"content",
+				"customType",
+				"details",
+				"display",
+				"id",
+				"parentId",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "message",
+			"id": "31595874",
+			"parentId": "2b98ebc9",
+			"role": "user",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "message",
+			"id": "59996350",
+			"parentId": "31595874",
+			"role": "assistant",
+			"stopReason": "stop",
+			"usage": {
+				"input": 600,
+				"output": 90,
+				"cacheRead": 0,
+				"cacheWrite": 0,
+				"totalTokens": 690,
+				"cost": {
+					"input": 600,
+					"output": 180,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"total": 780
+				},
+				"extraKeys": []
+			},
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			]
+		}
+	],
+	"stateKeys": [
+		"autoCompactionEnabled",
+		"followUpMode",
+		"goal",
+		"isCompacting",
+		"isStreaming",
+		"messageCount",
+		"model",
+		"sessionActions",
+		"sessionFile",
+		"sessionId",
+		"steeringMode",
+		"thinkingLevel"
+	],
+	"protocolErrors": [],
+	"notes": [
+		"provider requests: 1"
+	]
+}
