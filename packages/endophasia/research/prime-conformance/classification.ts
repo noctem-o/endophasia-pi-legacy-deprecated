@@ -3,7 +3,12 @@
 
 import { PROBE_MODEL_COST } from "./environment.ts";
 import type { PrimeScenarioEvidenceV0, PrimeSessionEntryEvidenceV0, PrimeStatsEvidenceV0 } from "./evidence.ts";
-import { EXPECTED_ASSISTANT_USAGE, EXPECTED_PERSISTED_USAGE, expectedPrimeUsageV0 } from "./fake-provider.ts";
+import {
+	CHILD_USAGE_SEED,
+	EXPECTED_ASSISTANT_USAGE,
+	EXPECTED_PERSISTED_USAGE,
+	expectedPrimeUsageV0,
+} from "./fake-provider.ts";
 import { type MissionTraceMappingV0, mapPrimeMissionTraceV0 } from "./mission-trace.ts";
 import { rebuildPrimeRuntimeMetricsV0 } from "./projection.ts";
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
@@ -284,6 +289,23 @@ function providerUsageDecodedExactly(evidence: readonly PrimeScenarioEvidenceV0[
 			entry.type === "message" && entry.role === "assistant" ? [entry.usage] : [],
 		);
 		const compactions = run.sessionEntries.filter((entry) => entry.type === "compaction");
+		// The crafted child-usage file has no script; its seeded accounting must survive Prime's reopen unchanged.
+		if (run.provenance.scenario === "child-usage-replay") {
+			const seed = (usage: typeof CHILD_USAGE_SEED.parent): PrimeUsageEvidenceV0 => ({ ...usage, extraKeys: [] });
+			const children = run.sessionEntries.filter((entry) => entry.type === "child_usage_attributed");
+			return (
+				matches(live, []) &&
+				matches(persisted, [seed(CHILD_USAGE_SEED.parent)]) &&
+				matches(
+					children.map((entry) => entry.childUsage),
+					[seed(CHILD_USAGE_SEED.child)],
+				) &&
+				matches(
+					children.map((entry) => entry.aggregateUsage),
+					[seed(CHILD_USAGE_SEED.aggregate)],
+				)
+			);
+		}
 		return (
 			matches(live, script(EXPECTED_ASSISTANT_USAGE[run.provenance.scenario]!)) &&
 			(persistedScript === undefined || matches(persisted, script(persistedScript))) &&
@@ -375,26 +397,31 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 		toolRun === undefined
 			? undefined
 			: (() => {
-					const called = toolRun.events.flatMap((event) =>
-						event.type === "message_end" ? (event.assistant?.toolCalls ?? []) : [],
-					);
-					// Every execution phase (start, update, end) must name a tool call the assistant made.
-					const executed = toolRun.events.flatMap((event) =>
-						event.type === "tool_execution_start" ||
-						event.type === "tool_execution_update" ||
-						event.type === "tool_execution_end"
-							? [event]
-							: [],
-					);
-					// The (id, name) pair must match; a missing id ("") never counts, even when both sides lack one.
-					return (
-						executed.length > 0 &&
-						executed.every(
+					// Every scenario that executes tools (tool-run, tool-error, abort-tool) is held to the same rule, so an
+					// error or abort path cannot carry identities the success path does not.
+					const identitiesNative = (run: PrimeScenarioEvidenceV0) => {
+						const called = run.events.flatMap((event) =>
+							event.type === "message_end" ? (event.assistant?.toolCalls ?? []) : [],
+						);
+						// Every execution phase (start, update, end) must name a tool call the assistant made.
+						const executed = run.events.flatMap((event) =>
+							event.type === "tool_execution_start" ||
+							event.type === "tool_execution_update" ||
+							event.type === "tool_execution_end"
+								? [event]
+								: [],
+						);
+						// The (id, name) pair must match; a missing id ("") never counts, even when both sides lack one.
+						return executed.every(
 							(execution) =>
 								execution.toolCallId !== "" &&
 								!execution.toolCallId.startsWith("adapter:") &&
 								called.some((call) => call.id === execution.toolCallId && call.name === execution.toolName),
-						)
+						);
+					};
+					return (
+						toolRun.events.some((event) => event.type === "tool_execution_end") &&
+						evidence.every(identitiesNative)
 					);
 				})();
 
@@ -609,7 +636,7 @@ export function classifyPrimeConformanceV0(
 			},
 		],
 		evidence: [
-			`probe:tool-run: tool_execution_* (toolCallId, toolName) pairs are Prime's own and match the assistant tool calls: ${show(facts.toolCallIdentityNative)}`,
+			`probe:tool-run, probe:tool-error, probe:abort-tool: tool_execution_* (toolCallId, toolName) pairs are Prime's own and match the assistant tool calls: ${show(facts.toolCallIdentityNative)}`,
 			`probe:tool-error: tool_execution_end isError=true and the run recovers to stop: ${show(facts.toolErrorRecovered)}`,
 			`probe:provider-failure: final stop reason ${show(facts.providerFailureStop)}`,
 			`probe:abort-stream: final stop reason ${show(facts.abortStreamStop)}`,

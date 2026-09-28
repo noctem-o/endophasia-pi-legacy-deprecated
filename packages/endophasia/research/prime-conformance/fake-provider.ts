@@ -105,6 +105,27 @@ export const EXPECTED_PERSISTED_USAGE: Readonly<Record<string, readonly (string 
 	fork: ["multi-a", "multi-c"],
 };
 
+function seededUsage(input: number, output: number, total: number) {
+	return {
+		input,
+		output,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: total,
+		cost: { input, output: output * 2, cacheRead: 0, cacheWrite: 0, total: input + output * 2 },
+	};
+}
+
+/**
+ * The accounting the probe seeds into child-usage-replay's crafted session file: the parent assistant usage, and one
+ * child_usage_attributed entry with its child and aggregate usage. The file Prime leaves must still hold exactly these.
+ */
+export const CHILD_USAGE_SEED = {
+	parent: seededUsage(1_000, 50, 1_050),
+	child: seededUsage(400, 20, 420),
+	aggregate: seededUsage(1_400, 70, 1_050),
+} as const;
+
 type Step =
 	| {
 			readonly kind: "text";

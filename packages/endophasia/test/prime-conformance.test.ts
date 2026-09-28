@@ -366,6 +366,36 @@ describe("classification", () => {
 		expect(buildPrimeConformanceReportV0(withScenario(miscounted)).facts.providerUsageDecodedExactly).toBe(false);
 	});
 
+	it("binds the crafted child-usage accounting to its seed", () => {
+		const run = fixture("child-usage-replay");
+		const sessionEntries = run.sessionEntries.map((entry) =>
+			entry.type === "child_usage_attributed" && entry.childUsage !== undefined
+				? { ...entry, childUsage: { ...entry.childUsage, output: entry.childUsage.output + 1 } }
+				: entry,
+		);
+		const report = buildPrimeConformanceReportV0(withScenario({ ...run, sessionEntries }));
+		expect(report.facts.providerUsageDecodedExactly).toBe(false);
+		expect(report.findings.find((finding) => finding.contract === "UsageLedgerRowV0")!.basis).toBe("contradicted");
+	});
+
+	it("checks tool identity on the error path too, not only in tool-run", () => {
+		const run = fixture("tool-error");
+		// Execution events and turn results agree with each other, but not with the assistant's tool call.
+		const events = run.events.map((event) => {
+			if (event.type === "tool_execution_start" || event.type === "tool_execution_end")
+				return { ...event, toolCallId: "call_other" };
+			if (event.type === "turn_end")
+				return {
+					...event,
+					toolResults: event.toolResults.map((result) => ({ ...result, toolCallId: "call_other" })),
+				};
+			return event;
+		});
+		const report = buildPrimeConformanceReportV0(withScenario({ ...run, events }));
+		expect(report.facts.toolCallIdentityNative).toBe(false);
+		expect(report.findings[0]!.basis).toBe("contradicted");
+	});
+
 	it("does not call usage exact when Prime reports a usage field the projections would drop", () => {
 		const run = fixture("simple");
 		const events = run.events.map((event) =>

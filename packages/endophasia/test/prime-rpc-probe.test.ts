@@ -35,6 +35,7 @@ import {
 	failureTextV0,
 	hashBuildOutputV0,
 	PrimeProbeFailureV0,
+	readPrimeSessionFileV0,
 } from "../research/prime-conformance/probe.ts";
 import { classifyPrimeRecordV0, type PrimeRpcResponseV0 } from "../research/prime-conformance/protocol.ts";
 import { PrimeRpcClientV0, PrimeRpcError, PrimeRpcExitError } from "../research/prime-conformance/rpc-client.ts";
@@ -751,6 +752,24 @@ describe("isolated environment", () => {
 			expect(environment.env.LOCALAPPDATA?.startsWith(environment.env.HOME!)).toBe(true);
 		} finally {
 			rmSync(environment.root, { recursive: true, force: true });
+		}
+	});
+
+	it("reads session files as fatal UTF-8, never inventing replacement characters", () => {
+		const root = mkdtempSync(join(tmpdir(), "prime-utf8-"));
+		try {
+			const header = '{"type":"session","id":"s-1"}\n';
+			const good = join(root, "good.jsonl");
+			writeFileSync(good, header);
+			expect(readPrimeSessionFileV0(good)).toHaveLength(1);
+			const bad = join(root, "bad.jsonl");
+			writeFileSync(
+				bad,
+				Buffer.concat([Buffer.from('{"type":"session","id":"s-'), Buffer.from([0xff]), Buffer.from('"}\n')]),
+			);
+			expect(() => readPrimeSessionFileV0(bad)).toThrow("session file is not valid UTF-8");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
 		}
 	});
 

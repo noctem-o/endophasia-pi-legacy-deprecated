@@ -11,7 +11,7 @@ The code under `packages/endophasia/research/prime-conformance/` is experimental
 | Endophasia base | `main` at `f82e0020740d6b78621244703ee0ddb659c0877a` |
 | Prime Agent | `PrimeIntellect-ai/prime-agent` `main` at `2d24ad4e6b2d1ee8e6919af6f108e980a14d550e`, version 0.9.6 |
 | Boundary | `prime-agent --mode rpc`, JSONL over stdio |
-| Probe | `prime-conformance-v0`, probe version 0.7.0 |
+| Probe | `prime-conformance-v0`, probe version 0.8.0 |
 | Platform of the committed evidence | linux-x64, Node v22.22.2 |
 
 Citations use two forms:
@@ -45,7 +45,7 @@ Citations use two forms:
    - Failures: a missing required field, a non-boolean flag, a negative or non-finite number or an empty identity throws `PrimeDecodeError`. Every number kept is a count, a cost or an attempt. Its message names the field path, never the value.
    - `fork` and `switch_session` must answer `cancelled: false`, because both can report success when an extension cancelled them.
    - Session lines: malformed JSON, a missing type, a malformed `id`, or a `parentId` that is neither a non-empty string nor null fails.
-   - Session files: a blank line, a missing final newline, an entry id repeated within one file, a session header anywhere but line 1 (or no header there), or a `parentId` that names no earlier non-header entry fails.
+   - Session files are read as fatal UTF-8 after the Prime process has exited, so anything Prime persists at shutdown is evidence and malformed bytes never become U+FFFD identities. A blank line, a missing final newline, an entry id repeated within one file, a session header anywhere but line 1 (or no header there), or a `parentId` that names no earlier non-header entry fails.
    - An unknown entry type is kept by identity and field names, as evidence of a new Prime surface. The exception is an unknown entry carrying accounting fields: it fails, because dropping its usage would undercount.
    - Framing: an RPC record with an empty event type, or a blank line, is a protocol error.
    - Every `turn_end` must carry the same assistant message as the preceding assistant `message_end`, and every `agent_end` must end with the stop reason of the run's last assistant `message_end`, since the terminal is classified from it. A turn's `toolResults` must match its `tool_execution_end` events in id, name and error flag. Evidence where they disagree contradicts itself.
@@ -66,8 +66,8 @@ Citations use two forms:
    Invariants check that an operation occurred, not what Prime answered. A valid observation of unexpected Prime behavior is conformance evidence.
 4. **Provider expectations.** Each scenario declares its prompt markers, and its fake provider refuses anything else with HTTP 400, which fails the run: a request to any route other than `POST /v1/chat/completions`, an unreadable body, a request for any model other than the probe's, an unknown or foreign marker, a reply beyond the script, a step after a tool call whose tool result message (matching `tool_call_id`) is missing, or a scripted step (or an identical summary request within one compaction) requested a second time (Prime re-sending a request is evidence to inspect, not a step to serve twice). Summarization requests are accepted only while `compact` runs, and at most two distinct ones per compaction: Prime makes a history call, plus a turn-prefix call when the cut splits a turn (`prime:packages/coding-agent/src/core/compaction/compaction.ts:829-866`); the probe's compaction does split a turn. This rule is what exposed auto-refine: in probe 0.2.0 its request was quietly answered as a summary.
 5. **Exact predicates** (`classification.ts`). A positive fact requires every dimension both surfaces report to agree.
-   - Exact usage: every assistant usage, both as emitted on `message_end` and as persisted in the session file, must equal the script through Prime's documented mapping. Each compaction entry must carry the sum of the summary requests the fake served (Prime sums its history and turn-prefix calls). A usage field Prime adds beyond the known ones makes usage not exact, since the projections would drop it.
-   - Tool identity checks every execution phase (start, update and end) against the assistant's tool calls.
+   - Exact usage: every assistant usage, both as emitted on `message_end` and as persisted in the session file, must equal the script through Prime's documented mapping. Each compaction entry must carry the sum of the summary requests the fake served (Prime sums its history and turn-prefix calls). The crafted child-usage file must still hold exactly its seeded parent, child and aggregate usage after Prime reopens it. A usage field Prime adds beyond the known ones makes usage not exact, since the projections would drop it.
+   - Tool identity checks every execution phase (start, update and end) against the assistant's tool calls, in every scenario that runs a tool (tool-run, tool-error, abort-tool).
    - Compaction retention is proved from the session file snapshotted immediately before and after `compact`, so a later prompt cannot make up for a loss.
    - Fork identity: the entries the fork copies must be byte-for-byte identical to the originals. Otherwise the Usage finding is contradicted, since the de-duplication rule below would be wrong.
    - Audited revision: the conclusions drawn from Prime source hold only for the audited revision (0.9.6 at `2d24ad4e`). Evidence from any other commit, version or a binary leaves every finding unverified until Prime is re-audited and `AUDITED_PRIME` is updated.

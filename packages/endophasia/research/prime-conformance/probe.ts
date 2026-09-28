@@ -35,7 +35,7 @@ import {
 	type PrimeSessionEntryEvidenceV0,
 	type PrimeStatsEvidenceV0,
 } from "./evidence.ts";
-import { type FakeProviderV0, SENTINELS, startFakeProviderV0 } from "./fake-provider.ts";
+import { CHILD_USAGE_SEED, type FakeProviderV0, SENTINELS, startFakeProviderV0 } from "./fake-provider.ts";
 import { scenarioInvariantProblemsV0 } from "./invariants.ts";
 import type { PrimeEvidenceEventV0, PrimeRpcResponseV0 } from "./protocol.ts";
 import { PrimeRpcClientV0, PrimeRpcError, type PrimeRpcExitV0 } from "./rpc-client.ts";
@@ -235,8 +235,18 @@ class ProbeSession {
 	}
 }
 
-function readSessionEntries(path: string): PrimeSessionEntryEvidenceV0[] {
-	return decodePrimeSessionFileV0(readFileSync(path, "utf8"));
+/**
+ * Decode a session file as fatal UTF-8: a lenient read would turn malformed bytes into U+FFFD, inventing identities the
+ * durable file never held.
+ */
+export function readPrimeSessionFileV0(path: string): PrimeSessionEntryEvidenceV0[] {
+	let content: string;
+	try {
+		content = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(path));
+	} catch {
+		throw new PrimeDecodeError("session file is not valid UTF-8");
+	}
+	return decodePrimeSessionFileV0(content);
 }
 
 function sameFile(a: string, b: string): boolean {
@@ -269,17 +279,7 @@ const toolStarted: Trigger = (type) => type === "tool_execution_start";
 /** Write a crafted durable session: one assistant reply with an RLM child usage attribution folded into it. */
 function writeChildUsageSession(environment: PrimeEnvironmentV0): string {
 	const id = "01a0e89c-0000-7000-8000-00000000c41d";
-	const usage = (input: number, output: number, total: number) => ({
-		input,
-		output,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: total,
-		cost: { input, output: output * 2, cacheRead: 0, cacheWrite: 0, total: input + output * 2 },
-	});
-	const parent = usage(1_000, 50, 1_050);
-	const child = usage(400, 20, 420);
-	const aggregate = { ...usage(1_400, 70, 1_050), totalTokens: 1_050 };
+	const { parent, child, aggregate } = CHILD_USAGE_SEED;
 	const lines = [
 		{ type: "session", version: 3, id, timestamp: "2026-01-01T00:00:00.000Z", cwd: environment.cwd },
 		{
@@ -327,8 +327,10 @@ function singleRun(marker: string, options: { abortOn?: Trigger; autoRetryOff?: 
 		if (options.autoRetryOff === true) await session.command({ type: "set_auto_retry", enabled: false });
 		await session.prompt(marker, options.abortOn === undefined ? {} : { abortOn: options.abortOn });
 		await session.stats("after");
-		run.sessionEntries = readSessionEntries(await session.sessionFile());
+		// The durable file is read after the process exits, so anything Prime persists at shutdown is evidence too.
+		const file = await session.sessionFile();
 		await session.close();
+		run.sessionEntries = readPrimeSessionFileV0(file);
 	};
 }
 
@@ -374,8 +376,9 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 				streamingBehavior: "followUp",
 			});
 			await session.stats("after-resume");
-			run.sessionEntries = readSessionEntries(await session.sessionFile());
+			const finalFile = await session.sessionFile();
 			await session.close();
+			run.sessionEntries = readPrimeSessionFileV0(finalFile);
 		},
 	},
 	{
@@ -407,8 +410,8 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 				await first.stats(`after-${marker}`);
 			}
 			const path = await first.sessionFile();
-			const before = readSessionEntries(path);
 			await first.close();
+			const before = readPrimeSessionFileV0(path);
 			const second = open();
 			requirePrimeNotCancelledV0(await second.command({ type: "switch_session", sessionPath: path }));
 			await second.stats("after-reopen");
@@ -417,12 +420,12 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			);
 			const reopenedFile = await second.sessionFile();
 			run.observations.reopenedIntendedSession = sameFile(reopenedFile, path);
-			const after = readSessionEntries(reopenedFile);
+			await second.close();
+			const after = readPrimeSessionFileV0(reopenedFile);
 			run.observations.entryIdsStableAcrossReopen =
 				JSON.stringify(before.map((entry) => entry.id)) ===
 				JSON.stringify(after.slice(0, before.length).map((entry) => entry.id));
 			run.sessionEntries = after;
-			await second.close();
 		},
 	},
 	{
@@ -435,7 +438,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			await session.prompt("multi-b");
 			await session.stats("before-compaction");
 			const file = await session.sessionFile();
-			run.entrySnapshots.push({ label: "before-compaction", entries: readSessionEntries(file) });
+			run.entrySnapshots.push({ label: "before-compaction", entries: readPrimeSessionFileV0(file) });
 			// Summarization requests are expected only while the compaction runs.
 			fake.allowSummaries(true);
 			try {
@@ -445,7 +448,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			}
 			await session.stats("after-compaction");
 			// Snapshot before any later prompt adds rows, so retention is judged on the compaction alone.
-			run.entrySnapshots.push({ label: "after-compaction", entries: readSessionEntries(file) });
+			run.entrySnapshots.push({ label: "after-compaction", entries: readPrimeSessionFileV0(file) });
 			// Manual compaction aborts first (compact -> abort -> requestAbort), which suspends the input queue. Record the
 			// plain refusal (queued-input category only), then resume with a prompt that may queue.
 			run.observations.plainPromptAfterCompactionAdmitted = await session.prompt("multi-c", {
@@ -455,8 +458,9 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 				streamingBehavior: "followUp",
 			});
 			await session.stats("after-next-prompt");
-			run.sessionEntries = readSessionEntries(await session.sessionFile());
+			const finalFile = await session.sessionFile();
 			await session.close();
+			run.sessionEntries = readPrimeSessionFileV0(finalFile);
 		},
 	},
 	{
@@ -469,7 +473,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			await session.prompt("multi-b");
 			await session.stats("before-fork");
 			const originalFile = await session.sessionFile();
-			const beforeFork = readSessionEntries(originalFile);
+			const beforeFork = readPrimeSessionFileV0(originalFile);
 			run.entrySnapshots.push({ label: "fork-original-before", entries: beforeFork });
 			// The fork is the operation under test: no target, a cancelled fork or no new session fails the scenario. The
 			// target is the second user message, identified in the file, never by its position in Prime's list.
@@ -484,8 +488,9 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			run.observations.forkCreatedNewFile = !sameFile(forkFile, originalFile);
 			await session.prompt("multi-c");
 			await session.stats("after-fork-prompt");
-			run.sessionEntries = readSessionEntries(forkFile);
-			const original = readSessionEntries(originalFile);
+			await session.close();
+			run.sessionEntries = readPrimeSessionFileV0(forkFile);
+			const original = readPrimeSessionFileV0(originalFile);
 			run.entrySnapshots.push({ label: "fork-original-after", entries: original });
 			run.observations.originalEntriesAfterFork = original.length;
 			const originalIds = new Set(original.flatMap((entry) => (entry.type === "session" ? [] : [entry.id])));
@@ -496,7 +501,6 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			run.observations.forkSharedEntriesIdentical = shared.every(
 				(entry) => originalById.get(entry.id) === JSON.stringify(entry),
 			);
-			await session.close();
 		},
 	},
 	{
@@ -509,8 +513,8 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			const session = open();
 			requirePrimeNotCancelledV0(await session.command({ type: "switch_session", sessionPath: path }));
 			await session.stats("after-open");
-			run.sessionEntries = readSessionEntries(path);
 			await session.close();
+			run.sessionEntries = readPrimeSessionFileV0(path);
 		},
 	},
 ];
