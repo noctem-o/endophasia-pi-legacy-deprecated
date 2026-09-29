@@ -644,6 +644,21 @@ describe("Prime RPC connection: listeners", () => {
 		expect(JSON.stringify(diagnostics)).not.toMatch(SENTINEL);
 	});
 
+	it("reports a rejecting async listener or observer instead of leaving an unhandled rejection", async () => {
+		const { connection, diagnostics } = connect("echo");
+		connection.subscribe(async () => {
+			throw new TypeError("ASSISTANT_SENTINEL");
+		});
+		connection.observeCommands(async () => {
+			throw new RangeError("PROMPT_SENTINEL");
+		});
+		await connection.request({ type: "get_state" });
+		await new Promise((done) => setTimeout(done, 20));
+		expect(diagnostics).toContainEqual({ kind: "listener-failure", listener: "event", errorName: "TypeError" });
+		expect(diagnostics).toContainEqual({ kind: "listener-failure", listener: "command", errorName: "RangeError" });
+		expect(JSON.stringify(diagnostics)).not.toMatch(SENTINEL);
+	});
+
 	it("survives a throwing diagnostic sink", async () => {
 		const { connection } = connect("hostile-records", {
 			onDiagnostic: () => {
@@ -1414,6 +1429,31 @@ describe("Prime runtime identity", () => {
 		expect((await read())?.artifactsHash).toMatch(/^[0-9a-f]{64}$/);
 		// A NUL byte in a file would let two different trees frame to the same digest input: unverified.
 		writeFileSync(join(root, "packages/agent/dist/blob.bin"), Uint8Array.of(0x61, 0x00, 0x62));
+		expect((await read())?.artifactsHash).toBeUndefined();
+	});
+
+	it.runIf(POSIX)("bounds the build-output walk: a tree nested past the depth bound is unverified", async () => {
+		const root = temporaryDirectory("prime-deep-");
+		const home = temporaryDirectory("prime-git-home-");
+		const env = { PATH: process.env.PATH ?? "", HOME: home, GIT_CONFIG_NOSYSTEM: "1" };
+		const git = (...args: string[]) =>
+			execFileSync("git", ["-C", root, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+				env,
+				encoding: "utf8",
+			});
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(root, "prime-agent.sh"), 0o755);
+		git("init", "-q");
+		git("add", "prime-agent.sh");
+		git("commit", "-q", "-m", "init");
+		mkdirSync(join(root, "packages/core/dist"), { recursive: true });
+		writeFileSync(join(root, "packages/core/dist/index.js"), "export {};\n");
+		const shallow = join(root, "packages/core/dist", ...Array.from({ length: 10 }, () => "d"));
+		mkdirSync(shallow, { recursive: true });
+		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
+		const read = async () => (await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source;
+		expect((await read())?.artifactsHash).toBe(hashBuildOutputV0(root));
+		mkdirSync(join(shallow, ...Array.from({ length: 70 }, () => "d")), { recursive: true });
 		expect((await read())?.artifactsHash).toBeUndefined();
 	});
 

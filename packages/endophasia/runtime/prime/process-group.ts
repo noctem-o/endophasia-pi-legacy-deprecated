@@ -225,8 +225,10 @@ export class PrimeProcessGroupV0 {
 	#killOrphans(): void {
 		const group = this.#process.pid;
 		if (group === undefined) return;
-		// With /proc, only when a live member is seen: such a member holds the group ID, so it is still this group's.
-		if (liveGroupMembers(group) === false) return;
+		// Only when a live member is seen in /proc: such a member holds the group ID, so it is still this group's. The
+		// keeper is already reaped here, so without /proc (non-Linux POSIX) ownership cannot be shown and the ID may have
+		// been reused: nothing is signalled, and survivors of an unexpected keeper death are not reached there.
+		if (liveGroupMembers(group) !== true) return;
 		try {
 			process.kill(-group, "SIGKILL");
 		} catch {

@@ -254,6 +254,9 @@ export async function readPrimeRuntimeIdentityV0(
 /** Bounds on hashing build output (Prime 0.9.6's is 400 files, about 5 MB). Past either, the build is unverified. */
 const MAX_BUILD_OUTPUT_BYTES = 256 * 1024 * 1024;
 const MAX_BUILD_OUTPUT_FILES = 100_000;
+/** Directories and files together, and nesting depth: empty directories cost traversal time too. */
+const MAX_BUILD_OUTPUT_ENTRIES = 200_000;
+const MAX_BUILD_OUTPUT_DEPTH = 64;
 
 /** Code-unit order: the same on every machine, unlike localeCompare, which depends on the locale and ICU version. */
 const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -287,13 +290,30 @@ async function hashBuildOutput(checkout: string, deadline: number): Promise<stri
 		files++;
 		if (files > MAX_BUILD_OUTPUT_FILES) throw new Unverifiable();
 	};
-	const walk = async (directory: string): Promise<void> => {
-		const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) => byCodeUnit(a.name, b.name));
-		for (const entry of entries) {
-			const path = join(directory, entry.name);
-			if (entry.isSymbolicLink()) throw new Unverifiable();
-			if (entry.isDirectory()) await walk(path);
-			else if (entry.isFile()) await hashFile(path);
+	let entries = 0;
+	// Depth-first in code-unit order, with an explicit stack (no recursion to overflow), checking the deadline and the
+	// entry and depth bounds at every step, so a wide or deep tree of empty directories is bounded too.
+	const walk = async (root: string): Promise<void> => {
+		const stack: { readonly path: string; readonly directory: boolean; readonly depth: number }[] = [
+			{ path: root, directory: true, depth: 0 },
+		];
+		for (let next = stack.pop(); next !== undefined; next = stack.pop()) {
+			if (Date.now() > deadline || ++entries > MAX_BUILD_OUTPUT_ENTRIES) throw new Unverifiable();
+			if (!next.directory) {
+				await hashFile(next.path);
+				continue;
+			}
+			if (next.depth > MAX_BUILD_OUTPUT_DEPTH) throw new Unverifiable();
+			const children = (await readdir(next.path, { withFileTypes: true })).sort((a, b) =>
+				byCodeUnit(a.name, b.name),
+			);
+			for (let index = children.length - 1; index >= 0; index--) {
+				const entry = children[index];
+				if (entry.isSymbolicLink()) throw new Unverifiable();
+				if (entry.isDirectory() || entry.isFile()) {
+					stack.push({ path: join(next.path, entry.name), directory: entry.isDirectory(), depth: next.depth + 1 });
+				}
+			}
 		}
 	};
 	// Every path component the launcher resolves through is checked without following links: a symlinked packages/,

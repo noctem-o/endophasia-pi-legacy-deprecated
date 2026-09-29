@@ -609,7 +609,18 @@ export class PrimeRpcConnectionV0 {
 			// A listener removed while this value is being delivered does not receive it.
 			if (!listeners.has(deliver)) continue;
 			try {
-				deliver(value);
+				// A listener typed as returning void may still be async: a rejected promise it returns is reported like a
+				// throw, instead of becoming an unhandled rejection.
+				const result: unknown = deliver(value);
+				if (
+					result !== null &&
+					typeof result === "object" &&
+					typeof (result as PromiseLike<unknown>).then === "function"
+				) {
+					(result as PromiseLike<unknown>).then(undefined, (error: unknown) =>
+						this.#diagnose({ kind: "listener-failure", listener, errorName: listenerErrorName(error) }),
+					);
+				}
 			} catch (error) {
 				// Isolation: later listeners and later records are unaffected. Only a standard error name is reported.
 				this.#diagnose({ kind: "listener-failure", listener, errorName: listenerErrorName(error) });
