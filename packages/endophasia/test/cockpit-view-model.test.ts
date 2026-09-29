@@ -1139,7 +1139,8 @@ describe("Runtime Profile projection", () => {
 			const view = projectRuntimeProfile(malformed);
 			expect(view.runtimeFamily).toBe("not reported");
 			expect(view.adapterProfileId).toBe("not reported");
-			expect(view.advertised).toBe("0 of 6 Endophasia v0 capabilities advertised");
+			expect(view.advertised).toBe("Not interpreted · unrecognized schema version");
+			expect(view.groups).toEqual([]);
 			expect(view.schemaNote).toBe("Unrecognized schema version · none");
 		}
 		expect(
@@ -1149,6 +1150,26 @@ describe("Runtime Profile projection", () => {
 			scope: "session",
 			workerLifetime: false,
 		});
+	});
+
+	it("interprets capability identifiers only under the exact v0 schema", () => {
+		const listed = { ...profile(), capabilities: ["endophasia.usage.v0", "endophasia.acp.v0"] };
+		expect(projectRuntimeProfile(listed)).toMatchObject({
+			interpreted: true,
+			advertised: "1 of 6 Endophasia v0 capabilities advertised",
+			unrecognized: ["endophasia.acp.v0"],
+		});
+		for (const schemaVersion of ["runtime-profile.v1", "runtime-profile.V0", "", undefined, 0]) {
+			const view = projectRuntimeProfile({ ...listed, schemaVersion });
+			// No v0 claim is read from a payload whose schema is not v0: no status rows, no count, nothing advertised.
+			expect(view).toMatchObject({
+				interpreted: false,
+				advertised: "Not interpreted · unrecognized schema version",
+				groups: [],
+				unrecognized: ["endophasia.usage.v0", "endophasia.acp.v0"],
+			});
+			expect(JSON.stringify(view)).not.toMatch(/"status":|of 6/);
+		}
 	});
 
 	it("claims the worker lifetime only for the exact v0 scope", () => {

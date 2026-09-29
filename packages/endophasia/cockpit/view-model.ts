@@ -984,6 +984,9 @@ export interface RuntimeProfileView {
 	/** Present when the profile's schema version is not runtime-profile.v0. */
 	readonly schemaNote?: string;
 	readonly advertised: string;
+	/** True only for the exact runtime-profile.v0 schema, the one schema whose capability identifiers have meaning. */
+	readonly interpreted: boolean;
+	/** Empty unless the schema is exactly runtime-profile.v0: statuses are never read from another schema. */
 	readonly groups: readonly RuntimeCapabilityGroupView[];
 	/**
 	 * The first distinct advertised identifiers outside the v0 catalogue, verbatim and bounded in length and number; no
@@ -1003,11 +1006,15 @@ function isKnownCapability(id: string): id is EndophasiaRuntimeCapabilityIdV0 {
 }
 
 /**
- * Project a Runtime Profile, read defensively as unknown JSON. Each known v0 capability is advertised exactly when its
- * identifier is listed: nothing is inferred from the runtime family, the adapter profile ID or any other service.
+ * Project a Runtime Profile, read defensively as unknown JSON. Under the exact runtime-profile.v0 schema, each known
+ * v0 capability is advertised exactly when its identifier is listed: nothing is inferred from the runtime family, the
+ * adapter profile ID or any other service. Under any other or missing schema version, no identifier is interpreted:
+ * capability meanings are defined only by v0, so every identifier is listed as unrecognized and no status is shown.
  */
 export function projectRuntimeProfile(profile: unknown): RuntimeProfileView {
 	const record = isRecord(profile) ? profile : {};
+	const schemaVersion = stringField(record, "schemaVersion");
+	const interpreted = schemaVersion === "runtime-profile.v0";
 	// One pass that retains at most the six known IDs and the first shown unknown ones, however long the list: past
 	// the display limit, a further distinct unknown ID only marks that more exist.
 	const advertised = new Set<EndophasiaRuntimeCapabilityIdV0>();
@@ -1015,14 +1022,13 @@ export function projectRuntimeProfile(profile: unknown): RuntimeProfileView {
 	let more = false;
 	for (const id of Array.isArray(record.capabilities) ? record.capabilities : []) {
 		if (typeof id !== "string") continue;
-		if (isKnownCapability(id)) advertised.add(id);
+		if (interpreted && isKnownCapability(id)) advertised.add(id);
 		else if (shown.size < UNRECOGNIZED_CAPABILITY_ROW_LIMIT) shown.add(id);
 		else if (!shown.has(id)) more = true;
 	}
 	const unrecognized = [...shown].map(boundProfileText);
 	const catalogue = Object.keys(RUNTIME_CAPABILITY_VIEW) as EndophasiaRuntimeCapabilityIdV0[];
 	const scope = stringField(record, "scope");
-	const schemaVersion = stringField(record, "schemaVersion");
 	const workerLifetime = scope === "session-worker-lifetime";
 	// Every string the view renders from the profile is bounded, as a malformed worker may send megabytes in one field.
 	const text = (value: string | undefined): string => (value === undefined ? "not reported" : boundProfileText(value));
@@ -1031,13 +1037,16 @@ export function projectRuntimeProfile(profile: unknown): RuntimeProfileView {
 		adapterProfileId: text(stringField(record, "adapterProfileId")),
 		scope: workerLifetime ? "Session worker lifetime" : text(scope),
 		workerLifetime,
-		...(schemaVersion === "runtime-profile.v0"
+		...(interpreted
 			? {}
 			: {
 					schemaNote: `Unrecognized schema version · ${schemaVersion === undefined ? "none" : boundProfileText(schemaVersion)}`,
 				}),
-		advertised: `${advertised.size} of ${catalogue.length} Endophasia v0 capabilities advertised`,
-		groups: RUNTIME_CAPABILITY_GROUPS.map(({ group, title, note }) => ({
+		interpreted,
+		advertised: interpreted
+			? `${advertised.size} of ${catalogue.length} Endophasia v0 capabilities advertised`
+			: "Not interpreted · unrecognized schema version",
+		groups: (interpreted ? RUNTIME_CAPABILITY_GROUPS : []).map(({ group, title, note }) => ({
 			title,
 			note,
 			rows: catalogue

@@ -661,8 +661,18 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 		if (view.unrecognized.length > 0) {
 			const section = el("div", "capability-group");
 			section.append(
-				el("div", "capability-group-title", "Other advertised identifiers"),
-				el("p", "trace-note", "Not part of the Endophasia v0 catalogue · shown as sent, with no meaning assigned"),
+				el(
+					"div",
+					"capability-group-title",
+					view.interpreted ? "Other advertised identifiers" : "Listed identifiers",
+				),
+				el(
+					"p",
+					"trace-note",
+					view.interpreted
+						? "Not part of the Endophasia v0 catalogue · shown as sent, with no meaning assigned"
+						: "Schema version not recognized · shown as sent, with no meaning assigned",
+				),
 			);
 			const list = el("ul", "capability-list");
 			for (const id of view.unrecognized) list.append(el("li", "capability-row unrecognized mono", id));
