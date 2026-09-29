@@ -80,6 +80,7 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 				abortRequested: boolean;
 				tools: Set<string>;
 				turnToolIds: Set<string>;
+				assistantActive: boolean;
 		  }
 		| undefined;
 	const lane = PRIME_ROOT_LANE_LABEL;
@@ -101,6 +102,7 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 					abortRequested: false,
 					tools: new Set(),
 					turnToolIds: new Set(),
+					assistantActive: false,
 				};
 				// Abort requests before this run belong to earlier runs.
 				for (let i = abortAfter.length - 1; i >= 0; i--) if (abortAfter[i]! < index) abortAfter.splice(i, 1);
@@ -122,12 +124,28 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 				push({ kind: "turn.started", lane, runId: run.id, turnId: run.turnId });
 				continue;
 			}
+			case "message_start": {
+				if (item.role !== "assistant") continue;
+				// An assistant message streams inside its turn, one at a time.
+				if (run?.turnId === undefined || run.assistantActive) {
+					misplace(`assistant message_start outside an active turn or inside another message at ${index}`);
+					continue;
+				}
+				run.assistantActive = true;
+				continue;
+			}
 			case "message_end": {
 				if (item.role !== "assistant" || item.assistant === undefined) continue;
 				if (run === undefined) {
 					misplace(`assistant message_end outside a run at ${index}`);
 					continue;
 				}
+				// A completion is mapped only for a message that started in the active turn.
+				if (run.turnId === undefined || !run.assistantActive) {
+					misplace(`assistant message_end without its message_start in the active turn at ${index}`);
+					continue;
+				}
+				run.assistantActive = false;
 				push({ kind: "model.completed", lane, runId: run.id });
 				continue;
 			}
@@ -168,6 +186,8 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 				}
 				// Tool calls belong to their turn: one still open at turn_end could otherwise finish in a later turn.
 				if (run.tools.size > 0) misplace(`turn_end with ${run.tools.size} tool call(s) still active at ${index}`);
+				if (run.assistantActive) misplace(`turn_end with an assistant message still streaming at ${index}`);
+				run.assistantActive = false;
 				run.tools.clear();
 				run.turnToolIds.clear();
 				push({ kind: "turn.finished", lane, runId: run.id, turnId: run.turnId });

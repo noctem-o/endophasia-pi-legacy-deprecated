@@ -289,10 +289,26 @@ function providerUsageDecodedExactly(evidence: readonly PrimeScenarioEvidenceV0[
 			entry.type === "message" && entry.role === "assistant" ? [entry.usage] : [],
 		);
 		const compactions = run.sessionEntries.filter((entry) => entry.type === "compaction");
+		const children = run.sessionEntries.filter((entry) => entry.type === "child_usage_attributed");
+		// Every usage-bearing row in the final file must be one the probe expects: an assistant message (compared below),
+		// the compaction scenario's one compaction, or the crafted child attribution. Any other row (e.g. a branch summary)
+		// is spend the fake never served, which both projections would count.
+		const accounted = run.sessionEntries.every(
+			(entry) =>
+				(entry.usage === undefined && entry.childUsage === undefined && entry.aggregateUsage === undefined) ||
+				(entry.type === "message" && entry.role === "assistant") ||
+				entry.type === "compaction" ||
+				entry.type === "child_usage_attributed",
+		);
+		// The compaction must survive into the final file (not only the immediate snapshot); no other scenario compacts
+		// or attributes child usage.
+		const expectedCompactions = run.provenance.scenario === "compaction" ? 1 : 0;
+		const expectedChildren = run.provenance.scenario === "child-usage-replay" ? 1 : 0;
+		if (!accounted || compactions.length !== expectedCompactions || children.length !== expectedChildren)
+			return false;
 		// The crafted child-usage file has no script; its seeded accounting must survive Prime's reopen unchanged.
 		if (run.provenance.scenario === "child-usage-replay") {
 			const seed = (usage: typeof CHILD_USAGE_SEED.parent): PrimeUsageEvidenceV0 => ({ ...usage, extraKeys: [] });
-			const children = run.sessionEntries.filter((entry) => entry.type === "child_usage_attributed");
 			return (
 				matches(live, []) &&
 				matches(persisted, [seed(CHILD_USAGE_SEED.parent)]) &&
@@ -309,11 +325,10 @@ function providerUsageDecodedExactly(evidence: readonly PrimeScenarioEvidenceV0[
 		return (
 			matches(live, script(EXPECTED_ASSISTANT_USAGE[run.provenance.scenario]!)) &&
 			(persistedScript === undefined || matches(persisted, script(persistedScript))) &&
-			(compactions.length === 0 ||
-				matches(
-					compactions.map((entry) => entry.usage),
-					compactions.map(() => summaries(run.observations.summaryRequests ?? 0)),
-				))
+			matches(
+				compactions.map((entry) => entry.usage),
+				compactions.map(() => summaries(run.observations.summaryRequests ?? 0)),
+			)
 		);
 	});
 }
@@ -400,24 +415,25 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 				// Every scenario that executes tools (tool-run, tool-error, abort-tool) is held to the same rule, so an
 				// error or abort path cannot carry identities the success path does not.
 				const identitiesNative = (run: PrimeScenarioEvidenceV0) => {
-					const called = run.events.flatMap((event) =>
-						event.type === "message_end" ? (event.assistant?.toolCalls ?? []) : [],
-					);
-					// Every execution phase (start, update, end) must name a tool call the assistant made.
-					const executed = run.events.flatMap((event) =>
-						event.type === "tool_execution_start" ||
-						event.type === "tool_execution_update" ||
-						event.type === "tool_execution_end"
-							? [event]
-							: [],
-					);
-					// The (id, name) pair must match; a missing id ("") never counts, even when both sides lack one.
-					return executed.every(
-						(execution) =>
-							execution.toolCallId !== "" &&
-							!execution.toolCallId.startsWith("adapter:") &&
-							called.some((call) => call.id === execution.toolCallId && call.name === execution.toolName),
-					);
+					// Declarations are scoped to their turn: an execution must match a call the assistant made in the same
+					// turn, or the trace would place a tool in a turn that never declared it.
+					let called: { readonly id: string; readonly name: string }[] = [];
+					return run.events.every((event) => {
+						if (event.type === "turn_start") called = [];
+						if (event.type === "message_end") called.push(...(event.assistant?.toolCalls ?? []));
+						if (
+							event.type !== "tool_execution_start" &&
+							event.type !== "tool_execution_update" &&
+							event.type !== "tool_execution_end"
+						)
+							return true;
+						// Every execution phase must match on the (id, name) pair; a missing id ("") never counts.
+						return (
+							event.toolCallId !== "" &&
+							!event.toolCallId.startsWith("adapter:") &&
+							called.some((call) => call.id === event.toolCallId && call.name === event.toolName)
+						);
+					});
 				};
 				return evidence.every(identitiesNative);
 			})();

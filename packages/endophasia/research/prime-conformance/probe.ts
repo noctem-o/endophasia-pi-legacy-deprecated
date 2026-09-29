@@ -7,7 +7,16 @@
 // failure, which makes the scenario invalid evidence; it never becomes a default, a skipped step or a plausible value.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+	closeSync,
+	constants,
+	existsSync,
+	openSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	writeFileSync,
+} from "node:fs";
 import { join, relative, sep } from "node:path";
 import {
 	commandEvidenceV0,
@@ -239,10 +248,25 @@ class ProbeSession {
  * Decode a session file as fatal UTF-8: a lenient read would turn malformed bytes into U+FFFD, inventing identities the
  * durable file never held.
  */
-export function readPrimeSessionFileV0(path: string): PrimeSessionEntryEvidenceV0[] {
+export function readPrimeSessionFileV0(path: string, sessionDir: string): PrimeSessionEntryEvidenceV0[] {
+	// Confined again at the read itself, and opened without following a final symlink: Prime could replace the file
+	// between the earlier check and this read (e.g. at shutdown) with a link to a session outside the isolation.
+	const confined = confinedSessionFileV0(path, sessionDir);
+	let fd: number;
+	try {
+		fd = openSync(confined, constants.O_RDONLY | constants.O_NOFOLLOW);
+	} catch {
+		throw new PrimeProbeFailureV0("the session file could not be opened inside the isolated session directory");
+	}
+	let bytes: Buffer;
+	try {
+		bytes = readFileSync(fd);
+	} finally {
+		closeSync(fd);
+	}
 	let content: string;
 	try {
-		content = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(path));
+		content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 	} catch {
 		throw new PrimeDecodeError("session file is not valid UTF-8");
 	}
@@ -322,7 +346,7 @@ function writeChildUsageSession(environment: PrimeEnvironmentV0): string {
 
 /** One prompt, the stats after it, and the durable entries: the shape of every single-run scenario. */
 function singleRun(marker: string, options: { abortOn?: Trigger; autoRetryOff?: boolean } = {}) {
-	return async ({ open, run }: ScenarioContext): Promise<void> => {
+	return async ({ environment, open, run }: ScenarioContext): Promise<void> => {
 		const session = open();
 		if (options.autoRetryOff === true) await session.command({ type: "set_auto_retry", enabled: false });
 		await session.prompt(marker, options.abortOn === undefined ? {} : { abortOn: options.abortOn });
@@ -330,7 +354,7 @@ function singleRun(marker: string, options: { abortOn?: Trigger; autoRetryOff?: 
 		// The durable file is read after the process exits, so anything Prime persists at shutdown is evidence too.
 		const file = await session.sessionFile();
 		await session.close();
-		run.sessionEntries = readPrimeSessionFileV0(file);
+		run.sessionEntries = readPrimeSessionFileV0(file, environment.sessionDir);
 	};
 }
 
@@ -363,7 +387,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 		name: "abort-stream",
 		description: "RPC abort while the assistant response is streaming.",
 		markers: ["abort-stream", "multi-a", "multi-b"],
-		async execute({ open, run }) {
+		async execute({ environment, open, run }) {
 			const session = open();
 			await session.prompt("abort-stream", { abortOn: assistantStarted });
 			await session.stats("after");
@@ -378,7 +402,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			await session.stats("after-resume");
 			const finalFile = await session.sessionFile();
 			await session.close();
-			run.sessionEntries = readPrimeSessionFileV0(finalFile);
+			run.sessionEntries = readPrimeSessionFileV0(finalFile, environment.sessionDir);
 		},
 	},
 	{
@@ -403,7 +427,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 		name: "multi-turn-reopen",
 		description: "Three prompts with known usage, then the process exits and a new process reopens the session file.",
 		markers: ["multi-a", "multi-b", "multi-c"],
-		async execute({ open, run }) {
+		async execute({ environment, open, run }) {
 			const first = open();
 			for (const marker of ["multi-a", "multi-b", "multi-c"]) {
 				await first.prompt(marker);
@@ -411,7 +435,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			}
 			const path = await first.sessionFile();
 			await first.close();
-			const before = readPrimeSessionFileV0(path);
+			const before = readPrimeSessionFileV0(path, environment.sessionDir);
 			const second = open();
 			requirePrimeNotCancelledV0(await second.command({ type: "switch_session", sessionPath: path }));
 			await second.stats("after-reopen");
@@ -421,7 +445,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			const reopenedFile = await second.sessionFile();
 			run.observations.reopenedIntendedSession = sameFile(reopenedFile, path);
 			await second.close();
-			const after = readPrimeSessionFileV0(reopenedFile);
+			const after = readPrimeSessionFileV0(reopenedFile, environment.sessionDir);
 			run.observations.entryIdsStableAcrossReopen =
 				JSON.stringify(before.map((entry) => entry.id)) ===
 				JSON.stringify(after.slice(0, before.length).map((entry) => entry.id));
@@ -432,13 +456,16 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 		name: "compaction",
 		description: "Two prompts, then a manual compaction whose summary also reports usage.",
 		markers: ["multi-a", "multi-b", "multi-c"],
-		async execute({ fake, open, run }) {
+		async execute({ environment, fake, open, run }) {
 			const session = open();
 			await session.prompt("multi-a");
 			await session.prompt("multi-b");
 			await session.stats("before-compaction");
 			const file = await session.sessionFile();
-			run.entrySnapshots.push({ label: "before-compaction", entries: readPrimeSessionFileV0(file) });
+			run.entrySnapshots.push({
+				label: "before-compaction",
+				entries: readPrimeSessionFileV0(file, environment.sessionDir),
+			});
 			// Summarization requests are expected only while the compaction runs.
 			fake.allowSummaries(true);
 			try {
@@ -450,7 +477,10 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			}
 			await session.stats("after-compaction");
 			// Snapshot before any later prompt adds rows, so retention is judged on the compaction alone.
-			run.entrySnapshots.push({ label: "after-compaction", entries: readPrimeSessionFileV0(file) });
+			run.entrySnapshots.push({
+				label: "after-compaction",
+				entries: readPrimeSessionFileV0(file, environment.sessionDir),
+			});
 			// Manual compaction aborts first (compact -> abort -> requestAbort), which suspends the input queue. Record the
 			// plain refusal (queued-input category only), then resume with a prompt that may queue.
 			run.observations.plainPromptAfterCompactionAdmitted = await session.prompt("multi-c", {
@@ -462,20 +492,20 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			await session.stats("after-next-prompt");
 			const finalFile = await session.sessionFile();
 			await session.close();
-			run.sessionEntries = readPrimeSessionFileV0(finalFile);
+			run.sessionEntries = readPrimeSessionFileV0(finalFile, environment.sessionDir);
 		},
 	},
 	{
 		name: "fork",
 		description: "Two prompts, then a fork from the second user message, then one more prompt on the fork.",
 		markers: ["multi-a", "multi-b", "multi-c"],
-		async execute({ open, run }) {
+		async execute({ environment, open, run }) {
 			const session = open();
 			await session.prompt("multi-a");
 			await session.prompt("multi-b");
 			await session.stats("before-fork");
 			const originalFile = await session.sessionFile();
-			const beforeFork = readPrimeSessionFileV0(originalFile);
+			const beforeFork = readPrimeSessionFileV0(originalFile, environment.sessionDir);
 			run.entrySnapshots.push({ label: "fork-original-before", entries: beforeFork });
 			// The fork is the operation under test: no target, a cancelled fork or no new session fails the scenario. The
 			// target is the second user message, identified in the file, never by its position in Prime's list.
@@ -491,8 +521,8 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			await session.prompt("multi-c");
 			await session.stats("after-fork-prompt");
 			await session.close();
-			run.sessionEntries = readPrimeSessionFileV0(forkFile);
-			const original = readPrimeSessionFileV0(originalFile);
+			run.sessionEntries = readPrimeSessionFileV0(forkFile, environment.sessionDir);
+			const original = readPrimeSessionFileV0(originalFile, environment.sessionDir);
 			run.entrySnapshots.push({ label: "fork-original-after", entries: original });
 			run.observations.originalEntriesAfterFork = original.length;
 			const originalIds = new Set(original.flatMap((entry) => (entry.type === "session" ? [] : [entry.id])));
@@ -516,7 +546,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			requirePrimeNotCancelledV0(await session.command({ type: "switch_session", sessionPath: path }));
 			await session.stats("after-open");
 			await session.close();
-			run.sessionEntries = readPrimeSessionFileV0(path);
+			run.sessionEntries = readPrimeSessionFileV0(path, environment.sessionDir);
 		},
 	},
 ];

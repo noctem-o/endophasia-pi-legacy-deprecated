@@ -413,6 +413,51 @@ describe("classification", () => {
 		expect(report.findings[0]!.basis).toBe("contradicted");
 	});
 
+	it("scopes tool identity to the turn that declared the call", () => {
+		const run = fixture("tool-run");
+		// Move the execution pair and its turn results from turn 1 into turn 2, whose assistant declared no tool.
+		const executions = run.events.filter(
+			(event) =>
+				event.type === "tool_execution_start" ||
+				event.type === "tool_execution_update" ||
+				event.type === "tool_execution_end",
+		);
+		const results = run.events.find((event) => event.type === "turn_end" && event.toolResults.length > 0);
+		const rest = run.events
+			.filter((event) => !executions.includes(event))
+			.map((event) => (event.type === "turn_end" && event === results ? { ...event, toolResults: [] } : event));
+		const secondStart = rest.findLastIndex((event) => event.type === "turn_start");
+		const secondEnd = rest.findLastIndex((event) => event.type === "turn_end");
+		const events = [
+			...rest.slice(0, secondStart + 1),
+			...executions,
+			...rest.slice(secondStart + 1, secondEnd),
+			{ ...rest[secondEnd]!, ...(results?.type === "turn_end" ? { toolResults: results.toolResults } : {}) },
+			...rest.slice(secondEnd + 1),
+		] as typeof run.events;
+		expect(derivePrimeFactsV0([{ ...run, events }]).toolCallIdentityNative).toBe(false);
+	});
+
+	it("reconciles every usage-bearing row of the final session file", () => {
+		const simple = fixture("simple");
+		const assistant = simple.sessionEntries.find((entry) => entry.type === "message" && entry.role === "assistant")!;
+		const extra = {
+			...simple,
+			sessionEntries: [
+				...simple.sessionEntries,
+				{ ...assistant, type: "branch_summary", id: "b1", role: undefined },
+			],
+		};
+		expect(buildPrimeConformanceReportV0(withScenario(extra)).facts.providerUsageDecodedExactly).toBe(false);
+		// The compaction must survive into the final file, not only the immediate snapshot.
+		const compaction = fixture("compaction");
+		const dropped = {
+			...compaction,
+			sessionEntries: compaction.sessionEntries.filter((entry) => entry.type !== "compaction"),
+		};
+		expect(buildPrimeConformanceReportV0(withScenario(dropped)).facts.providerUsageDecodedExactly).toBe(false);
+	});
+
 	it("does not call usage exact when Prime reports a usage field the projections would drop", () => {
 		const run = fixture("simple");
 		const events = run.events.map((event) =>
@@ -795,6 +840,18 @@ describe("publication gate", () => {
 				const events = [...run.events];
 				const [moved] = events.splice(end, 1);
 				events.splice(turnEnd, 0, moved!);
+				return withScenario({ ...run, events });
+			},
+			"invalid",
+		],
+		[
+			"an assistant message_start after the run ended",
+			() => {
+				const run = fixture("simple");
+				const start = run.events.findIndex((event) => event.type === "message_start" && event.role === "assistant");
+				const events = [...run.events];
+				const [moved] = events.splice(start, 1);
+				events.push(moved!);
 				return withScenario({ ...run, events });
 			},
 			"invalid",

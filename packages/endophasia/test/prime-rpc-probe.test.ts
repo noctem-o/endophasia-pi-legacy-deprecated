@@ -761,13 +761,32 @@ describe("isolated environment", () => {
 			const header = '{"type":"session","id":"s-1"}\n';
 			const good = join(root, "good.jsonl");
 			writeFileSync(good, header);
-			expect(readPrimeSessionFileV0(good)).toHaveLength(1);
+			expect(readPrimeSessionFileV0(good, root)).toHaveLength(1);
 			const bad = join(root, "bad.jsonl");
 			writeFileSync(
 				bad,
 				Buffer.concat([Buffer.from('{"type":"session","id":"s-'), Buffer.from([0xff]), Buffer.from('"}\n')]),
 			);
-			expect(() => readPrimeSessionFileV0(bad)).toThrow("session file is not valid UTF-8");
+			expect(() => readPrimeSessionFileV0(bad, root)).toThrow("session file is not valid UTF-8");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("confines a session file again at the read, so a file swapped for an outside link is never read", () => {
+		const root = mkdtempSync(join(tmpdir(), "prime-reread-"));
+		try {
+			const sessions = join(root, "sessions");
+			mkdirSync(sessions);
+			const outside = join(root, "user-session.jsonl");
+			writeFileSync(outside, '{"type":"session","id":"user"}\n');
+			const file = join(sessions, "s.jsonl");
+			writeFileSync(file, '{"type":"session","id":"probe"}\n');
+			expect(readPrimeSessionFileV0(file, sessions)).toHaveLength(1);
+			// Prime replaces its file with a link to a session outside the isolation after the path was first checked.
+			rmSync(file);
+			symlinkSync(outside, file);
+			expect(() => readPrimeSessionFileV0(file, sessions)).toThrow("outside the isolated");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
