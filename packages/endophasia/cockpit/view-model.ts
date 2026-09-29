@@ -1002,17 +1002,20 @@ function isKnownCapability(id: string): id is EndophasiaRuntimeCapabilityIdV0 {
  */
 export function projectRuntimeProfile(profile: unknown): RuntimeProfileView {
 	const record = isRecord(profile) ? profile : {};
-	const listed = Array.isArray(record.capabilities)
-		? record.capabilities.filter((id): id is string => typeof id === "string")
-		: [];
-	const advertised = new Set(listed.filter(isKnownCapability));
-	// Counted by reference to the received strings; only the shown few are copied and truncated.
-	const unknown = new Set(listed.filter((id) => !isKnownCapability(id)));
-	const unrecognized: string[] = [];
-	for (const id of unknown) {
-		if (unrecognized.length === UNRECOGNIZED_CAPABILITY_ROW_LIMIT) break;
-		unrecognized.push(id.length > PROFILE_TEXT_LIMIT ? `${id.slice(0, PROFILE_TEXT_LIMIT)}…` : id);
+	// One pass that retains at most the six known IDs and the first shown unknown ones, however long the list: past
+	// the display limit, a further distinct unknown ID only marks that more exist.
+	const advertised = new Set<EndophasiaRuntimeCapabilityIdV0>();
+	const shown = new Set<string>();
+	let more = false;
+	for (const id of Array.isArray(record.capabilities) ? record.capabilities : []) {
+		if (typeof id !== "string") continue;
+		if (isKnownCapability(id)) advertised.add(id);
+		else if (shown.size < UNRECOGNIZED_CAPABILITY_ROW_LIMIT) shown.add(id);
+		else if (!shown.has(id)) more = true;
 	}
+	const unrecognized = [...shown].map((id) =>
+		id.length > PROFILE_TEXT_LIMIT ? `${id.slice(0, PROFILE_TEXT_LIMIT)}…` : id,
+	);
 	const catalogue = Object.keys(RUNTIME_CAPABILITY_VIEW) as EndophasiaRuntimeCapabilityIdV0[];
 	const scope = stringField(record, "scope");
 	const schemaVersion = stringField(record, "schemaVersion");
@@ -1036,8 +1039,10 @@ export function projectRuntimeProfile(profile: unknown): RuntimeProfileView {
 				})),
 		})),
 		unrecognized,
-		...(unknown.size > unrecognized.length
-			? { unrecognizedWindow: `Showing first ${unrecognized.length} of ${unknown.size} unrecognized identifiers` }
+		...(more
+			? {
+					unrecognizedWindow: `Showing the first ${unrecognized.length} unrecognized identifiers · more were advertised`,
+				}
 			: {}),
 	};
 }

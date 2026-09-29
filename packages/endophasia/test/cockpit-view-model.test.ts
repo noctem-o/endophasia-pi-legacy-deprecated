@@ -1116,7 +1116,7 @@ describe("Runtime Profile projection", () => {
 		});
 		expect(view.unrecognized).toEqual(many.slice(0, UNRECOGNIZED_CAPABILITY_ROW_LIMIT));
 		expect(view.unrecognizedWindow).toBe(
-			`Showing first ${UNRECOGNIZED_CAPABILITY_ROW_LIMIT} of 50000 unrecognized identifiers`,
+			`Showing the first ${UNRECOGNIZED_CAPABILITY_ROW_LIMIT} unrecognized identifiers · more were advertised`,
 		);
 		expect(view.advertised).toBe("1 of 6 Endophasia v0 capabilities advertised");
 		const atLimit = projectRuntimeProfile({
@@ -1125,6 +1125,13 @@ describe("Runtime Profile projection", () => {
 		});
 		expect(atLimit.unrecognized).toHaveLength(UNRECOGNIZED_CAPABILITY_ROW_LIMIT);
 		expect(atLimit).not.toHaveProperty("unrecognizedWindow");
+		// Repeats of shown identifiers, and known IDs after the limit, are not "more".
+		const repeats = projectRuntimeProfile({
+			...profile(),
+			capabilities: [...many.slice(0, UNRECOGNIZED_CAPABILITY_ROW_LIMIT), ...many.slice(0, 5), ...ALL],
+		});
+		expect(repeats).not.toHaveProperty("unrecognizedWindow");
+		expect(repeats.advertised).toBe("6 of 6 Endophasia v0 capabilities advertised");
 	});
 
 	it("survives a malformed profile without crashing or inventing values", () => {
