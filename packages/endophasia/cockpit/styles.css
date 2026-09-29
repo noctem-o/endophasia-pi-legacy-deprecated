@@ -645,6 +645,47 @@ pre {
 	overflow-wrap: anywhere;
 }
 
+/* Continuity: one explicit capture of main-lane structure. Entries are ordered by Pi's sequence; no payloads. */
+
+.continuity-entries > summary {
+	cursor: pointer;
+	font-size: 12px;
+	color: var(--text-soft);
+}
+
+.continuity-list {
+	list-style: none;
+	margin: 0;
+	padding: 2px 0;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.continuity-row {
+	padding: 2px 0 2px 8px;
+	border-left: 2px solid var(--line-strong);
+	font-size: 12px;
+}
+
+.continuity-row-head {
+	display: grid;
+	grid-template-columns: 38px auto 1fr;
+	align-items: center;
+	column-gap: 6px;
+}
+
+.continuity-label {
+	color: var(--text);
+}
+
+.continuity-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin: 2px 0 0 44px;
+}
+
 /* Mission Trace: an ordered lifecycle spine. Nesting is illustrative; the sequence is the only order. */
 
 .trace-note,

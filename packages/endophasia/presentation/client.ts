@@ -17,6 +17,7 @@ import {
 	SessionManagement,
 } from "@earendil-works/pi-coding-agent/experimental/services/sessions";
 import { Transcript, type TranscriptState } from "@earendil-works/pi-coding-agent/experimental/services/transcript";
+import { type ContinuitySnapshotV0, EndophasiaContinuityV0 } from "../src/continuity-service.ts";
 import { EndophasiaInspectorV0 } from "../src/inspector-service.ts";
 import { EndophasiaMissionTraceV0, type MissionTraceObservationV0 } from "../src/mission-trace-service.ts";
 import {
@@ -59,8 +60,8 @@ export interface EndophasiaPresentationClientV0 {
 	 */
 	readonly usage: ReplicatedState<UsageObservationV0>;
 	/**
-	 * Attach a Session and wait until its services, including the Endophasia Inspector, Mission Trace, Runtime Facts and
-	 * Usage, hydrate. A worker missing any of them attaches degraded.
+	 * Attach a Session and wait until its services, including the Endophasia Inspector, Mission Trace, Runtime Facts,
+	 * Usage and Continuity, hydrate. A worker missing any of them attaches degraded.
 	 */
 	attach(sessionId: string, context: Context): Promise<void>;
 	/** Detach the current Session and wait until its services are released. */
@@ -82,6 +83,12 @@ export interface EndophasiaPresentationClientV0 {
 	 * Without a query it reads from the start with the default limit. Not an atomic snapshot of the ledger.
 	 */
 	usagePage(query: UsageLedgerQueryV0 | undefined, context: Context): Promise<UsageLedgerPageV0>;
+	/**
+	 * A fresh Continuity v0 capture of the attached Session's main lane, taken by its worker on every call. It is not
+	 * live and not the provider-visible prompt. The read fails, rather than truncating, when the snapshot exceeds the
+	 * service's remote byte limit.
+	 */
+	continuitySnapshot(context: Context): Promise<ContinuitySnapshotV0>;
 	/** Dispose the service bindings and the Pi client. Every call returns the same disposal promise. */
 	dispose(): Promise<void>;
 }
@@ -144,6 +151,7 @@ export async function openEndophasiaPresentationClientV0(
 				EndophasiaMissionTraceV0,
 				EndophasiaRuntimeFactsV0,
 				EndophasiaUsageV0,
+				EndophasiaContinuityV0,
 			],
 			assertAccess() {},
 			onError,
@@ -152,6 +160,7 @@ export async function openEndophasiaPresentationClientV0(
 		const inspector = sessionServices.use(EndophasiaInspectorV0);
 		const runtimeFacts = sessionServices.use(EndophasiaRuntimeFactsV0);
 		const usage = sessionServices.use(EndophasiaUsageV0);
+		const continuity = sessionServices.use(EndophasiaContinuityV0);
 		const presentation: EndophasiaPresentationClientV0 = {
 			connection: server.connection,
 			attachment: session.attachment,
@@ -173,6 +182,7 @@ export async function openEndophasiaPresentationClientV0(
 			operationOutcome: (operationId, context) => runtimeFacts.operationOutcome(operationId, context),
 			// A remote argument cannot be undefined: the default query crosses as an empty object.
 			usagePage: (query, context) => usage.page(query ?? {}, context),
+			continuitySnapshot: (context) => continuity.snapshot(context),
 			dispose,
 		};
 		await Promise.all([serverServices.ready(BACKGROUND_CONTEXT), sessionServices.ready(BACKGROUND_CONTEXT)]);

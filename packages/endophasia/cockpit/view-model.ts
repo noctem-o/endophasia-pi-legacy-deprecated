@@ -1,5 +1,5 @@
 // Pure display projections for Standard Cockpit v0. Each function derives only what the cockpit renders from Pi's
-// replicated state or an explicit Session Overview capture: no network, no mutation of inputs, no retained copies.
+// replicated state or an explicit capture: no network, no mutation of inputs, no retained copies.
 // Transcript values are read defensively as unknown JSON, so newer entry or content kinds degrade to a neutral
 // preview instead of breaking the cockpit.
 import type {
@@ -8,6 +8,7 @@ import type {
 } from "@earendil-works/pi-coding-agent/experimental/services/connection";
 import type { ModelsState } from "@earendil-works/pi-coding-agent/experimental/services/models";
 import type { SessionDirectoryState } from "@earendil-works/pi-coding-agent/experimental/services/sessions";
+import type { ContinuityEntryV0, ContinuitySnapshotV0 } from "../src/continuity-service.ts";
 import type { RuntimeMetricsV0 } from "../src/runtime-facts-service.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 import type { UsageLedgerRowV0, UsageObservationV0 } from "../src/usage-service.ts";
@@ -778,5 +779,141 @@ export function projectUsage(observation: UsageObservationV0, limit = USAGE_ROW_
 		rows: shown.map(projectUsageRow),
 		...(total > limit ? { window: `Showing latest ${limit} of ${total} rows in the live window` } : {}),
 		...(observation.hasEarlierRows ? { earlier: "Earlier durable usage rows are outside the live window." } : {}),
+	};
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Continuity v0
+
+/** Entry rows the cockpit renders at most per list; the capture itself holds every entry. */
+export const CONTINUITY_ENTRY_ROW_LIMIT = 100;
+
+export interface ContinuityFieldView {
+	readonly label: string;
+	readonly value: string;
+}
+
+export interface ContinuityEntryRowView {
+	/** Pi's durable entry sequence: an order, not a time. */
+	readonly sequence: string;
+	/** The exact entry ID. */
+	readonly id: string;
+	readonly label: string;
+	/** Only the structural fields the v0 entry carries. */
+	readonly meta: readonly string[];
+}
+
+export interface ContinuityEntriesView {
+	readonly total: number;
+	readonly rows: readonly ContinuityEntryRowView[];
+	/** Present when only the latest rows of the captured list are shown. */
+	readonly window?: string;
+}
+
+export interface ContinuityView {
+	readonly capturedAt: string;
+	readonly fields: readonly ContinuityFieldView[];
+	/** The compaction boundary of the context window, or undefined when it starts at no compaction. */
+	readonly compaction?: readonly ContinuityFieldView[];
+	readonly contextWindow: ContinuityEntriesView;
+	readonly activePath: ContinuityEntriesView;
+}
+
+/**
+ * Project one Continuity v0 entry from its own structural fields. Payload was never captured, so only its presence is
+ * shown where the schema records it (hasSummary, hasData); timestamps and parents are left to the capture.
+ */
+export function projectContinuityEntry(entry: ContinuityEntryV0): ContinuityEntryRowView {
+	const row = { sequence: `#${entry.seq}`, id: entry.id };
+	switch (entry.type) {
+		case "message":
+			return {
+				...row,
+				label: `Message · ${entry.role}`,
+				meta: [
+					...(entry.stopReason === undefined ? [] : [`stop ${entry.stopReason}`]),
+					...(entry.terminate ? ["terminate"] : []),
+				],
+			};
+		case "compaction":
+			return {
+				...row,
+				label: "Compaction",
+				meta: [
+					`${formatExactNumber(entry.tokensBefore)} tokens before`,
+					`${formatExactNumber(entry.retainedTailCount)} retained`,
+					...(entry.fromHook ? ["from hook"] : []),
+					entry.hasSummary ? "summary not shown" : "empty summary",
+				],
+			};
+		case "branch_summary":
+			return {
+				...row,
+				label: "Branch summary",
+				meta: [
+					entry.fromId === null ? "from root" : `from ${entry.fromId}`,
+					...(entry.fromHook ? ["from hook"] : []),
+					entry.hasSummary ? "summary not shown" : "empty summary",
+				],
+			};
+		case "custom":
+			return {
+				...row,
+				label: `Custom · ${entry.customType}`,
+				meta: [entry.hasData ? "data not shown" : "no data"],
+			};
+		default:
+			// Not part of Continuity v0; shown neutrally rather than interpreted.
+			return { ...row, label: "Unknown entry", meta: [] };
+	}
+}
+
+function projectContinuityEntries(entries: readonly ContinuityEntryV0[], limit: number): ContinuityEntriesView {
+	const total = entries.length;
+	const shown = total > limit ? entries.slice(total - limit) : entries;
+	return {
+		total,
+		rows: shown.map(projectContinuityEntry),
+		...(total > limit ? { window: `Showing latest ${limit} of ${total} captured entries` } : {}),
+	};
+}
+
+/**
+ * One explicit Continuity capture, field for field. Counts are the snapshot's own; nothing is recomputed, joined to
+ * other surfaces or read as token occupancy. capturedAt is when this cockpit received the capture.
+ */
+export function projectContinuity(
+	snapshot: ContinuitySnapshotV0,
+	capturedAt: number,
+	limit = CONTINUITY_ENTRY_ROW_LIMIT,
+): ContinuityView {
+	const { configuration, counts, compaction } = snapshot;
+	return {
+		capturedAt: formatClock(capturedAt),
+		fields: [
+			{ label: "Lane", value: snapshot.lane },
+			{ label: "Tip", value: snapshot.tipId ?? "empty" },
+			{ label: "Configured model", value: formatModel(configuration.model) },
+			{ label: "Thinking level", value: configuration.thinkingLevel },
+			{
+				label: "Active tools",
+				value: configuration.activeToolNames.length === 0 ? "none" : configuration.activeToolNames.join(", "),
+			},
+			{ label: "Active-path entries", value: formatExactNumber(counts.activePathEntries) },
+			{ label: "Context-window entries", value: formatExactNumber(counts.contextWindowEntries) },
+			{ label: "Before context window", value: formatExactNumber(counts.beforeContextWindow) },
+		],
+		...(compaction === null
+			? {}
+			: {
+					compaction: [
+						{ label: "Entry", value: compaction.entryId },
+						{ label: "Tokens before", value: formatExactNumber(compaction.tokensBefore) },
+						{ label: "Retained tail", value: formatExactNumber(compaction.retainedTailCount) },
+						{ label: "From hook", value: compaction.fromHook ? "yes" : "no" },
+					],
+				}),
+		contextWindow: projectContinuityEntries(snapshot.contextWindow, limit),
+		activePath: projectContinuityEntries(snapshot.activePath, limit),
 	};
 }

@@ -7,7 +7,8 @@ import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { parseBootstrap } from "../cockpit/bootstrap.ts";
-import { projectVisibleTranscript } from "../cockpit/view-model.ts";
+import { CockpitController } from "../cockpit/controller.ts";
+import { projectContinuity, projectVisibleTranscript } from "../cockpit/view-model.ts";
 import { type EndophasiaPresentationClientV0, openEndophasiaPresentationClientV0 } from "../presentation/client.ts";
 import { type BrowserWebSocket, createBrowserWebSocketTransportFactory } from "../presentation/websocket-transport.ts";
 import { buildCockpitAssets, type RunningEndophasiaCockpit, startEndophasiaCockpit } from "../runtime/cockpit.ts";
@@ -151,6 +152,76 @@ describe("Standard Cockpit integration", () => {
 		});
 	});
 
+	it("captures main-lane Continuity through the real service boundary into the cockpit, on request only", async () => {
+		const cockpit = await startCockpit();
+		const origin = new URL(cockpit.url).origin;
+		const bootstrap = parseBootstrap(JSON.parse((await get(`${cockpit.url}bootstrap.json`)).body));
+		const presentation = await openEndophasiaPresentationClientV0({
+			serverId: bootstrap.serverId,
+			transportFactory: pageTransport(bootstrap.websocketUrl, origin),
+		});
+		presentations.push(presentation);
+		// Count the controller's Continuity requests; everything else is the real Presentation Client.
+		let requests = 0;
+		const controller = new CockpitController({
+			presentation: {
+				...presentation,
+				continuitySnapshot: (context) => {
+					requests++;
+					return presentation.continuitySnapshot(context);
+				},
+			},
+			render: () => {},
+			schedule: (callback) => callback(),
+		});
+		try {
+			controller.select("observed");
+			await expect.poll(() => controller.canCaptureContinuity, { timeout: 20_000 }).toBe(true);
+			expect(requests).toBe(0);
+			expect(controller.continuity).toEqual({ status: "none" });
+
+			await controller.captureContinuity();
+			expect(requests).toBe(1);
+			const capture = controller.continuity;
+			if (capture.status !== "captured") throw new Error(`Continuity capture ${capture.status}`);
+			expect(capture.sessionId).toBe("observed");
+			const transcript = presentation.transcript.value?.snapshot;
+			// The worker's capture of the same durable main lane the transcript replicates, entry for entry.
+			expect(capture.snapshot).toMatchObject({
+				schemaVersion: "continuity.v0",
+				lane: "main",
+				tipId: transcript?.tipId,
+				compaction: null,
+				counts: { activePathEntries: 3, contextWindowEntries: 3, beforeContextWindow: 0 },
+			});
+			expect(capture.snapshot.activePath.map(({ id }) => id)).toEqual(transcript?.transcript.map(({ id }) => id));
+			expect(capture.snapshot.activePath.map((entry) => entry.type === "message" && entry.role)).toEqual([
+				"user",
+				"custom",
+				"custom",
+			]);
+			// Neither the snapshot nor its projection carries message content, displayed or not.
+			const view = projectContinuity(capture.snapshot, capture.capturedAt);
+			for (const value of [JSON.stringify(capture.snapshot), JSON.stringify(view)]) {
+				expect(value).not.toContain("cockpit-sentinel");
+				expect(value).not.toContain("shown-custom-note");
+				expect(value).not.toContain(HIDDEN_SENTINEL);
+			}
+			expect(view.fields.find(({ label }) => label === "Tip")?.value).toBe(transcript?.tipId);
+
+			// Detaching clears the capture; a detached read fails rather than returning an empty snapshot.
+			await controller.detach();
+			expect(controller.continuity).toEqual({ status: "none" });
+			expect(controller.canCaptureContinuity).toBe(false);
+			await expect(
+				Promise.resolve().then(() => presentation.continuitySnapshot(BACKGROUND_CONTEXT)),
+			).rejects.toThrow();
+			expect(requests).toBe(1);
+		} finally {
+			controller.dispose();
+		}
+	});
+
 	it("admits only the cockpit's own origin to the Pi WebSocket", async () => {
 		const cockpit = await startCockpit();
 		const bootstrap = parseBootstrap(JSON.parse((await get(`${cockpit.url}bootstrap.json`)).body));
@@ -224,14 +295,16 @@ describe("Standard Cockpit source boundaries", () => {
 					specifier === "../presentation/client.ts" ||
 					specifier === "../presentation/websocket-transport.ts" ||
 					specifier === "@earendil-works/chord/context" ||
-					// Types only: Pi's replicated state shapes and the Session Overview, Mission Trace, Runtime Facts and Usage
-					// contract schemas. Never a runtime projection module such as runtime-metrics.ts or usage-ledger.ts.
+					// Types only: Pi's replicated state shapes and the Session Overview, Mission Trace, Runtime Facts, Usage and
+					// Continuity contract schemas. Never a runtime projection module such as runtime-metrics.ts,
+					// usage-ledger.ts or continuity.ts.
 					(typeOnly &&
 						(specifier === "@earendil-works/chord" ||
 							specifier === "../src/session-overview.ts" ||
 							specifier === "../src/mission-trace-service.ts" ||
 							specifier === "../src/runtime-facts-service.ts" ||
 							specifier === "../src/usage-service.ts" ||
+							specifier === "../src/continuity-service.ts" ||
 							specifier.startsWith("@earendil-works/pi-coding-agent/experimental/services/")));
 				expect(allowed, `${file} imports ${typeOnly ? "type " : ""}${specifier}`).toBe(true);
 			}

@@ -370,6 +370,43 @@ describe("Endophasia browser server", () => {
 		expect(errors).toEqual([]);
 	});
 
+	it("captures Continuity over the WebSocket after a real run, structure only, and only when asked", async () => {
+		const server = await startClosedLocalServer("endophasia-browser-continuity-");
+		const errors: Error[] = [];
+		const browser = await openPresentation(server.serverId, browserTransport(server.browser.url), errors);
+		await browser.attach("browser", BACKGROUND_CONTEXT);
+		const empty = await browser.continuitySnapshot(BACKGROUND_CONTEXT);
+		expect(empty).toMatchObject({ schemaVersion: "continuity.v0", lane: "main", tipId: null, activePath: [] });
+
+		const control = await promptFromControlClient(server, "browser", "user-prompt-sentinel");
+		try {
+			await expect.poll(() => browser.transcript.value?.snapshot?.operation, { timeout: 20_000 }).toBeNull();
+			await expect
+				.poll(() => browser.transcript.value?.snapshot?.transcript.length ?? 0, { timeout: 20_000 })
+				.toBeGreaterThan(1);
+		} finally {
+			await control.dispose();
+		}
+		// Captured afresh: the durable run is now in the main lane's ancestry, which the transcript also replicates.
+		const snapshot = await browser.continuitySnapshot(BACKGROUND_CONTEXT);
+		const transcript = browser.transcript.value?.snapshot;
+		expect(snapshot.tipId).toBe(transcript?.tipId);
+		expect(snapshot.activePath.map(({ id }) => id)).toEqual(transcript?.transcript.map(({ id }) => id));
+		expect(snapshot.activePath.at(-1)).toMatchObject({ type: "message", role: "assistant", stopReason: "error" });
+		expect(snapshot.counts).toEqual({
+			activePathEntries: snapshot.activePath.length,
+			contextWindowEntries: snapshot.contextWindow.length,
+			beforeContextWindow: snapshot.activePath.length - snapshot.contextWindow.length,
+		});
+		// The failure detail and the prompt are in Pi's transcript, but never cross the Continuity boundary.
+		expect(JSON.stringify(transcript?.transcript)).toContain("user-prompt-sentinel");
+		// The configured model is configuration Continuity reports; the endpoint, key and prompt are not.
+		expect(snapshot.configuration.model).toEqual(transcript?.configuration.model);
+		expect(JSON.stringify(snapshot)).not.toMatch(/user-prompt-sentinel|test-key|127\.0\.0\.1/);
+		expect(JSON.stringify(snapshot)).not.toMatch(/"(content|errorMessage|message|details|usage)":/);
+		expect(errors).toEqual([]);
+	});
+
 	it("admits the transport by capability but still verifies the Pi server identity", async () => {
 		const server = await startBrowserServer();
 		// The capability URL admits the bytes; the Pi handshake then refuses a different, well-formed server identity.

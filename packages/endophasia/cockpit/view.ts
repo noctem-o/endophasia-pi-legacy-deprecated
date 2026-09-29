@@ -5,10 +5,12 @@ import type { CockpitController, CockpitRegion } from "./controller.ts";
 import {
 	type BoundedText,
 	type ContentBlockView,
+	type ContinuityEntriesView,
 	type EntryView,
 	formatClock,
 	projectAttachment,
 	projectConnection,
+	projectContinuity,
 	projectMessage,
 	projectMissionTrace,
 	projectModels,
@@ -191,6 +193,8 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 	const overviewSection = el("section", "inspector-section overview");
 	const accountingSection = el("section", "inspector-section accounting");
 	accountingSection.setAttribute("aria-label", "Session Accounting");
+	const continuitySection = el("section", "inspector-section continuity");
+	continuitySection.setAttribute("aria-label", "Continuity");
 	inspectorPanel.append(
 		connectionSection,
 		attachmentSection,
@@ -200,6 +204,7 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 		usageSection,
 		overviewSection,
 		accountingSection,
+		continuitySection,
 	);
 
 	const detachButton = el("button", "button", "Detach");
@@ -211,6 +216,9 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 	const accountingButton = el("button", "button", "Capture");
 	accountingButton.type = "button";
 	accountingButton.addEventListener("click", () => void getController().captureAccounting());
+	const continuityButton = el("button", "button", "Capture");
+	continuityButton.type = "button";
+	continuityButton.addEventListener("click", () => void getController().captureContinuity());
 
 	const renderStatus = (controller: CockpitController): void => {
 		const { presentation } = controller;
@@ -500,6 +508,91 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 		accountingSection.replaceChildren(...body);
 	};
 
+	const continuityEntries = (title: string, view: ContinuityEntriesView): HTMLElement => {
+		const details = el("details", "continuity-entries");
+		details.append(el("summary", undefined, `${title} · ${view.total.toLocaleString("en-US")}`));
+		if (view.window !== undefined) details.append(el("p", "trace-window", view.window));
+		if (view.rows.length === 0) {
+			details.append(el("p", "muted", "No entries."));
+			return details;
+		}
+		const list = el("ol", "continuity-list");
+		for (const row of view.rows) {
+			const item = el("li", "continuity-row");
+			item.title = row.id;
+			const head = el("div", "continuity-row-head");
+			head.append(
+				el("span", "trace-sequence", row.sequence),
+				el("span", "continuity-label", row.label),
+				el("span", "trace-subject", row.id),
+			);
+			item.append(head);
+			if (row.meta.length > 0) {
+				const meta = el("div", "continuity-meta");
+				for (const part of row.meta) meta.append(el("span", "chip", part));
+				item.append(meta);
+			}
+			list.append(item);
+		}
+		details.append(list);
+		return details;
+	};
+
+	const renderContinuity = (controller: CockpitController): void => {
+		const capture = controller.continuity;
+		const header = el("div", "section-header");
+		header.append(el("h3", "section-title", "Continuity"), continuityButton);
+		continuityButton.disabled = !controller.canCaptureContinuity;
+		continuityButton.textContent = capture.status === "captured" ? "Refresh" : "Capture";
+		const body: HTMLElement[] = [header];
+		switch (capture.status) {
+			case "none":
+				body.push(
+					el(
+						"p",
+						"muted",
+						controller.presentation.attachment.value?.status === "attached"
+							? "Not captured. Continuity is an explicit main-lane capture, not live state."
+							: "Attach a Session to capture its main-lane Continuity.",
+					),
+				);
+				break;
+			case "capturing":
+				body.push(el("p", "muted", `Capturing ${capture.sessionId}…`));
+				break;
+			case "failed":
+				body.push(el("p", "block-error", `Capture failed: ${capture.message}`));
+				break;
+			case "captured": {
+				const view = projectContinuity(capture.snapshot, capture.capturedAt);
+				const fields = el("dl", "fields");
+				fields.append(field("Session", capture.sessionId, "mono"), field("Received", view.capturedAt, "mono"));
+				for (const row of view.fields) fields.append(field(row.label, row.value, "mono"));
+				const compaction = el("dl", "fields");
+				if (view.compaction === undefined) {
+					compaction.append(field("Compaction boundary", "none", "mono"));
+				} else {
+					for (const row of view.compaction)
+						compaction.append(field(`Compaction ${row.label.toLowerCase()}`, row.value, "mono"));
+				}
+				body.push(
+					fields,
+					compaction,
+					el(
+						"p",
+						"trace-note",
+						"Durable ancestry at one captured tip · the context window is Pi's compaction-bounded source entries, not the provider-visible prompt",
+					),
+					el("p", "trace-note", "Structure only · message, summary and custom contents are not captured"),
+					continuityEntries("Context window", view.contextWindow),
+					continuityEntries("Active path", view.activePath),
+				);
+				break;
+			}
+		}
+		continuitySection.replaceChildren(...body);
+	};
+
 	const renderTrace = (controller: CockpitController): void => {
 		const trace = controller.missionTrace;
 		if (trace.status === "hidden") {
@@ -607,6 +700,7 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 			if (regions.has("inspector")) renderInspector(controller);
 			if (regions.has("trace")) renderTrace(controller);
 			if (regions.has("usage")) renderUsage(controller);
+			if (regions.has("continuity")) renderContinuity(controller);
 			if (regions.has("diagnostics")) renderDiagnostics(controller);
 		},
 	};
