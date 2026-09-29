@@ -927,12 +927,33 @@ describe("Prime RPC connection: extension UI answers", () => {
 		]);
 	});
 
+	it("reads only an answer's own field, never an inherited one", async () => {
+		const { connection, events } = connect("extension-ui");
+		await connection.request({ type: "prompt", message: "hi" });
+		const answer = Object.assign(Object.create({ confirmed: true }), { value: "No" }) as { readonly value: string };
+		await connection.answerExtensionUi("ui-1", answer);
+		const deadline = Date.now() + 5_000;
+		while (!events.some((event) => event.type === "ui_answered") && Date.now() < deadline) {
+			await new Promise((done) => setTimeout(done, 10));
+		}
+		expect(events.find((event) => event.type === "ui_answered")?.record.answer).toEqual({ value: "No" });
+	});
+
 	it("refuses malformed answers, and answers after close", async () => {
 		const { connection } = connect("extension-ui");
 		await expect(connection.answerExtensionUi("", { confirmed: true })).rejects.toThrow(
 			"An extension UI answer needs Prime's request ID",
 		);
-		for (const answer of [{ value: 1 }, { confirmed: "yes" }, { cancelled: false }, {}]) {
+		for (const answer of [
+			{ value: 1 },
+			{ confirmed: "yes" },
+			{ cancelled: false },
+			{},
+			// Two answers at once are refused, not resolved by precedence.
+			{ value: "Allow", confirmed: true },
+			// An inherited field is never read: this object has no own answer.
+			Object.create({ cancelled: true }),
+		]) {
 			await expect(
 				connection.answerExtensionUi("ui-1", answer as unknown as { readonly cancelled: true }),
 			).rejects.toThrow("An extension UI answer is malformed");
@@ -1330,7 +1351,7 @@ describe("Prime runtime identity", () => {
 			PRIME_TEST_MODE: mode,
 		};
 		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
-		return { installation, env };
+		return { installation, env, gitCommand: join(bin, "git") };
 	}
 
 	it.runIf(POSIX)(
@@ -1338,28 +1359,48 @@ describe("Prime runtime identity", () => {
 		async () => {
 			// HEAD moves once, between the snapshots around --version: the read is repeated and reports the settled commit.
 			const once = movingCheckout("once");
-			expect((await readPrimeRuntimeIdentityV0(once.installation, { env: once.env, cwd: tmpdir() })).source).toEqual(
-				{
-					commit: "b".repeat(40),
-					tree: "clean",
-				},
-			);
+			expect(
+				(
+					await readPrimeRuntimeIdentityV0(once.installation, {
+						env: once.env,
+						cwd: tmpdir(),
+						gitCommand: once.gitCommand,
+					})
+				).source,
+			).toEqual({
+				commit: "b".repeat(40),
+				tree: "clean",
+			});
 			// A checkout that keeps moving is an error, not an identity that never described one runtime.
 			const always = movingCheckout("always");
 			await expect(
-				readPrimeRuntimeIdentityV0(always.installation, { env: always.env, cwd: tmpdir() }),
+				readPrimeRuntimeIdentityV0(always.installation, {
+					env: always.env,
+					cwd: tmpdir(),
+					gitCommand: always.gitCommand,
+				}),
 			).rejects.toThrow("The Prime checkout changed while its identity was read");
 			// So is a launcher that is rewritten each time --version runs, even with a stable HEAD and status.
 			const selfEditing = movingCheckout("once", '#!/bin/sh\necho "0.9.6"\necho "# $$" >> "$0"\n');
 			writeFileSync(selfEditing.env.PRIME_TEST_COUNTER, "1");
 			await expect(
-				readPrimeRuntimeIdentityV0(selfEditing.installation, { env: selfEditing.env, cwd: tmpdir() }),
+				readPrimeRuntimeIdentityV0(selfEditing.installation, {
+					env: selfEditing.env,
+					cwd: tmpdir(),
+					gitCommand: selfEditing.gitCommand,
+				}),
 			).rejects.toThrow("The Prime checkout changed while its identity was read");
 			// The same stand-in with a stable HEAD and an unchanging launcher reads cleanly.
 			const stable = movingCheckout("once");
 			writeFileSync(stable.env.PRIME_TEST_COUNTER, "1");
 			expect(
-				(await readPrimeRuntimeIdentityV0(stable.installation, { env: stable.env, cwd: tmpdir() })).source,
+				(
+					await readPrimeRuntimeIdentityV0(stable.installation, {
+						env: stable.env,
+						cwd: tmpdir(),
+						gitCommand: stable.gitCommand,
+					})
+				).source,
 			).toEqual({
 				commit: "b".repeat(40),
 				tree: "clean",
@@ -1443,6 +1484,11 @@ describe("Prime runtime identity", () => {
 		symlinkSync(elsewhere, join(root, "packages/linked-package"));
 		expect((await read())?.artifactsHash).toBeUndefined();
 		rmSync(join(root, "packages/linked-package"));
+		expect((await read())?.artifactsHash).toMatch(/^[0-9a-f]{64}$/);
+		// A FIFO named like a module: Node could load whatever a writer sends through it, which no hash describes.
+		execFileSync("mkfifo", [join(root, "packages/agent/dist/stream.js")]);
+		expect((await read())?.artifactsHash).toBeUndefined();
+		rmSync(join(root, "packages/agent/dist/stream.js"));
 		expect((await read())?.artifactsHash).toMatch(/^[0-9a-f]{64}$/);
 		// A NUL byte in a file would let two different trees frame to the same digest input: unverified.
 		writeFileSync(join(root, "packages/agent/dist/blob.bin"), Uint8Array.of(0x61, 0x00, 0x62));
@@ -1596,8 +1642,35 @@ describe("Prime runtime identity", () => {
 			].join("\n"),
 		);
 		chmodSync(join(bin, "git"), 0o755);
-		const env = { PATH: `${bin}:${process.env.PATH ?? ""}` };
+		const env = { PATH: process.env.PATH ?? "" };
 		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
+		expect(
+			(await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir(), gitCommand: join(bin, "git") })).source,
+		).toEqual({ tree: "unknown" });
+	});
+
+	it.runIf(POSIX)("never runs a git found on the PATH given to Prime", async () => {
+		// A directory that is not a repository, and a git shim on Prime's PATH that claims it is a clean checkout.
+		const root = temporaryDirectory("prime-git-shim-");
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(root, "prime-agent.sh"), 0o755);
+		const bin = temporaryDirectory("prime-git-shim-bin-");
+		writeFileSync(
+			join(bin, "git"),
+			[
+				"#!/bin/sh",
+				'root="$2"; shift 2',
+				'if [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then echo "$root"; exit 0; fi',
+				`if [ "$1" = rev-parse ]; then echo ${"f".repeat(40)}; exit 0; fi`,
+				'if [ "$1" = ls-files ] && [ "$2" = -v ]; then printf "H prime-agent.sh\\000"; exit 0; fi',
+				`if [ "$1" = ls-files ]; then printf "100755 %s 0\\t%s\\n" ${"c".repeat(40)} "$4"; exit 0; fi`,
+				"exit 0",
+			].join("\n"),
+		);
+		chmodSync(join(bin, "git"), 0o755);
+		const env = { PATH: `${bin}:${process.env.PATH ?? ""}`, HOME: temporaryDirectory("prime-git-home-") };
+		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
+		// git comes from this process's PATH, so the real git sees no repository.
 		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
 			tree: "unknown",
 		});

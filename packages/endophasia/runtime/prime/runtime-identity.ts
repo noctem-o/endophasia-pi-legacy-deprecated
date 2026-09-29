@@ -4,8 +4,8 @@
 import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { createReadStream } from "node:fs";
-import { lstat, opendir, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
+import { access, constants, lstat, opendir, realpath } from "node:fs/promises";
+import { delimiter, isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import type { Readable } from "node:stream";
 import { PrimeProcessGroupV0 } from "./process-group.ts";
 
@@ -168,7 +168,16 @@ const IDENTITY_ATTEMPTS = 3;
  */
 export async function readPrimeRuntimeIdentityV0(
 	installation: PrimeInstallationV0,
-	options: { readonly env: Readonly<Record<string, string>>; readonly cwd: string; readonly timeoutMs?: number },
+	options: {
+		readonly env: Readonly<Record<string, string>>;
+		readonly cwd: string;
+		readonly timeoutMs?: number;
+		/**
+		 * The git executable for the provenance probes. By default git is resolved on this process's PATH, never on the
+		 * PATH in `env`: that environment belongs to Prime, and a git shim placed there could fabricate a repository.
+		 */
+		readonly gitCommand?: string;
+	},
 ): Promise<PrimeRuntimeIdentityV0> {
 	const timeoutMs = options.timeoutMs ?? 60_000;
 	const readVersion = async () => {
@@ -190,8 +199,10 @@ export async function readPrimeRuntimeIdentityV0(
 	const gitEnv = Object.fromEntries(
 		Object.entries(options.env).filter(([key]) => !key.toUpperCase().startsWith("GIT_")),
 	);
+	const gitCommand = options.gitCommand ?? (await resolveOnPath("git", process.env.PATH ?? ""));
+	if (gitCommand === undefined) return { version: await readVersion(), installation, source: { tree: "unknown" } };
 	const git = (args: readonly string[]) =>
-		run("git", ["-C", installation.root, ...args], { env: gitEnv, cwd: options.cwd, timeoutMs });
+		run(gitCommand, ["-C", installation.root, ...args], { env: gitEnv, cwd: options.cwd, timeoutMs });
 	// Git walks up from the root: a root that is not itself a checkout but sits inside another repository would report
 	// that ancestor's commit. Provenance is accepted only when the repository's top level is the configured root.
 	const toplevel = (await git(["rev-parse", "--show-toplevel"]))?.trim();
@@ -218,7 +229,7 @@ export async function readPrimeRuntimeIdentityV0(
 		const artifactsHash = await hashBuildOutput(installation.root, Date.now() + timeoutMs);
 		// `git status` does not see modifications to entries flagged assume-unchanged or skip-worktree (or unmerged
 		// ones): every index entry must carry the plain "H" tag, or the tracked-file status proves nothing.
-		const index = await run("git", ["-C", installation.root, "ls-files", "-v", "-z"], {
+		const index = await run(gitCommand, ["-C", installation.root, "ls-files", "-v", "-z"], {
 			env: gitEnv,
 			cwd: options.cwd,
 			timeoutMs,
@@ -298,10 +309,20 @@ async function hashBuildOutput(checkout: string, deadline: number): Promise<stri
 	let files = 0;
 	let bytes = 0;
 	class Unverifiable extends Error {}
+	// The deadline is enforced on every awaited filesystem operation, not only between them: a read on a stalled
+	// network or FUSE filesystem may never complete. At the deadline the controller aborts open streams, and every
+	// other wait is raced against it.
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), Math.max(0, deadline - Date.now()));
+	const aborted = new Promise<never>((_, reject) =>
+		controller.signal.addEventListener("abort", () => reject(new Unverifiable()), { once: true }),
+	);
+	aborted.catch(() => {});
+	const bounded = <T>(operation: Promise<T>): Promise<T> => Promise.race([operation, aborted]);
 	const hashFile = async (path: string): Promise<void> => {
 		// "/"-separated whatever the host, so the digest does not depend on the operating system.
 		hash.update(relative(checkout, path).split(sep).join("/")).update("\0");
-		for await (const chunk of createReadStream(path) as AsyncIterable<Buffer>) {
+		for await (const chunk of createReadStream(path, { signal: controller.signal }) as AsyncIterable<Buffer>) {
 			// The digest frames each entry as path NUL content NUL. Paths never contain NUL, so the stream splits back
 			// into exactly one sequence of entries only when no content does either: a file with a NUL byte could make
 			// two different trees hash alike, so such output is unverified.
@@ -321,9 +342,9 @@ async function hashBuildOutput(checkout: string, deadline: number): Promise<stri
 	 */
 	const list = async (path: string): Promise<Dirent[]> => {
 		const found: Dirent[] = [];
-		const directory = await opendir(path);
+		const directory = await bounded(opendir(path));
 		try {
-			for await (const entry of directory) {
+			for (let entry = await bounded(directory.read()); entry !== null; entry = await bounded(directory.read())) {
 				if (Date.now() > deadline || ++entries > MAX_BUILD_OUTPUT_ENTRIES) throw new Unverifiable();
 				found.push(entry);
 			}
@@ -348,17 +369,17 @@ async function hashBuildOutput(checkout: string, deadline: number): Promise<stri
 			const children = await list(next.path);
 			for (let index = children.length - 1; index >= 0; index--) {
 				const entry = children[index];
-				if (entry.isSymbolicLink()) throw new Unverifiable();
-				if (entry.isDirectory() || entry.isFile()) {
-					stack.push({ path: join(next.path, entry.name), directory: entry.isDirectory(), depth: next.depth + 1 });
-				}
+				// Only directories and regular files are hashable. A symlink, FIFO, socket or device could still be loaded as
+				// a module (a FIFO yields whatever a writer sends), so any of them makes the build output unverifiable.
+				if (!entry.isDirectory() && !entry.isFile()) throw new Unverifiable();
+				stack.push({ path: join(next.path, entry.name), directory: entry.isDirectory(), depth: next.depth + 1 });
 			}
 		}
 	};
 	// Every path component the launcher resolves through is checked without following links: a symlinked packages/,
 	// packages/<name> or dist would load code reached relative to its target, which this hash does not describe.
 	const kind = (path: string) =>
-		lstat(path).then(
+		bounded(lstat(path)).then(
 			(entry) => (entry.isSymbolicLink() ? "link" : entry.isDirectory() ? "directory" : "other"),
 			() => "missing" as const,
 		);
@@ -380,8 +401,31 @@ async function hashBuildOutput(checkout: string, deadline: number): Promise<stri
 		}
 	} catch {
 		return undefined;
+	} finally {
+		clearTimeout(timer);
+		controller.abort();
 	}
 	return files === 0 ? undefined : hash.digest("hex");
+}
+
+/**
+ * The first executable named `name` on `path` (a PATH-style list), as an absolute path; on Windows also with .exe and
+ * .cmd. Undefined when none is found.
+ */
+async function resolveOnPath(name: string, path: string): Promise<string | undefined> {
+	const names = process.platform === "win32" ? [name, `${name}.exe`, `${name}.cmd`] : [name];
+	for (const directory of path.split(delimiter)) {
+		if (directory.length === 0 || !isAbsolute(directory)) continue;
+		for (const candidate of names) {
+			const full = join(directory, candidate);
+			const found = await access(full, constants.X_OK).then(
+				() => lstat(full).then((entry) => !entry.isDirectory()),
+				() => false,
+			);
+			if (found) return full;
+		}
+	}
+	return undefined;
 }
 
 async function sameDirectory(a: string, b: string): Promise<boolean> {

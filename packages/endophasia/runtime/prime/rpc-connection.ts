@@ -339,13 +339,12 @@ export class PrimeRpcConnectionV0 {
 			if (typeof requestId !== "string" || requestId.length === 0) {
 				return Promise.reject(new PrimeRpcErrorV0("An extension UI answer needs Prime's request ID"));
 			}
-			const fields: Record<string, unknown> =
-				"cancelled" in answer
-					? { cancelled: answer.cancelled }
-					: "confirmed" in answer
-						? { confirmed: answer.confirmed }
-						: { value: answer.value };
-			const [field, value] = Object.entries(fields)[0];
+			// Exactly one own field decides the answer: an inherited one (a polluted prototype, a class instance) is never
+			// read, and an object carrying two answers is refused rather than resolved by precedence.
+			const own = (["cancelled", "confirmed", "value"] as const).filter((key) => Object.hasOwn(answer, key));
+			if (own.length !== 1) return Promise.reject(new PrimeRpcErrorV0("An extension UI answer is malformed"));
+			const field = own[0];
+			const value: unknown = (answer as Record<string, unknown>)[field];
 			const valid =
 				(field === "cancelled" && value === true) ||
 				(field === "confirmed" && typeof value === "boolean") ||
