@@ -5,7 +5,7 @@
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.13.0";
+export const PROBE_VERSION = "0.14.0";
 
 /**
  * How the Prime that ran is known:
@@ -33,6 +33,12 @@ export interface PrimeProvenanceV0 {
 	readonly probeVersion: string;
 	readonly platform: string;
 	readonly node: string;
+	/** Research source revision, distinct from Prime and from a production composition. */
+	readonly endophasiaCommit?: string;
+	readonly researchHash?: string;
+	/** Hash of the exact launcher and dependency lock used with the freshly built artifacts. */
+	readonly launcherHash?: string;
+	readonly lockHash?: string;
 }
 
 /** Provenance of one scenario's evidence, as committed with each fixture. */
@@ -292,7 +298,7 @@ export function invalidStatsFieldsV0(stats: PrimeStatsEvidenceV0): string[] {
 	return Object.entries(fields).flatMap(([name, value]) => (isCountV0(value) ? [] : [name]));
 }
 
-function entryProblems(where: string, entries: readonly PrimeSessionEntryEvidenceV0[]): string[] {
+export function entryProblems(where: string, entries: readonly PrimeSessionEntryEvidenceV0[]): string[] {
 	const ids = entries.map((entry) => entry.id);
 	const duplicates = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
 	return [

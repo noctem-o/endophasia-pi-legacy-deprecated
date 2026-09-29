@@ -17,11 +17,10 @@ import {
 	parsePrimeConformanceArgsV0,
 	runPrimeConformanceCommandV0,
 } from "../research/prime-conformance/command.ts";
-import {
-	PROBE_VERSION,
-	type PrimeProvenanceV0,
-	type PrimeScenarioEvidenceV0,
-	type PrimeStatsEvidenceV0,
+import type {
+	PrimeProvenanceV0,
+	PrimeScenarioEvidenceV0,
+	PrimeStatsEvidenceV0,
 } from "../research/prime-conformance/evidence.ts";
 import { SENTINEL_PATTERN, SENTINELS } from "../research/prime-conformance/fake-provider.ts";
 import { scenarioInvariantProblemsV0 } from "../research/prime-conformance/invariants.ts";
@@ -188,7 +187,7 @@ describe("projections", () => {
 });
 
 describe("committed reference fixtures", () => {
-	it("are one homogeneous, verified, current-probe evidence set", () => {
+	it("are one homogeneous, verified, historical-probe evidence set", () => {
 		expect(fixtures.map((run) => run.provenance.scenario).sort()).toEqual([...scenarioNames].sort());
 		for (const run of fixtures) {
 			expect(run.provenance).toMatchObject({
@@ -198,7 +197,7 @@ describe("committed reference fixtures", () => {
 				build: "clean-checkout",
 				mode: "rpc",
 				generatedBy: "prime-conformance-v0",
-				probeVersion: PROBE_VERSION,
+				probeVersion: "0.13.0",
 			});
 		}
 	});

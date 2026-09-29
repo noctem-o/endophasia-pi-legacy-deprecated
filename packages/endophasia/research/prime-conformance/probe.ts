@@ -726,5 +726,25 @@ export function describePrimeV0(binary: PrimeBinaryV0): PrimeProvenanceV0 {
 		probeVersion: PROBE_VERSION,
 		platform: `${process.platform}-${process.arch}`,
 		node: process.version,
+		endophasiaCommit: git(resolve(import.meta.dirname, "../../../.."), ["rev-parse", "HEAD"]),
+		researchHash: createHash("sha256")
+			.update(
+				readdirSync(import.meta.dirname)
+					.filter((name) => name.endsWith(".ts"))
+					.sort()
+					.map((name) => `${name}\0${readFileSync(join(import.meta.dirname, name), "utf8")}\0`)
+					.join(""),
+			)
+			.digest("hex"),
+		...(binary.checkout === undefined ||
+		!existsSync(binary.command) ||
+		!existsSync(join(binary.checkout, "package-lock.json"))
+			? {}
+			: {
+					launcherHash: createHash("sha256").update(readFileSync(binary.command)).digest("hex"),
+					lockHash: createHash("sha256")
+						.update(readFileSync(join(binary.checkout, "package-lock.json")))
+						.digest("hex"),
+				}),
 	};
 }

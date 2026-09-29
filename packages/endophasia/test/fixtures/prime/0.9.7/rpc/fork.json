@@ -1,0 +1,956 @@
+{
+	"provenance": {
+		"source": "prime-agent",
+		"version": "0.9.7",
+		"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+		"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+		"build": "clean-checkout",
+		"mode": "rpc",
+		"generatedBy": "prime-conformance-v0",
+		"probeVersion": "0.14.0",
+		"platform": "linux-x64",
+		"node": "v26.10.0",
+		"endophasiaCommit": "08068242aa5e115ea947e996b88b11107eea9a0d",
+		"researchHash": "c6a1e07a7157e554684c30588cf62e3b4c203a79aaae31216684553484811aeb",
+		"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+		"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+		"scenario": "fork"
+	},
+	"description": "Two prompts, then a fork from the second user message, then one more prompt on the fork.",
+	"events": [
+		{
+			"type": "agent_start"
+		},
+		{
+			"type": "turn_start"
+		},
+		{
+			"type": "message_start",
+			"role": "custom"
+		},
+		{
+			"type": "message_end",
+			"role": "custom"
+		},
+		{
+			"type": "message_start",
+			"role": "user"
+		},
+		{
+			"type": "message_end",
+			"role": "user"
+		},
+		{
+			"type": "message_start",
+			"role": "assistant"
+		},
+		{
+			"type": "message_end",
+			"role": "assistant",
+			"assistant": {
+				"stopReason": "stop",
+				"provider": "probe-local",
+				"model": "probe-model",
+				"usage": {
+					"input": 500,
+					"output": 7,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 507,
+					"cost": {
+						"input": 500,
+						"output": 14,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 514
+					},
+					"extraKeys": []
+				},
+				"toolCalls": [],
+				"hasErrorMessage": false
+			}
+		},
+		{
+			"type": "turn_end",
+			"assistant": {
+				"stopReason": "stop",
+				"provider": "probe-local",
+				"model": "probe-model",
+				"usage": {
+					"input": 500,
+					"output": 7,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 507,
+					"cost": {
+						"input": 500,
+						"output": 14,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 514
+					},
+					"extraKeys": []
+				},
+				"toolCalls": [],
+				"hasErrorMessage": false
+			},
+			"toolResults": []
+		},
+		{
+			"type": "agent_end",
+			"messageRoles": [
+				"custom",
+				"user",
+				"assistant"
+			],
+			"assistantStopReasons": [
+				"stop"
+			]
+		},
+		{
+			"type": "agent_start"
+		},
+		{
+			"type": "turn_start"
+		},
+		{
+			"type": "message_start",
+			"role": "user"
+		},
+		{
+			"type": "message_end",
+			"role": "user"
+		},
+		{
+			"type": "message_start",
+			"role": "assistant"
+		},
+		{
+			"type": "message_end",
+			"role": "assistant",
+			"assistant": {
+				"stopReason": "stop",
+				"provider": "probe-local",
+				"model": "probe-model",
+				"usage": {
+					"input": 400,
+					"output": 11,
+					"cacheRead": 250,
+					"cacheWrite": 50,
+					"totalTokens": 711,
+					"cost": {
+						"input": 400,
+						"output": 22,
+						"cacheRead": 125,
+						"cacheWrite": 12.5,
+						"total": 559.5
+					},
+					"extraKeys": []
+				},
+				"toolCalls": [],
+				"hasErrorMessage": false
+			}
+		},
+		{
+			"type": "turn_end",
+			"assistant": {
+				"stopReason": "stop",
+				"provider": "probe-local",
+				"model": "probe-model",
+				"usage": {
+					"input": 400,
+					"output": 11,
+					"cacheRead": 250,
+					"cacheWrite": 50,
+					"totalTokens": 711,
+					"cost": {
+						"input": 400,
+						"output": 22,
+						"cacheRead": 125,
+						"cacheWrite": 12.5,
+						"total": 559.5
+					},
+					"extraKeys": []
+				},
+				"toolCalls": [],
+				"hasErrorMessage": false
+			},
+			"toolResults": []
+		},
+		{
+			"type": "agent_end",
+			"messageRoles": [
+				"user",
+				"assistant"
+			],
+			"assistantStopReasons": [
+				"stop"
+			]
+		},
+		{
+			"type": "agent_start"
+		},
+		{
+			"type": "turn_start"
+		},
+		{
+			"type": "message_start",
+			"role": "user"
+		},
+		{
+			"type": "message_end",
+			"role": "user"
+		},
+		{
+			"type": "message_start",
+			"role": "assistant"
+		},
+		{
+			"type": "message_end",
+			"role": "assistant",
+			"assistant": {
+				"stopReason": "stop",
+				"provider": "probe-local",
+				"model": "probe-model",
+				"usage": {
+					"input": 500,
+					"output": 13,
+					"cacheRead": 400,
+					"cacheWrite": 0,
+					"totalTokens": 913,
+					"cost": {
+						"input": 500,
+						"output": 26,
+						"cacheRead": 200,
+						"cacheWrite": 0,
+						"total": 726
+					},
+					"extraKeys": []
+				},
+				"toolCalls": [],
+				"hasErrorMessage": false
+			}
+		},
+		{
+			"type": "turn_end",
+			"assistant": {
+				"stopReason": "stop",
+				"provider": "probe-local",
+				"model": "probe-model",
+				"usage": {
+					"input": 500,
+					"output": 13,
+					"cacheRead": 400,
+					"cacheWrite": 0,
+					"totalTokens": 913,
+					"cost": {
+						"input": 500,
+						"output": 26,
+						"cacheRead": 200,
+						"cacheWrite": 0,
+						"total": 726
+					},
+					"extraKeys": []
+				},
+				"toolCalls": [],
+				"hasErrorMessage": false
+			},
+			"toolResults": []
+		},
+		{
+			"type": "agent_end",
+			"messageRoles": [
+				"user",
+				"assistant"
+			],
+			"assistantStopReasons": [
+				"stop"
+			]
+		}
+	],
+	"abortRequestedAfter": [],
+	"commands": [
+		{
+			"command": "prompt",
+			"success": true,
+			"dataKeys": []
+		},
+		{
+			"command": "prompt",
+			"success": true,
+			"dataKeys": []
+		},
+		{
+			"command": "get_session_stats",
+			"success": true,
+			"dataKeys": [
+				"assistantMessages",
+				"contextUsage",
+				"cost",
+				"sessionFile",
+				"sessionId",
+				"tokens",
+				"toolCalls",
+				"toolResults",
+				"totalMessages",
+				"userMessages"
+			]
+		},
+		{
+			"command": "fork",
+			"success": true,
+			"dataKeys": [
+				"cancelled",
+				"text"
+			]
+		},
+		{
+			"command": "get_session_stats",
+			"success": true,
+			"dataKeys": [
+				"assistantMessages",
+				"contextUsage",
+				"cost",
+				"sessionFile",
+				"sessionId",
+				"tokens",
+				"toolCalls",
+				"toolResults",
+				"totalMessages",
+				"userMessages"
+			]
+		},
+		{
+			"command": "prompt",
+			"success": true,
+			"dataKeys": []
+		},
+		{
+			"command": "get_session_stats",
+			"success": true,
+			"dataKeys": [
+				"assistantMessages",
+				"contextUsage",
+				"cost",
+				"sessionFile",
+				"sessionId",
+				"tokens",
+				"toolCalls",
+				"toolResults",
+				"totalMessages",
+				"userMessages"
+			]
+		}
+	],
+	"stats": [
+		{
+			"label": "before-fork",
+			"userMessages": 2,
+			"assistantMessages": 2,
+			"toolCalls": 0,
+			"toolResults": 0,
+			"totalMessages": 5,
+			"tokens": {
+				"input": 900,
+				"output": 18,
+				"cacheRead": 250,
+				"cacheWrite": 50,
+				"total": 1218
+			},
+			"cost": 1073.5,
+			"contextUsageTokens": 711,
+			"keys": [
+				"assistantMessages",
+				"contextUsage",
+				"cost",
+				"sessionFile",
+				"sessionId",
+				"tokens",
+				"toolCalls",
+				"toolResults",
+				"totalMessages",
+				"userMessages"
+			]
+		},
+		{
+			"label": "after-fork",
+			"userMessages": 1,
+			"assistantMessages": 1,
+			"toolCalls": 0,
+			"toolResults": 0,
+			"totalMessages": 3,
+			"tokens": {
+				"input": 500,
+				"output": 7,
+				"cacheRead": 0,
+				"cacheWrite": 0,
+				"total": 507
+			},
+			"cost": 514,
+			"contextUsageTokens": 507,
+			"keys": [
+				"assistantMessages",
+				"contextUsage",
+				"cost",
+				"sessionFile",
+				"sessionId",
+				"tokens",
+				"toolCalls",
+				"toolResults",
+				"totalMessages",
+				"userMessages"
+			]
+		},
+		{
+			"label": "after-fork-prompt",
+			"userMessages": 2,
+			"assistantMessages": 2,
+			"toolCalls": 0,
+			"toolResults": 0,
+			"totalMessages": 5,
+			"tokens": {
+				"input": 1000,
+				"output": 20,
+				"cacheRead": 400,
+				"cacheWrite": 0,
+				"total": 1420
+			},
+			"cost": 1240,
+			"contextUsageTokens": 913,
+			"keys": [
+				"assistantMessages",
+				"contextUsage",
+				"cost",
+				"sessionFile",
+				"sessionId",
+				"tokens",
+				"toolCalls",
+				"toolResults",
+				"totalMessages",
+				"userMessages"
+			]
+		}
+	],
+	"sessionEntries": [
+		{
+			"type": "session",
+			"id": "01a0eee9-9bca-74a6-99ea-5849279e3fce",
+			"keys": [
+				"cwd",
+				"id",
+				"parentSession",
+				"rlmDepth",
+				"timestamp",
+				"type",
+				"version"
+			]
+		},
+		{
+			"type": "model_change",
+			"id": "3a3e760e",
+			"parentId": null,
+			"keys": [
+				"id",
+				"modelId",
+				"parentId",
+				"provider",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "thinking_level_change",
+			"id": "51a1b327",
+			"parentId": "3a3e760e",
+			"keys": [
+				"id",
+				"parentId",
+				"thinkingLevel",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "service_tier_change",
+			"id": "d80a0d10",
+			"parentId": "51a1b327",
+			"keys": [
+				"id",
+				"parentId",
+				"serviceTier",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "session_state",
+			"id": "6b47f489",
+			"parentId": "d80a0d10",
+			"keys": [
+				"id",
+				"parentId",
+				"state",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "custom_message",
+			"id": "7faec836",
+			"parentId": "6b47f489",
+			"keys": [
+				"content",
+				"customType",
+				"details",
+				"display",
+				"id",
+				"parentId",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "message",
+			"id": "f2b834d5",
+			"parentId": "7faec836",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			],
+			"role": "user"
+		},
+		{
+			"type": "message",
+			"id": "0d7f134a",
+			"parentId": "f2b834d5",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			],
+			"role": "assistant",
+			"stopReason": "stop",
+			"usage": {
+				"input": 500,
+				"output": 7,
+				"cacheRead": 0,
+				"cacheWrite": 0,
+				"totalTokens": 507,
+				"cost": {
+					"input": 500,
+					"output": 14,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"total": 514
+				},
+				"extraKeys": []
+			}
+		},
+		{
+			"type": "message",
+			"id": "652d3093",
+			"parentId": "0d7f134a",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			],
+			"role": "user"
+		},
+		{
+			"type": "message",
+			"id": "e924460a",
+			"parentId": "652d3093",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			],
+			"role": "assistant",
+			"stopReason": "stop",
+			"usage": {
+				"input": 500,
+				"output": 13,
+				"cacheRead": 400,
+				"cacheWrite": 0,
+				"totalTokens": 913,
+				"cost": {
+					"input": 500,
+					"output": 26,
+					"cacheRead": 200,
+					"cacheWrite": 0,
+					"total": 726
+				},
+				"extraKeys": []
+			}
+		}
+	],
+	"entrySnapshots": [
+		{
+			"label": "fork-original-before",
+			"entries": [
+				{
+					"type": "session",
+					"id": "01a0eee9-9a5d-73de-805a-7e396146a1d9",
+					"keys": [
+						"cwd",
+						"id",
+						"rlmDepth",
+						"timestamp",
+						"type",
+						"version"
+					]
+				},
+				{
+					"type": "model_change",
+					"id": "3a3e760e",
+					"parentId": null,
+					"keys": [
+						"id",
+						"modelId",
+						"parentId",
+						"provider",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "thinking_level_change",
+					"id": "51a1b327",
+					"parentId": "3a3e760e",
+					"keys": [
+						"id",
+						"parentId",
+						"thinkingLevel",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "service_tier_change",
+					"id": "d80a0d10",
+					"parentId": "51a1b327",
+					"keys": [
+						"id",
+						"parentId",
+						"serviceTier",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "session_state",
+					"id": "6b47f489",
+					"parentId": "d80a0d10",
+					"keys": [
+						"id",
+						"parentId",
+						"state",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "custom_message",
+					"id": "7faec836",
+					"parentId": "6b47f489",
+					"keys": [
+						"content",
+						"customType",
+						"details",
+						"display",
+						"id",
+						"parentId",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "message",
+					"id": "f2b834d5",
+					"parentId": "7faec836",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "user"
+				},
+				{
+					"type": "message",
+					"id": "0d7f134a",
+					"parentId": "f2b834d5",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "assistant",
+					"stopReason": "stop",
+					"usage": {
+						"input": 500,
+						"output": 7,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"totalTokens": 507,
+						"cost": {
+							"input": 500,
+							"output": 14,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 514
+						},
+						"extraKeys": []
+					}
+				},
+				{
+					"type": "message",
+					"id": "d005e8ea",
+					"parentId": "0d7f134a",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "user"
+				},
+				{
+					"type": "message",
+					"id": "c9d46ad6",
+					"parentId": "d005e8ea",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "assistant",
+					"stopReason": "stop",
+					"usage": {
+						"input": 400,
+						"output": 11,
+						"cacheRead": 250,
+						"cacheWrite": 50,
+						"totalTokens": 711,
+						"cost": {
+							"input": 400,
+							"output": 22,
+							"cacheRead": 125,
+							"cacheWrite": 12.5,
+							"total": 559.5
+						},
+						"extraKeys": []
+					}
+				}
+			]
+		},
+		{
+			"label": "fork-original-after",
+			"entries": [
+				{
+					"type": "session",
+					"id": "01a0eee9-9a5d-73de-805a-7e396146a1d9",
+					"keys": [
+						"cwd",
+						"id",
+						"rlmDepth",
+						"timestamp",
+						"type",
+						"version"
+					]
+				},
+				{
+					"type": "model_change",
+					"id": "3a3e760e",
+					"parentId": null,
+					"keys": [
+						"id",
+						"modelId",
+						"parentId",
+						"provider",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "thinking_level_change",
+					"id": "51a1b327",
+					"parentId": "3a3e760e",
+					"keys": [
+						"id",
+						"parentId",
+						"thinkingLevel",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "service_tier_change",
+					"id": "d80a0d10",
+					"parentId": "51a1b327",
+					"keys": [
+						"id",
+						"parentId",
+						"serviceTier",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "session_state",
+					"id": "6b47f489",
+					"parentId": "d80a0d10",
+					"keys": [
+						"id",
+						"parentId",
+						"state",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "custom_message",
+					"id": "7faec836",
+					"parentId": "6b47f489",
+					"keys": [
+						"content",
+						"customType",
+						"details",
+						"display",
+						"id",
+						"parentId",
+						"timestamp",
+						"type"
+					]
+				},
+				{
+					"type": "message",
+					"id": "f2b834d5",
+					"parentId": "7faec836",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "user"
+				},
+				{
+					"type": "message",
+					"id": "0d7f134a",
+					"parentId": "f2b834d5",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "assistant",
+					"stopReason": "stop",
+					"usage": {
+						"input": 500,
+						"output": 7,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"totalTokens": 507,
+						"cost": {
+							"input": 500,
+							"output": 14,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 514
+						},
+						"extraKeys": []
+					}
+				},
+				{
+					"type": "message",
+					"id": "d005e8ea",
+					"parentId": "0d7f134a",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "user"
+				},
+				{
+					"type": "message",
+					"id": "c9d46ad6",
+					"parentId": "d005e8ea",
+					"keys": [
+						"id",
+						"message",
+						"parentId",
+						"timestamp",
+						"type"
+					],
+					"role": "assistant",
+					"stopReason": "stop",
+					"usage": {
+						"input": 400,
+						"output": 11,
+						"cacheRead": 250,
+						"cacheWrite": 50,
+						"totalTokens": 711,
+						"cost": {
+							"input": 400,
+							"output": 22,
+							"cacheRead": 125,
+							"cacheWrite": 12.5,
+							"total": 559.5
+						},
+						"extraKeys": []
+					}
+				}
+			]
+		}
+	],
+	"stateKeys": [
+		"autoCompactionEnabled",
+		"followUpMode",
+		"goal",
+		"isCompacting",
+		"isStreaming",
+		"messageCount",
+		"model",
+		"sessionActions",
+		"sessionFile",
+		"sessionId",
+		"steeringMode",
+		"thinkingLevel"
+	],
+	"observations": {
+		"forkTargets": 2,
+		"forkCreatedNewFile": true,
+		"originalEntriesAfterFork": 10,
+		"forkOriginalUnchanged": true,
+		"forkSharedEntryIds": 7,
+		"forkSharedEntriesIdentical": true,
+		"forkParentLinked": true,
+		"providerRequests": 3,
+		"summaryRequests": 0
+	},
+	"protocolErrors": [],
+	"failures": []
+}

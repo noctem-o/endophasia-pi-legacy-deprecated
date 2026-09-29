@@ -143,6 +143,14 @@ function assertHomogeneous(evidence: readonly PrimeScenarioEvidenceV0[]): PrimeP
 	const { scenario: _scenario, ...provenance } = first.provenance;
 	for (const item of evidence) {
 		const other = item.provenance;
+		if (other.mode !== "rpc") throw new Error("RPC report requires RPC evidence");
+		if (
+			other.researchHash !== provenance.researchHash ||
+			other.endophasiaCommit !== provenance.endophasiaCommit ||
+			other.launcherHash !== provenance.launcherHash ||
+			other.lockHash !== provenance.lockHash
+		)
+			throw new Error("Evidence mixes research or build provenance");
 		if (
 			other.version !== provenance.version ||
 			other.commit !== provenance.commit ||
@@ -229,6 +237,8 @@ export function writePrimeFixturesV0(
 	evidence: readonly PrimeScenarioEvidenceV0[],
 	options: { readonly prune?: boolean } = {},
 ): void {
+	if (evidence.some((run) => run.provenance.version === "0.9.7"))
+		throw new Error("0.9.7 fixtures require the joint RPC + ACP publication gate");
 	mkdirSync(directory, { recursive: true });
 	if (options.prune === true) {
 		const produced = new Set(evidence.map((item) => `${item.provenance.scenario}.json`));

@@ -1,0 +1,290 @@
+{
+	"schemaVersion": "prime-acp-evidence.v0",
+	"provenance": {
+		"source": "prime-agent",
+		"version": "0.9.7",
+		"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+		"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+		"build": "clean-checkout",
+		"mode": "acp",
+		"generatedBy": "prime-conformance-v0",
+		"probeVersion": "0.14.0",
+		"platform": "linux-x64",
+		"node": "v26.10.0",
+		"endophasiaCommit": "08068242aa5e115ea947e996b88b11107eea9a0d",
+		"researchHash": "c6a1e07a7157e554684c30588cf62e3b4c203a79aaae31216684553484811aeb",
+		"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+		"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+		"scenario": "simple"
+	},
+	"updates": [
+		{
+			"sessionId": "4c81d945-231b-4560-a4be-1f2866ad7d84",
+			"kind": "agent_message_chunk",
+			"keys": [
+				"_meta",
+				"content",
+				"messageId",
+				"sessionUpdate"
+			],
+			"metaKeys": [
+				"eventSequence",
+				"phase",
+				"promptTurnId"
+			],
+			"promptTurnId": 1,
+			"eventSequence": 1,
+			"phase": "event",
+			"messageId": "prime-agent-assistant-1"
+		},
+		{
+			"sessionId": "4c81d945-231b-4560-a4be-1f2866ad7d84",
+			"kind": "session_info_update",
+			"keys": [
+				"_meta",
+				"sessionUpdate"
+			],
+			"metaKeys": [
+				"eventSequence",
+				"outcome",
+				"phase",
+				"promptTurnId",
+				"terminalQuiescenceExpected"
+			],
+			"promptTurnId": 1,
+			"eventSequence": 2,
+			"phase": "responseBoundary",
+			"outcome": "result",
+			"terminalQuiescenceExpected": true
+		},
+		{
+			"sessionId": "4c81d945-231b-4560-a4be-1f2866ad7d84",
+			"kind": "session_info_update",
+			"keys": [
+				"_meta",
+				"sessionUpdate"
+			],
+			"metaKeys": [
+				"eventSequence",
+				"phase",
+				"promptTurnId",
+				"quiescence"
+			],
+			"promptTurnId": 1,
+			"eventSequence": 3,
+			"phase": "event",
+			"quiescence": {
+				"outstandingSubagents": 0,
+				"remainingAutonomousContinuations": 0
+			}
+		},
+		{
+			"sessionId": "4c81d945-231b-4560-a4be-1f2866ad7d84",
+			"kind": "session_info_update",
+			"keys": [
+				"_meta",
+				"sessionUpdate"
+			],
+			"metaKeys": [
+				"eventSequence",
+				"outcome",
+				"phase",
+				"promptTurnId",
+				"quiescence"
+			],
+			"promptTurnId": 1,
+			"eventSequence": 4,
+			"phase": "terminalQuiescence",
+			"outcome": "result",
+			"quiescence": {
+				"outstandingSubagents": 0,
+				"remainingAutonomousContinuations": 0
+			}
+		}
+	],
+	"prompts": [
+		{
+			"ordinal": 1,
+			"response": "result",
+			"stopReason": "end_turn"
+		}
+	],
+	"commands": [
+		{
+			"method": "initialize",
+			"success": true
+		},
+		{
+			"method": "session/new",
+			"success": true
+		},
+		{
+			"method": "session/prompt",
+			"success": true
+		},
+		{
+			"method": "session/close",
+			"success": true
+		}
+	],
+	"sessionIds": [
+		"4c81d945-231b-4560-a4be-1f2866ad7d84"
+	],
+	"cancelAfter": [],
+	"providerRequests": 1,
+	"summaryRequests": 0,
+	"files": [
+		[
+			{
+				"type": "session",
+				"id": "01a0eee9-d0fe-75cf-939c-7347fd244797",
+				"keys": [
+					"cwd",
+					"id",
+					"rlmDepth",
+					"timestamp",
+					"type",
+					"version"
+				]
+			},
+			{
+				"type": "model_change",
+				"id": "b477cc6b",
+				"parentId": null,
+				"keys": [
+					"id",
+					"modelId",
+					"parentId",
+					"provider",
+					"timestamp",
+					"type"
+				]
+			},
+			{
+				"type": "thinking_level_change",
+				"id": "73c0b234",
+				"parentId": "b477cc6b",
+				"keys": [
+					"id",
+					"parentId",
+					"thinkingLevel",
+					"timestamp",
+					"type"
+				]
+			},
+			{
+				"type": "service_tier_change",
+				"id": "8f867cc6",
+				"parentId": "73c0b234",
+				"keys": [
+					"id",
+					"parentId",
+					"serviceTier",
+					"timestamp",
+					"type"
+				]
+			},
+			{
+				"type": "session_state",
+				"id": "bfa0cc89",
+				"parentId": "8f867cc6",
+				"keys": [
+					"id",
+					"parentId",
+					"state",
+					"timestamp",
+					"type"
+				]
+			},
+			{
+				"type": "custom_message",
+				"id": "4e135e47",
+				"parentId": "bfa0cc89",
+				"keys": [
+					"content",
+					"customType",
+					"details",
+					"display",
+					"id",
+					"parentId",
+					"timestamp",
+					"type"
+				]
+			},
+			{
+				"type": "message",
+				"id": "f3cbd632",
+				"parentId": "4e135e47",
+				"keys": [
+					"id",
+					"message",
+					"parentId",
+					"timestamp",
+					"type"
+				],
+				"role": "user"
+			},
+			{
+				"type": "message",
+				"id": "f28ee6ac",
+				"parentId": "f3cbd632",
+				"keys": [
+					"id",
+					"message",
+					"parentId",
+					"timestamp",
+					"type"
+				],
+				"role": "assistant",
+				"stopReason": "stop",
+				"usage": {
+					"input": 600,
+					"output": 40,
+					"cacheRead": 300,
+					"cacheWrite": 100,
+					"totalTokens": 1040,
+					"cost": {
+						"input": 600,
+						"output": 80,
+						"cacheRead": 150,
+						"cacheWrite": 25,
+						"total": 855
+					},
+					"extraKeys": []
+				}
+			}
+		]
+	],
+	"protocolErrors": [],
+	"failures": [],
+	"initialize": {
+		"protocolVersion": 1,
+		"agentName": "prime-agent",
+		"agentVersion": "0.9.7",
+		"agentInfoKeys": [
+			"name",
+			"title",
+			"version"
+		],
+		"capabilityFields": [
+			"loadSession",
+			"mcpCapabilities",
+			"mcpCapabilities.http",
+			"promptCapabilities",
+			"promptCapabilities.embeddedContext",
+			"promptCapabilities.image",
+			"sessionCapabilities",
+			"sessionCapabilities.close"
+		],
+		"capabilityFlags": {
+			"loadSession": false,
+			"promptCapabilities.image": true,
+			"promptCapabilities.embeddedContext": true,
+			"mcpCapabilities.http": true
+		},
+		"metaNamespaces": [
+			"ai.primeintellect.prime-agent"
+		],
+		"primeMetaKeys": []
+	}
+}
