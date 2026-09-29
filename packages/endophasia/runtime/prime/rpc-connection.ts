@@ -162,6 +162,15 @@ export class PrimeRpcConnectionV0 {
 	#stdinFailed = false;
 	#stdoutOpen = true;
 	#closing: Promise<PrimeRpcTerminationV0> | undefined;
+	/** When the process group is due SIGKILL, once SIGTERM was sent to it. */
+	#sigkillAt: number | undefined;
+	/**
+	 * Set once the group was reaped after termination. Its ID is never probed or signalled again: once every member is
+	 * gone the OS may reuse it for an unrelated group.
+	 */
+	#groupGone = false;
+	/** Settles once the process group is reaped after termination (see #reapGroup). */
+	readonly #reaped: Promise<void>;
 	#resolveExited!: (exit: PrimeRpcExitV0) => void;
 	#resolveTerminated!: (termination: PrimeRpcTerminationV0) => void;
 
@@ -176,6 +185,7 @@ export class PrimeRpcConnectionV0 {
 		this.terminated = new Promise((resolve) => {
 			this.#resolveTerminated = resolve;
 		});
+		this.#reaped = this.terminated.then(() => this.#reapGroup());
 		const { installation } = options;
 		this.#child = spawn(
 			installation.command,
@@ -351,35 +361,45 @@ export class PrimeRpcConnectionV0 {
 			this.#child.stdin?.end();
 			const timeoutMs = this.#options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS;
 			let escalation: ReturnType<typeof setTimeout> | undefined;
-			let sigkillAt: number | undefined;
 			if (this.#exit === undefined) {
 				escalation = setTimeout(() => {
 					if (this.#exit !== undefined) return;
 					this.#diagnose({ kind: "forced-termination", signal: "SIGTERM" });
 					this.#killGroup("SIGTERM");
-					sigkillAt = Date.now() + TERMINATE_GRACE_MS;
+					this.#sigkillAt = Date.now() + TERMINATE_GRACE_MS;
 					escalation = setTimeout(() => this.#forceKill(), TERMINATE_GRACE_MS);
 				}, timeoutMs);
 			}
 			try {
-				return await this.terminated;
+				await this.terminated;
 			} finally {
 				clearTimeout(escalation);
-				// The connection owns Prime's whole process group. Prime may exit (by itself, or on SIGTERM) while a
-				// descendant that does not hold stdout lives on: the group then gets SIGTERM (unless it already did), and
-				// SIGKILL if anything is left when the grace expires.
-				if (this.#groupAlive()) {
-					if (sigkillAt === undefined) {
-						this.#diagnose({ kind: "forced-termination", signal: "SIGTERM" });
-						this.#killGroup("SIGTERM");
-						sigkillAt = Date.now() + TERMINATE_GRACE_MS;
-					}
-					while (this.#groupAlive() && Date.now() < sigkillAt) await new Promise((done) => setTimeout(done, 25));
-					this.#forceKill();
-				}
 			}
+			await this.#reaped;
+			return this.terminated;
 		})();
 		return this.#closing;
+	}
+
+	/**
+	 * The connection owns Prime's whole process group. Once Prime exited and stdout drained (whether or not close() was
+	 * called), any member still running, such as a descendant that does not hold stdout, gets SIGTERM (unless the
+	 * group already did) and SIGKILL when the grace expires. This runs right at termination, while a live member still
+	 * holds the group ID, never later against an ID the OS may have reused. The group is then marked gone.
+	 */
+	async #reapGroup(): Promise<void> {
+		if (this.#groupAlive()) {
+			if (this.#sigkillAt === undefined) {
+				this.#diagnose({ kind: "forced-termination", signal: "SIGTERM" });
+				this.#killGroup("SIGTERM");
+				this.#sigkillAt = Date.now() + TERMINATE_GRACE_MS;
+			}
+			while (this.#groupAlive() && Date.now() < this.#sigkillAt) {
+				await new Promise((done) => setTimeout(done, 25));
+			}
+			this.#forceKill();
+		}
+		this.#groupGone = true;
 	}
 
 	#forceKill(): void {
@@ -391,7 +411,7 @@ export class PrimeRpcConnectionV0 {
 	/** Whether any process of Prime's group remains. On Windows there is no group: only Prime itself is tracked. */
 	#groupAlive(): boolean {
 		const pid = this.#child.pid;
-		if (pid === undefined) return false;
+		if (pid === undefined || this.#groupGone) return false;
 		if (process.platform === "win32") return this.#exit === undefined;
 		try {
 			process.kill(-pid, 0);
@@ -416,7 +436,7 @@ export class PrimeRpcConnectionV0 {
 
 	#killGroup(signal: "SIGTERM" | "SIGKILL"): void {
 		const pid = this.#child.pid;
-		if (pid === undefined) return;
+		if (pid === undefined || this.#groupGone) return;
 		try {
 			if (process.platform === "win32") this.#child.kill(signal);
 			else process.kill(-pid, signal);

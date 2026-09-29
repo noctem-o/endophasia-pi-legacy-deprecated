@@ -49,10 +49,18 @@ export function resolvePrimeInstallationV0(
 }
 
 /**
- * A semver version standing alone as a whitespace-delimited word (optionally prefixed with "v"), so a version-like
- * segment of a path such as /opt/prime/1.2.3 is never taken for one. Prime 0.9.6 prints the bare version.
+ * A SemVer 2.0.0 version (no leading zeros in numeric identifiers, dot-separated pre-release and build identifiers),
+ * standing alone as a whitespace-delimited word and optionally prefixed with "v", so a version-like segment of a path
+ * such as /opt/prime/1.2.3 is never taken for one. Prime 0.9.6 prints the bare version.
  */
-const VERSION = /(?<![^\s])v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*)(?![^\s])/g;
+const NUMERIC = "(?:0|[1-9]\\d*)";
+const PRERELEASE_ID = "(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)";
+const BUILD_ID = "[0-9A-Za-z-]+";
+const VERSION = new RegExp(
+	`(?<![^\\s])v?(${NUMERIC}\\.${NUMERIC}\\.${NUMERIC}` +
+		`(?:-${PRERELEASE_ID}(?:\\.${PRERELEASE_ID})*)?(?:\\+${BUILD_ID}(?:\\.${BUILD_ID})*)?)(?![^\\s])`,
+	"g",
+);
 /** Output beyond this is not a version report; the command is stopped and nothing is read from it. */
 const MAX_OUTPUT_BYTES = 64 * 1024;
 
@@ -111,6 +119,15 @@ function run(
 		child.stdout?.on("data", collect(streams[0]));
 		child.stderr?.on("data", collect(streams[1]));
 		child.on("error", () => finish(undefined));
+		// The command's group is not kept: once it exited, anything it left behind (a descendant, detached or holding the
+		// pipes) is killed at once, while a live member still holds the group ID, so nothing outlives the read.
+		child.on("exit", () => {
+			try {
+				if (group && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+			} catch {
+				// No member is left.
+			}
+		});
 		child.on("close", (code) => {
 			let output: string | undefined;
 			try {

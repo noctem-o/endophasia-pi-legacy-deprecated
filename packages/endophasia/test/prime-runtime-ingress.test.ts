@@ -7,7 +7,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, w
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { JsonlDecoderV0, type JsonlRecordV0 } from "../research/prime-conformance/jsonl.ts";
 import { PrimeJsonlDecoderV0, type PrimeJsonlRecordV0 } from "../runtime/prime/jsonl.ts";
 import {
@@ -686,6 +686,29 @@ describe("Prime RPC connection: lifecycle", () => {
 		expect(await gone({ pid: descendant })).toBe(true);
 	});
 
+	it.runIf(POSIX)(
+		"reaps a descendant when Prime exits by itself, without close(), and never signals the group again",
+		async () => {
+			const { connection, diagnostics } = connect("exit-with-descendant");
+			const response = await connection.request({ type: "get_state" });
+			const descendant = (response.data as { descendant: number }).descendant;
+			const pid = connection.pid as number;
+			await connection.terminated;
+			expect(await gone({ pid: descendant })).toBe(true);
+			expect(diagnostics).toEqual([{ kind: "forced-termination", signal: "SIGTERM" }]);
+			// Once reaped, the group ID may belong to an unrelated group: close() neither probes nor signals it.
+			await new Promise((done) => setTimeout(done, 50));
+			const kill = vi.spyOn(process, "kill");
+			try {
+				await connection.close();
+				expect(kill.mock.calls.filter(([target]) => target === -pid)).toEqual([]);
+			} finally {
+				kill.mockRestore();
+			}
+			expect(diagnostics).toEqual([{ kind: "forced-termination", signal: "SIGTERM" }]);
+		},
+	);
+
 	it("reports a process that could not start, and rejects its requests", async () => {
 		const { connection } = connect("echo", {
 			installation: { mode: "binary", command: join(tmpdir(), "no-such-prime-agent"), leadingArgs: [] },
@@ -825,18 +848,51 @@ describe("Prime runtime identity", () => {
 			"Could not read a Prime version from --version",
 		);
 		expect(Date.now() - started).toBeLessThan(5_000);
+		// A descendant holding the output open is killed once the command exited, so the read completes.
+		const directory = temporaryDirectory("prime-identity-pid-");
 		const holder = scriptInstallation(
 			[
 				'import { spawn } from "node:child_process";',
-				'spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: ["ignore", "inherit", "ignore"] });',
+				'import { writeFileSync } from "node:fs";',
+				'const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: ["ignore", "inherit", "ignore"] });',
+				"child.unref();",
+				`writeFileSync(${JSON.stringify(join(directory, "holder.pid"))}, String(child.pid));`,
 				'process.stdout.write("0.9.6\\n");',
 			].join("\n"),
 		);
 		started = Date.now();
-		await expect(readPrimeRuntimeIdentityV0(holder, { ...options, timeoutMs: 500 })).rejects.toThrow(
-			"Could not read a Prime version from --version",
-		);
+		expect((await readPrimeRuntimeIdentityV0(holder, { ...options, timeoutMs: 10_000 })).version).toBe("0.9.6");
 		expect(Date.now() - started).toBeLessThan(5_000);
+		if (POSIX) expect(await gone({ pid: Number(readFileSync(join(directory, "holder.pid"), "utf8")) })).toBe(true);
+	});
+
+	it.runIf(POSIX)("leaves no descendant behind after a successful --version", async () => {
+		const directory = temporaryDirectory("prime-identity-pid-");
+		const launcher = scriptInstallation(
+			[
+				'import { spawn } from "node:child_process";',
+				'import { writeFileSync } from "node:fs";',
+				'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+				"child.unref();",
+				`writeFileSync(${JSON.stringify(join(directory, "detached.pid"))}, String(child.pid));`,
+				'process.stdout.write("0.9.6\\n");',
+			].join("\n"),
+		);
+		expect((await readPrimeRuntimeIdentityV0(launcher, options)).version).toBe("0.9.6");
+		expect(await gone({ pid: Number(readFileSync(join(directory, "detached.pid"), "utf8")) })).toBe(true);
+	});
+
+	it("accepts only SemVer 2.0.0 versions", async () => {
+		for (const output of ["1.2.3-rc.1+build.5\n", "1.2.3-0\n", "1.2.3-alpha-1\n", "v10.20.30\n"]) {
+			expect((await readPrimeRuntimeIdentityV0(versionScript(output), options)).version).toBe(
+				output.trim().replace(/^v/, ""),
+			);
+		}
+		for (const output of ["01.2.3\n", "1.02.3\n", "1.2.3-01\n", "1.2.3+foo+bar\n", "1.2.3-\n", "1.2.3-a..b\n"]) {
+			await expect(readPrimeRuntimeIdentityV0(versionScript(output), options)).rejects.toThrow(
+				"Could not read a Prime version from --version",
+			);
+		}
 	});
 
 	it("rejects when no version can be read", async () => {

@@ -84,6 +84,14 @@ function handle(command) {
 			child.on("spawn", () => write(respond(command, { data: { descendant: child.pid } })));
 			return;
 		}
+		case "exit-with-descendant": {
+			// Prime leaves a descendant that does not hold stdout, then exits by itself.
+			const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+			child.on("spawn", () =>
+				write(respond(command, { data: { descendant: child.pid } }), () => process.exit(0)),
+			);
+			return;
+		}
 		case "success-with-error":
 			write({ type: "response", id: command.id, command: command.type, success: true, error: SENTINEL.prompt });
 			write(respond(command));
