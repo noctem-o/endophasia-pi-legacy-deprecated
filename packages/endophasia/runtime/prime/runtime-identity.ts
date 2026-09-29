@@ -1,8 +1,9 @@
 // Prime RPC Runtime Ingress v0: which Prime is running. This is runtime identity, not conformance certification: it
 // records what can be known (the reported version, how Prime is installed, a source checkout's commit and tree state)
 // and claims nothing more. A Prime semantic adapter decides whether an identity belongs to a profile it supports.
-import { realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, resolve, win32 } from "node:path";
+import { createHash } from "node:crypto";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, win32 } from "node:path";
 import type { Readable } from "node:stream";
 import { PrimeProcessGroupV0 } from "./process-group.ts";
 
@@ -25,7 +26,18 @@ export interface PrimeRuntimeIdentityV0 {
 	 * Source provenance, only for a source checkout. A standalone binary has none: its source commit is not known, and
 	 * is never claimed. `tree` is "unknown" (and `commit` absent) when git could not be read.
 	 */
-	readonly source?: { readonly commit?: string; readonly tree: "clean" | "dirty" | "unknown" };
+	readonly source?: {
+		readonly commit?: string;
+		readonly tree: "clean" | "dirty" | "unknown";
+		/**
+		 * SHA-256 over the git-ignored build output the launcher loads (every file under packages/<name>/dist, by relative
+		 * path and content, in a stable order), as the conformance probe computes it. A clean tracked tree says nothing
+		 * about that output, so a commit and a clean tree alone do not identify what ran. Absent when there is no build
+		 * output or any entry is a symlink (its target is not hashed): the build is then unverified. It detects rebuilt or
+		 * edited output, not whether that output was built from `commit`.
+		 */
+		readonly artifactsHash?: string;
+	};
 }
 
 /**
@@ -102,8 +114,8 @@ function run(
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
-			void group.release();
-			done(output);
+			// The read settles only once the group is gone (release is bounded), so nothing it started outlives it.
+			void group.release().then(() => done(output));
 		};
 		const stop = () => {
 			group.stdout?.destroy();
@@ -188,22 +200,84 @@ export async function readPrimeRuntimeIdentityV0(
 			(file) => `${file.dev}:${file.ino}:${file.size}:${file.mtimeMs}:${file.ctimeMs}`,
 			() => undefined,
 		);
-		return { head, status, launcher };
+		const artifactsHash = await hashBuildOutput(installation.root);
+		return { head, status, launcher, artifactsHash };
 	};
 	for (let attempt = 0; attempt < IDENTITY_ATTEMPTS; attempt++) {
 		const before = await snapshot();
 		const version = await readVersion();
 		const after = await snapshot();
-		if (before.head !== after.head || before.status !== after.status || before.launcher !== after.launcher) continue;
+		if (
+			before.head !== after.head ||
+			before.status !== after.status ||
+			before.launcher !== after.launcher ||
+			before.artifactsHash !== after.artifactsHash
+		) {
+			continue;
+		}
 		// A SHA-1 or SHA-256 object ID: git supports both object formats.
 		const head = before.head;
 		const commit = head !== undefined && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head) ? head : undefined;
 		const status = before.status;
 		const tree =
 			commit === undefined || status === undefined ? "unknown" : status.trim().length === 0 ? "clean" : "dirty";
-		return { version, installation, source: { ...(commit === undefined ? {} : { commit }), tree } };
+		const artifactsHash = before.artifactsHash;
+		return {
+			version,
+			installation,
+			source: {
+				...(commit === undefined ? {} : { commit }),
+				tree,
+				...(artifactsHash === undefined ? {} : { artifactsHash }),
+			},
+		};
 	}
 	throw new Error("The Prime checkout changed while its identity was read");
+}
+
+/**
+ * SHA-256 over every file under packages/<name>/dist in a checkout, by relative path and content, in a stable order;
+ * the same digest as the conformance probe's hashBuildOutputV0. Undefined when there is none, when any entry is a
+ * symlink (Node would follow it to code this walk does not hash), or when the output cannot be read.
+ */
+async function hashBuildOutput(checkout: string): Promise<string | undefined> {
+	const hash = createHash("sha256");
+	let files = 0;
+	let symlinks = 0;
+	const walk = async (directory: string): Promise<void> => {
+		const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
+		for (const entry of entries) {
+			const path = join(directory, entry.name);
+			if (entry.isSymbolicLink()) symlinks++;
+			else if (entry.isDirectory()) await walk(path);
+			else if (entry.isFile()) {
+				hash
+					.update(relative(checkout, path))
+					.update("\0")
+					.update(await readFile(path))
+					.update("\0");
+				files++;
+			}
+		}
+	};
+	try {
+		const packages = join(checkout, "packages");
+		const names = await readdir(packages).then(
+			(found) => found.sort(),
+			() => [] as string[],
+		);
+		for (const name of names) {
+			const dist = join(packages, name, "dist");
+			const found = await stat(dist).then(
+				() => true,
+				() => false,
+			);
+			if (found) await walk(dist);
+		}
+	} catch {
+		return undefined;
+	}
+	return files === 0 || symlinks > 0 ? undefined : hash.digest("hex");
 }
 
 async function sameDirectory(a: string, b: string): Promise<boolean> {

@@ -232,8 +232,15 @@ export class PrimeProcessGroupV0 {
 				this.#gone,
 				new Promise<void>((resolve) => {
 					timer = setTimeout(() => {
-						// The keeper is this process's unreaped child, so its PID is still valid.
-						if (this.#alive) this.#process.kill("SIGKILL");
+						// The keeper did not act (stopped, or stuck). It is this process's unreaped child, so its PID, and with it
+						// the group ID, is still this group's: the whole group, keeper included, is SIGKILLed directly.
+						if (this.#alive && this.#process.pid !== undefined) {
+							try {
+								process.kill(-this.#process.pid, "SIGKILL");
+							} catch {
+								this.#process.kill("SIGKILL");
+							}
+						}
 						resolve();
 					}, RELEASE_TIMEOUT_MS);
 				}),

@@ -11,6 +11,7 @@ import {
 	readdirSync,
 	readFileSync,
 	rmSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,7 +19,9 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { JsonlDecoderV0, type JsonlRecordV0 } from "../research/prime-conformance/jsonl.ts";
+import { hashBuildOutputV0 } from "../research/prime-conformance/probe.ts";
 import { PrimeJsonlDecoderV0, type PrimeJsonlRecordV0 } from "../runtime/prime/jsonl.ts";
+import { PrimeProcessGroupV0 } from "../runtime/prime/process-group.ts";
 import {
 	type PrimeRpcConnectionOptionsV0,
 	PrimeRpcConnectionV0,
@@ -906,6 +909,26 @@ describe("Prime RPC connection: extension UI answers", () => {
 });
 
 describe.runIf(POSIX && existsSync("/proc/self/stat"))("Prime RPC connection: owned process group", () => {
+	it("kills the whole group when the keeper cannot act on release", async () => {
+		const pidFile = join(temporaryDirectory("prime-stopped-keeper-"), "command.pid");
+		const group = new PrimeProcessGroupV0(
+			process.execPath,
+			[
+				"-e",
+				`require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`,
+			],
+			{ cwd: tmpdir(), env: { PATH: process.env.PATH ?? "" }, stderr: "ignore" },
+		);
+		const deadline = Date.now() + 5_000;
+		while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((done) => setTimeout(done, 20));
+		const command = Number(readFileSync(pidFile, "utf8"));
+		// A stopped keeper never reads the release message; the fallback must still reach the command.
+		process.kill(group.groupId as number, "SIGSTOP");
+		await group.release();
+		expect(await gone({ pid: command })).toBe(true);
+		expect(await gone({ group: group.groupId as number })).toBe(true);
+	});
+
 	it("keeps the command, arguments and environment off the keeper's command line and environment", async () => {
 		const { connection } = connect("echo", {
 			args: ["echo", "--secret", "TOOL_ARGS_SENTINEL"],
@@ -1021,12 +1044,22 @@ describe("Prime runtime identity", () => {
 	});
 
 	it("bounds --version when it ignores SIGTERM or a descendant holds its output open", async () => {
-		const stubborn = scriptInstallation("process.on('SIGTERM', () => {});\nsetInterval(() => {}, 1000);\n");
+		const pidFile = join(temporaryDirectory("prime-identity-stubborn-"), "stubborn.pid");
+		const stubborn = scriptInstallation(
+			[
+				'import { writeFileSync } from "node:fs";',
+				`writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
+				"process.on('SIGTERM', () => {});",
+				"setInterval(() => {}, 1000);",
+			].join("\n"),
+		);
 		let started = Date.now();
 		await expect(readPrimeRuntimeIdentityV0(stubborn, { ...options, timeoutMs: 300 })).rejects.toThrow(
 			"Could not read a Prime version from --version",
 		);
 		expect(Date.now() - started).toBeLessThan(5_000);
+		// The read settled only after the timed-out command was gone: it is not running when the rejection arrives.
+		if (POSIX) expect(running({ pid: Number(readFileSync(pidFile, "utf8")) })).toBe(false);
 		// A descendant holding the output open is killed once the command exited, so the read completes.
 		const directory = temporaryDirectory("prime-identity-pid-");
 		const holder = scriptInstallation(
@@ -1267,6 +1300,49 @@ describe("Prime runtime identity", () => {
 		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
 			tree: "unknown",
 		});
+	});
+
+	it.runIf(POSIX)("hashes the build output the launcher loads, as the conformance probe does", async () => {
+		const root = temporaryDirectory("prime-built-");
+		const home = temporaryDirectory("prime-git-home-");
+		const env = { PATH: process.env.PATH ?? "", HOME: home, GIT_CONFIG_NOSYSTEM: "1" };
+		const git = (...args: string[]) =>
+			execFileSync("git", ["-C", root, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+				env,
+				encoding: "utf8",
+			});
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(root, "prime-agent.sh"), 0o755);
+		writeFileSync(join(root, ".gitignore"), "dist/\n");
+		git("init", "-q");
+		git("add", "prime-agent.sh", ".gitignore");
+		git("commit", "-q", "-m", "init");
+		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
+		const read = async () => (await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source;
+		// No build output: nothing to hash, so the build is unverified.
+		expect((await read())?.artifactsHash).toBeUndefined();
+		for (const [name, content] of [
+			["agent/dist/index.js", "export const a = 1;\n"],
+			["agent/dist/nested/util.js", "export const b = 2;\n"],
+			["coding-agent/dist/cli.js", "console.log('é');\n"],
+		]) {
+			mkdirSync(join(root, "packages", name, ".."), { recursive: true });
+			writeFileSync(join(root, "packages", name), content);
+		}
+		const built = await read();
+		expect(built).toMatchObject({ tree: "clean" });
+		expect(built?.artifactsHash).toMatch(/^[0-9a-f]{64}$/);
+		expect(built?.artifactsHash).toBe(hashBuildOutputV0(root));
+		// A rebuilt output at the same commit, with a still-clean tracked tree, changes the hash.
+		writeFileSync(join(root, "packages/agent/dist/index.js"), "export const a = 2;\n");
+		const rebuilt = await read();
+		expect(rebuilt).toMatchObject({ commit: built?.commit, tree: "clean" });
+		expect(rebuilt?.artifactsHash).not.toBe(built?.artifactsHash);
+		expect(rebuilt?.artifactsHash).toBe(hashBuildOutputV0(root));
+		// A symlink loads code the hash does not cover: unverified.
+		symlinkSync(join(root, "prime-agent.sh"), join(root, "packages/agent/dist/link.js"));
+		expect((await read())?.artifactsHash).toBeUndefined();
+		expect(hashBuildOutputV0(root)).toBeUndefined();
 	});
 
 	it.runIf(POSIX)("reports an unknown tree when the checkout is not a git repository", async () => {
