@@ -2,8 +2,9 @@
 // records what can be known (the reported version, how Prime is installed, a source checkout's commit and tree state)
 // and claims nothing more. A Prime semantic adapter decides whether an identity belongs to a profile it supports.
 import { createHash } from "node:crypto";
-import { lstat, readdir, readFile, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, win32 } from "node:path";
+import { createReadStream } from "node:fs";
+import { lstat, readdir, realpath } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import type { Readable } from "node:stream";
 import { PrimeProcessGroupV0 } from "./process-group.ts";
 
@@ -207,7 +208,7 @@ export async function readPrimeRuntimeIdentityV0(
 		);
 		const launcherEntry = await git(["ls-files", "--stage", "--", relative(installation.root, installation.command)]);
 		const launcherTracked = launcherEntry !== undefined && /^100(?:644|755) [0-9a-f]+ 0\t/.test(launcherEntry);
-		const artifactsHash = await hashBuildOutput(installation.root);
+		const artifactsHash = await hashBuildOutput(installation.root, Date.now() + timeoutMs);
 		return { head, status, launcher, launcherTracked, artifactsHash };
 	};
 	for (let attempt = 0; attempt < IDENTITY_ATTEMPTS; attempt++) {
@@ -250,31 +251,49 @@ export async function readPrimeRuntimeIdentityV0(
 	throw new Error("The Prime checkout changed while its identity was read");
 }
 
+/** Bounds on hashing build output (Prime 0.9.6's is 400 files, about 5 MB). Past either, the build is unverified. */
+const MAX_BUILD_OUTPUT_BYTES = 256 * 1024 * 1024;
+const MAX_BUILD_OUTPUT_FILES = 100_000;
+
+/** Code-unit order: the same on every machine, unlike localeCompare, which depends on the locale and ICU version. */
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 /**
- * SHA-256 over every file under packages/<name>/dist in a checkout, by relative path and content, in a stable order;
- * the same digest as the conformance probe's hashBuildOutputV0. Undefined when there is none, when any entry is a
- * symlink (Node would follow it to code this walk does not hash), or when the output cannot be read.
+ * SHA-256 over every file under packages/<name>/dist in a checkout, by relative path (always "/"-separated) and
+ * content, in code-unit order. For Prime 0.9.6's build output this equals the conformance probe's hashBuildOutputV0
+ * (whose locale order agrees with code-unit order there) and the recorded evidence hash. Files are streamed into the
+ * digest, never held whole. Undefined when there is none, when any entry is a symlink (Node would follow it to code
+ * this walk does not hash), when a file contains a NUL byte (see below), when the output exceeds its bounds or the
+ * deadline, or when it cannot be read.
  */
-async function hashBuildOutput(checkout: string): Promise<string | undefined> {
+async function hashBuildOutput(checkout: string, deadline: number): Promise<string | undefined> {
 	const hash = createHash("sha256");
 	let files = 0;
-	let symlinks = 0;
-	let nulBytes = false;
+	let bytes = 0;
+	class Unverifiable extends Error {}
+	const hashFile = async (path: string): Promise<void> => {
+		// "/"-separated whatever the host, so the digest does not depend on the operating system.
+		hash.update(relative(checkout, path).split(sep).join("/")).update("\0");
+		for await (const chunk of createReadStream(path) as AsyncIterable<Buffer>) {
+			// The digest frames each entry as path NUL content NUL. Paths never contain NUL, so the stream splits back
+			// into exactly one sequence of entries only when no content does either: a file with a NUL byte could make
+			// two different trees hash alike, so such output is unverified.
+			if (chunk.includes(0)) throw new Unverifiable();
+			bytes += chunk.length;
+			if (bytes > MAX_BUILD_OUTPUT_BYTES || Date.now() > deadline) throw new Unverifiable();
+			hash.update(chunk);
+		}
+		hash.update("\0");
+		files++;
+		if (files > MAX_BUILD_OUTPUT_FILES) throw new Unverifiable();
+	};
 	const walk = async (directory: string): Promise<void> => {
-		const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
+		const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) => byCodeUnit(a.name, b.name));
 		for (const entry of entries) {
 			const path = join(directory, entry.name);
-			if (entry.isSymbolicLink()) symlinks++;
-			else if (entry.isDirectory()) await walk(path);
-			else if (entry.isFile()) {
-				const content = await readFile(path);
-				// The digest frames each entry as path NUL content NUL. Paths never contain NUL, so the stream splits back
-				// into exactly one sequence of entries only when no content does either: a file with a NUL byte could make
-				// two different trees hash alike, so such output is unverified.
-				if (content.includes(0)) nulBytes = true;
-				hash.update(relative(checkout, path)).update("\0").update(content).update("\0");
-				files++;
-			}
+			if (entry.isSymbolicLink()) throw new Unverifiable();
+			if (entry.isDirectory()) await walk(path);
+			else if (entry.isFile()) await hashFile(path);
 		}
 	};
 	// Every path component the launcher resolves through is checked without following links: a symlinked packages/,
@@ -288,7 +307,7 @@ async function hashBuildOutput(checkout: string): Promise<string | undefined> {
 		const packages = join(checkout, "packages");
 		const packagesKind = await kind(packages);
 		if (packagesKind === "link") return undefined;
-		const names = packagesKind === "directory" ? (await readdir(packages)).sort() : [];
+		const names = packagesKind === "directory" ? (await readdir(packages)).sort(byCodeUnit) : [];
 		for (const name of names) {
 			const packageKind = await kind(join(packages, name));
 			if (packageKind === "link") return undefined;
@@ -301,7 +320,7 @@ async function hashBuildOutput(checkout: string): Promise<string | undefined> {
 	} catch {
 		return undefined;
 	}
-	return files === 0 || symlinks > 0 || nulBytes ? undefined : hash.digest("hex");
+	return files === 0 ? undefined : hash.digest("hex");
 }
 
 async function sameDirectory(a: string, b: string): Promise<boolean> {

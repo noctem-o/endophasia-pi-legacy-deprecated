@@ -3,6 +3,7 @@
 // identity, hermetic environments and import-graph boundaries. A local fake stands in for `prime-agent --mode rpc`;
 // no Prime installation, provider key, ~/.prime state or network is used. The live smoke at the end is opt-in only.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
@@ -1414,6 +1415,39 @@ describe("Prime runtime identity", () => {
 		// A NUL byte in a file would let two different trees frame to the same digest input: unverified.
 		writeFileSync(join(root, "packages/agent/dist/blob.bin"), Uint8Array.of(0x61, 0x00, 0x62));
 		expect((await read())?.artifactsHash).toBeUndefined();
+	});
+
+	it.runIf(POSIX)("orders build output by code unit with /-separated paths, independent of locale", async () => {
+		const root = temporaryDirectory("prime-order-");
+		const home = temporaryDirectory("prime-git-home-");
+		const env = { PATH: process.env.PATH ?? "", HOME: home, GIT_CONFIG_NOSYSTEM: "1" };
+		const git = (...args: string[]) =>
+			execFileSync("git", ["-C", root, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+				env,
+				encoding: "utf8",
+			});
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(root, "prime-agent.sh"), 0o755);
+		git("init", "-q");
+		git("add", "prime-agent.sh");
+		git("commit", "-q", "-m", "init");
+		// Names whose locale collation differs from code-unit order ("B" < "a" < "ä" by code unit).
+		const files: [string, string][] = [
+			["packages/core/dist/B.js", "upper"],
+			["packages/core/dist/a.js", "lower"],
+			["packages/core/dist/ä.js", "umlaut"],
+		];
+		for (const [path, content] of files) {
+			mkdirSync(join(root, path, ".."), { recursive: true });
+			writeFileSync(join(root, path), content);
+		}
+		const expected = createHash("sha256");
+		for (const [path, content] of files) expected.update(path).update("\0").update(content).update("\0");
+		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
+		const source = (await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source;
+		expect(source?.artifactsHash).toBe(expected.digest("hex"));
+		// The probe's locale order puts "a.js" first here, so it differs; for Prime 0.9.6's build output both orders agree.
+		expect(source?.artifactsHash).not.toBe(hashBuildOutputV0(root));
 	});
 
 	it.runIf(POSIX)("reports no provenance when the launcher is untracked or a symlink", async () => {
