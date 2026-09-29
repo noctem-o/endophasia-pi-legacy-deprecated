@@ -8,6 +8,7 @@ import type { EndophasiaPresentationClientV0 } from "../presentation/client.ts";
 import type { ContinuitySnapshotV0 } from "../src/continuity-service.ts";
 import type { MissionTraceObservationV0 } from "../src/mission-trace-service.ts";
 import type { RuntimeMetricsV0 } from "../src/runtime-facts-service.ts";
+import type { RuntimeProfileV0 } from "../src/runtime-profile-service.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 import type { UsageObservationV0 } from "../src/usage-service.ts";
 
@@ -21,6 +22,7 @@ export type CockpitPresentation = Pick<
 	| "models"
 	| "missionTrace"
 	| "usage"
+	| "runtimeProfile"
 	| "attach"
 	| "detach"
 	| "sessionOverview"
@@ -30,10 +32,12 @@ export type CockpitPresentation = Pick<
 
 /**
  * Mission Trace and Usage have their own regions: they can change far more often than the rest of the inspector.
- * Continuity has its own region because a capture can hold many entries and changes only on explicit capture.
+ * Continuity has its own region because a capture can hold many entries and changes only on explicit capture. The
+ * Runtime Profile has its own region because, unlike the inspector's Session state, it may show under degradation.
  */
 export type CockpitRegion =
 	| "status"
+	| "profile"
 	| "sessions"
 	| "transcript"
 	| "inspector"
@@ -49,6 +53,20 @@ export type HiddenReason = "detached" | "switching" | "attaching" | "degraded" |
 export type MissionTraceVisibility =
 	| { readonly status: "visible"; readonly sessionId: string; readonly observation: MissionTraceObservationV0 }
 	| { readonly status: "hidden"; readonly reason: HiddenReason };
+
+/**
+ * Why the cockpit shows no Runtime Profile, or the profile it may show. Unlike other Session state, a hydrated profile
+ * is shown under a degraded attachment too, as diagnostic metadata; `attachment` keeps that health fact beside it.
+ */
+export type RuntimeProfileVisibility =
+	| {
+			readonly status: "visible";
+			readonly sessionId: string;
+			/** Pi's attachment health, unchanged by the profile: a profile never makes a degraded attachment healthy. */
+			readonly attachment: "attached" | "degraded";
+			readonly profile: RuntimeProfileV0;
+	  }
+	| { readonly status: "hidden"; readonly reason: "detached" | "switching" | "attaching" | "unhydrated" };
 
 /** Why the cockpit shows no Usage Activity, or the usage observation it may show. */
 export type UsageVisibility =
@@ -112,6 +130,7 @@ const MAX_DIAGNOSTICS = 5;
 const MAX_DIAGNOSTIC_LENGTH = 500;
 const ALL_REGIONS: readonly CockpitRegion[] = [
 	"status",
+	"profile",
 	"sessions",
 	"transcript",
 	"inspector",
@@ -151,13 +170,14 @@ export class CockpitController {
 		this.schedule = options.schedule;
 		this.now = options.now ?? Date.now;
 		this.context = options.context ?? BACKGROUND_CONTEXT;
-		const { connection, attachment, sessions, transcript, models, missionTrace, usage } = this.presentation;
+		const { connection, attachment, sessions, transcript, models, missionTrace, usage, runtimeProfile } =
+			this.presentation;
 		this.observedSessionId = attachedSessionId(this.presentation);
 		this.unsubscribes.push(
 			connection.subscribe(() => this.invalidate("status", "inspector")),
 			attachment.subscribe(() => {
 				this.followAttachment();
-				this.invalidate("status", "sessions", "transcript", "inspector", "trace", "usage", "continuity");
+				this.invalidate("status", "profile", "sessions", "transcript", "inspector", "trace", "usage", "continuity");
 			}),
 			sessions.subscribe(() => this.invalidate("sessions")),
 			transcript.subscribe(() => this.invalidate("transcript", "inspector")),
@@ -165,6 +185,8 @@ export class CockpitController {
 			missionTrace.subscribe(() => this.invalidate("trace")),
 			// A usage row redraws only Usage Activity; Session Accounting and Continuity stay explicit captures.
 			usage.subscribe(() => this.invalidate("usage")),
+			// Profile metadata redraws only its own region; it requests no capture and changes no attachment state.
+			runtimeProfile.subscribe(() => this.invalidate("profile")),
 		);
 		this.invalidate(...ALL_REGIONS);
 	}
@@ -239,6 +261,22 @@ export class CockpitController {
 	 */
 	get usage(): UsageVisibility {
 		return this.sessionState(this.presentation.usage.value);
+	}
+
+	/**
+	 * The Runtime Profile to present. Every Session binding is cleared when Pi's attachment changes, and a profile
+	 * hydrated afterwards belongs to the attachment Pi reports; before that, while a selection is pending, the value
+	 * may still be the previous Session's. So it is shown only for an attached or degraded Session with no selection
+	 * pending, never while attaching, and never inferred when it did not hydrate.
+	 */
+	get runtimeProfile(): RuntimeProfileVisibility {
+		const attachment = this.presentation.attachment.value;
+		if (this.pending !== undefined) return { status: "hidden", reason: "switching" };
+		if (attachment === undefined || attachment.status === "detached") return { status: "hidden", reason: "detached" };
+		if (attachment.status === "attaching") return { status: "hidden", reason: "attaching" };
+		const profile = this.presentation.runtimeProfile.value;
+		if (profile === undefined) return { status: "hidden", reason: "unhydrated" };
+		return { status: "visible", sessionId: attachment.sessionId, attachment: attachment.status, profile };
 	}
 
 	/**
@@ -378,7 +416,7 @@ export class CockpitController {
 		// cleared, and one in flight is dropped, as soon as another Session is requested.
 		this.resetContinuity();
 		// The inspector shows the pending request and whether Detach is available.
-		this.invalidate("sessions", "status", "inspector", "trace", "usage", "continuity");
+		this.invalidate("sessions", "status", "profile", "inspector", "trace", "usage", "continuity");
 		try {
 			await this.presentation.attach(sessionId, this.context);
 			if (this.queuedSelection === undefined) void this.refreshOverview();
@@ -386,7 +424,7 @@ export class CockpitController {
 			this.report(error);
 		} finally {
 			this.pending = undefined;
-			this.invalidate("sessions", "status", "inspector", "trace", "usage", "continuity");
+			this.invalidate("sessions", "status", "profile", "inspector", "trace", "usage", "continuity");
 		}
 		const next = this.queuedSelection;
 		this.queuedSelection = undefined;

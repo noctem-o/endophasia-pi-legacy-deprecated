@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { parseBootstrap } from "../cockpit/bootstrap.ts";
 import { CockpitController } from "../cockpit/controller.ts";
-import { projectContinuity, projectVisibleTranscript } from "../cockpit/view-model.ts";
+import { projectContinuity, projectRuntimeProfile, projectVisibleTranscript } from "../cockpit/view-model.ts";
 import { type EndophasiaPresentationClientV0, openEndophasiaPresentationClientV0 } from "../presentation/client.ts";
 import { type BrowserWebSocket, createBrowserWebSocketTransportFactory } from "../presentation/websocket-transport.ts";
 import { buildCockpitAssets, type RunningEndophasiaCockpit, startEndophasiaCockpit } from "../runtime/cockpit.ts";
@@ -222,6 +222,58 @@ describe("Standard Cockpit integration", () => {
 		}
 	});
 
+	it("shows the Pi worker's Runtime Profile from its composition root through the real service boundary", async () => {
+		const cockpit = await startCockpit();
+		const origin = new URL(cockpit.url).origin;
+		const bootstrap = parseBootstrap(JSON.parse((await get(`${cockpit.url}bootstrap.json`)).body));
+		const presentation = await openEndophasiaPresentationClientV0({
+			serverId: bootstrap.serverId,
+			transportFactory: pageTransport(bootstrap.websocketUrl, origin),
+		});
+		presentations.push(presentation);
+		const requests = { accounting: 0, continuity: 0 };
+		const controller = new CockpitController({
+			presentation: {
+				...presentation,
+				runtimeMetrics: (context) => {
+					requests.accounting++;
+					return presentation.runtimeMetrics(context);
+				},
+				continuitySnapshot: (context) => {
+					requests.continuity++;
+					return presentation.continuitySnapshot(context);
+				},
+			},
+			render: () => {},
+			schedule: (callback) => callback(),
+		});
+		try {
+			expect(controller.runtimeProfile).toEqual({ status: "hidden", reason: "detached" });
+			controller.select("observed");
+			expect(controller.runtimeProfile).toEqual({ status: "hidden", reason: "switching" });
+			await expect.poll(() => controller.runtimeProfile.status, { timeout: 20_000 }).toBe("visible");
+			const visible = controller.runtimeProfile;
+			if (visible.status !== "visible") throw new Error("Runtime Profile is not visible");
+			expect(visible).toMatchObject({ sessionId: "observed", attachment: "attached" });
+			const view = projectRuntimeProfile(visible.profile);
+			expect(view).toMatchObject({
+				runtimeFamily: "pi",
+				adapterProfileId: "endophasia.pi-standard.v0",
+				scope: "Session worker lifetime",
+				advertised: "6 of 6 Endophasia v0 capabilities advertised",
+				unrecognized: [],
+			});
+			expect(view.groups.flatMap((group) => group.rows).every((row) => row.status === "advertised")).toBe(true);
+			// Live metadata only: it requests no capture.
+			expect(requests).toEqual({ accounting: 0, continuity: 0 });
+
+			await controller.detach();
+			expect(controller.runtimeProfile).toEqual({ status: "hidden", reason: "detached" });
+		} finally {
+			controller.dispose();
+		}
+	});
+
 	it("admits only the cockpit's own origin to the Pi WebSocket", async () => {
 		const cockpit = await startCockpit();
 		const bootstrap = parseBootstrap(JSON.parse((await get(`${cockpit.url}bootstrap.json`)).body));
@@ -296,8 +348,8 @@ describe("Standard Cockpit source boundaries", () => {
 					specifier === "../presentation/websocket-transport.ts" ||
 					specifier === "@earendil-works/chord/context" ||
 					// Types only: Pi's replicated state shapes and the Session Overview, Mission Trace, Runtime Facts, Usage and
-					// Continuity contract schemas. Never a runtime projection module such as runtime-metrics.ts,
-					// usage-ledger.ts or continuity.ts.
+					// Continuity contract schemas, and the Runtime Profile contract. Never a runtime projection module such as
+					// runtime-metrics.ts, usage-ledger.ts or continuity.ts, nor the profile's host facet.
 					(typeOnly &&
 						(specifier === "@earendil-works/chord" ||
 							specifier === "../src/session-overview.ts" ||
@@ -305,6 +357,7 @@ describe("Standard Cockpit source boundaries", () => {
 							specifier === "../src/runtime-facts-service.ts" ||
 							specifier === "../src/usage-service.ts" ||
 							specifier === "../src/continuity-service.ts" ||
+							specifier === "../src/runtime-profile-service.ts" ||
 							specifier.startsWith("@earendil-works/pi-coding-agent/experimental/services/")));
 				expect(allowed, `${file} imports ${typeOnly ? "type " : ""}${specifier}`).toBe(true);
 			}

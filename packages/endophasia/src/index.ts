@@ -39,6 +39,10 @@ export type {
 	UsageFeedListenerV0,
 	UsageFeedSubscriptionV0,
 } from "./runtime-observation.ts";
+export type { RuntimeProfileClaimV0 } from "./runtime-profile-facet.ts";
+export { createEndophasiaRuntimeProfileFacetV0, runtimeProfileV0 } from "./runtime-profile-facet.ts";
+export type { EndophasiaRuntimeCapabilityIdV0, RuntimeProfileV0 } from "./runtime-profile-service.ts";
+export { ENDOPHASIA_RUNTIME_CAPABILITY_IDS_V0, EndophasiaRuntimeProfileV0 } from "./runtime-profile-service.ts";
 export type { SessionLaneOverviewV0, SessionOverviewV0 } from "./session-overview.ts";
 export { captureSessionOverviewV0 } from "./session-overview.ts";
 export type {

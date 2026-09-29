@@ -10,6 +10,7 @@ import type { ModelsState } from "@earendil-works/pi-coding-agent/experimental/s
 import type { SessionDirectoryState } from "@earendil-works/pi-coding-agent/experimental/services/sessions";
 import type { ContinuityEntryV0, ContinuitySnapshotV0 } from "../src/continuity-service.ts";
 import type { RuntimeMetricsV0 } from "../src/runtime-facts-service.ts";
+import type { EndophasiaRuntimeCapabilityIdV0 } from "../src/runtime-profile-service.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 import type { UsageLedgerRowV0, UsageObservationV0 } from "../src/usage-service.ts";
 
@@ -915,5 +916,114 @@ export function projectContinuity(
 				}),
 		contextWindow: projectContinuityEntries(snapshot.contextWindow, limit),
 		activePath: projectContinuityEntries(snapshot.activePath, limit),
+	};
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Runtime Profile v0
+
+/** Identifiers outside the v0 catalogue are shown at most this long. */
+const PROFILE_TEXT_LIMIT = 200;
+
+type RuntimeCapabilityGroup = "observation-boundary" | "outside-boundary";
+
+/**
+ * Display metadata for the closed v0 catalogue. The group records where a capability's semantics sit in Endophasia's
+ * architecture today, not whether any runtime could provide it.
+ */
+const RUNTIME_CAPABILITY_VIEW = {
+	"endophasia.session-overview.v0": { label: "Session Overview", group: "outside-boundary" },
+	"endophasia.mission-trace.v0": { label: "Mission Trace", group: "observation-boundary" },
+	"endophasia.runtime-metrics.v0": { label: "Runtime Metrics", group: "observation-boundary" },
+	"endophasia.operation-outcome.v0": { label: "Operation Outcome", group: "observation-boundary" },
+	"endophasia.usage.v0": { label: "Usage", group: "observation-boundary" },
+	"endophasia.continuity.v0": { label: "Continuity", group: "outside-boundary" },
+} as const satisfies Record<
+	EndophasiaRuntimeCapabilityIdV0,
+	{ readonly label: string; readonly group: RuntimeCapabilityGroup }
+>;
+
+const RUNTIME_CAPABILITY_GROUPS: readonly {
+	readonly group: RuntimeCapabilityGroup;
+	readonly title: string;
+	readonly note: string;
+}[] = [
+	{
+		group: "observation-boundary",
+		title: "Runtime Observation Boundary v0",
+		note: "Served through Endophasia's runtime-neutral observation ports",
+	},
+	{
+		group: "outside-boundary",
+		title: "Outside that boundary today",
+		note: "Semantics not yet behind the runtime observation ports",
+	},
+];
+
+export interface RuntimeCapabilityRowView {
+	readonly id: string;
+	readonly label: string;
+	/** Absence means only that this worker does not advertise the capability. */
+	readonly status: "advertised" | "not advertised";
+}
+
+export interface RuntimeCapabilityGroupView {
+	readonly title: string;
+	readonly note: string;
+	readonly rows: readonly RuntimeCapabilityRowView[];
+}
+
+export interface RuntimeProfileView {
+	readonly runtimeFamily: string;
+	readonly adapterProfileId: string;
+	readonly scope: string;
+	/** Present when the profile's schema version is not runtime-profile.v0. */
+	readonly schemaNote?: string;
+	readonly advertised: string;
+	readonly groups: readonly RuntimeCapabilityGroupView[];
+	/** Advertised identifiers outside the v0 catalogue, verbatim and bounded; no meaning is assigned to them. */
+	readonly unrecognized: readonly string[];
+}
+
+function isKnownCapability(id: string): id is EndophasiaRuntimeCapabilityIdV0 {
+	return Object.hasOwn(RUNTIME_CAPABILITY_VIEW, id);
+}
+
+/**
+ * Project a Runtime Profile, read defensively as unknown JSON. Each known v0 capability is advertised exactly when its
+ * identifier is listed: nothing is inferred from the runtime family, the adapter profile ID or any other service.
+ */
+export function projectRuntimeProfile(profile: unknown): RuntimeProfileView {
+	const record = isRecord(profile) ? profile : {};
+	const listed = Array.isArray(record.capabilities)
+		? record.capabilities.filter((id): id is string => typeof id === "string")
+		: [];
+	const advertised = new Set(listed.filter(isKnownCapability));
+	const unrecognized = [...new Set(listed.filter((id) => !isKnownCapability(id)))].map((id) =>
+		id.length > PROFILE_TEXT_LIMIT ? `${id.slice(0, PROFILE_TEXT_LIMIT)}…` : id,
+	);
+	const catalogue = Object.keys(RUNTIME_CAPABILITY_VIEW) as EndophasiaRuntimeCapabilityIdV0[];
+	const scope = stringField(record, "scope");
+	const schemaVersion = stringField(record, "schemaVersion");
+	return {
+		runtimeFamily: stringField(record, "runtimeFamily") ?? "not reported",
+		adapterProfileId: stringField(record, "adapterProfileId") ?? "not reported",
+		scope: scope === "session-worker-lifetime" ? "Session worker lifetime" : (scope ?? "not reported"),
+		...(schemaVersion === "runtime-profile.v0"
+			? {}
+			: { schemaNote: `Unrecognized schema version · ${schemaVersion ?? "none"}` }),
+		advertised: `${advertised.size} of ${catalogue.length} Endophasia v0 capabilities advertised`,
+		groups: RUNTIME_CAPABILITY_GROUPS.map(({ group, title, note }) => ({
+			title,
+			note,
+			rows: catalogue
+				.filter((id) => RUNTIME_CAPABILITY_VIEW[id].group === group)
+				.map((id) => ({
+					id,
+					label: RUNTIME_CAPABILITY_VIEW[id].label,
+					status: advertised.has(id) ? "advertised" : "not advertised",
+				})),
+		})),
+		unrecognized,
 	};
 }

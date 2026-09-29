@@ -25,6 +25,7 @@ import {
 	type OperationOutcomeV0,
 	type RuntimeMetricsV0,
 } from "../src/runtime-facts-service.ts";
+import { EndophasiaRuntimeProfileV0, type RuntimeProfileV0 } from "../src/runtime-profile-service.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 import {
 	EndophasiaUsageV0,
@@ -60,8 +61,17 @@ export interface EndophasiaPresentationClientV0 {
 	 */
 	readonly usage: ReplicatedState<UsageObservationV0>;
 	/**
-	 * Attach a Session and wait until its services, including the Endophasia Inspector, Mission Trace, Runtime Facts,
-	 * Usage and Continuity, hydrate. A worker missing any of them attaches degraded.
+	 * The attached Session worker's Runtime Profile: its composition's claim of a runtime family and of the exact
+	 * Endophasia v0 capabilities it advertises, fixed for that worker's lifetime. It is bound on its own, so it can
+	 * hydrate while another service leaves the attachment degraded; it is diagnostic metadata, not evidence that any
+	 * service hydrated. Pi clears every Session binding in the same turn it reports attaching, so a value seen while Pi
+	 * reports a Session attached or degraded belongs to that attachment; until Pi reports a requested change, it is still
+	 * the previous Session's.
+	 */
+	readonly runtimeProfile: ReplicatedState<RuntimeProfileV0>;
+	/**
+	 * Attach a Session and wait until its services, including the Endophasia Runtime Profile, Inspector, Mission Trace,
+	 * Runtime Facts, Usage and Continuity, hydrate. A worker missing any of them attaches degraded.
 	 */
 	attach(sessionId: string, context: Context): Promise<void>;
 	/** Detach the current Session and wait until its services are released. */
@@ -156,6 +166,8 @@ export async function openEndophasiaPresentationClientV0(
 			assertAccess() {},
 			onError,
 		});
+		// A separate binding: the profile hydrates or fails on its own, independently of the other Session services.
+		const profileServices = session.open({ services: [EndophasiaRuntimeProfileV0], assertAccess() {}, onError });
 		const management = serverServices.use(SessionManagement);
 		const inspector = sessionServices.use(EndophasiaInspectorV0);
 		const runtimeFacts = sessionServices.use(EndophasiaRuntimeFactsV0);
@@ -169,6 +181,7 @@ export async function openEndophasiaPresentationClientV0(
 			models: sessionServices.use(Models).state,
 			missionTrace: sessionServices.use(EndophasiaMissionTraceV0).state,
 			usage: usage.state,
+			runtimeProfile: profileServices.use(EndophasiaRuntimeProfileV0).state,
 			async attach(sessionId, context) {
 				await management.attach(sessionId, context);
 				await session.whenAttached(sessionId, context);
@@ -185,7 +198,11 @@ export async function openEndophasiaPresentationClientV0(
 			continuitySnapshot: (context) => continuity.snapshot(context),
 			dispose,
 		};
-		await Promise.all([serverServices.ready(BACKGROUND_CONTEXT), sessionServices.ready(BACKGROUND_CONTEXT)]);
+		await Promise.all([
+			serverServices.ready(BACKGROUND_CONTEXT),
+			sessionServices.ready(BACKGROUND_CONTEXT),
+			profileServices.ready(BACKGROUND_CONTEXT),
+		]);
 		return presentation;
 	} catch (error) {
 		try {

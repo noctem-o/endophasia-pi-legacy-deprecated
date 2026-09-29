@@ -26,6 +26,7 @@ import {
 	createSessionWorkerServices,
 	type SessionWorkerServices,
 } from "../../coding-agent/src/experimental/services/worker.ts";
+import { createEndophasiaSessionWorkerFacetsV0, PI_STANDARD_RUNTIME_PROFILE_V0 } from "../runtime/session-worker.ts";
 import {
 	captureContinuityV0,
 	captureOperationOutcomeV0,
@@ -35,13 +36,18 @@ import {
 	createEndophasiaInspectorFacetV0,
 	createEndophasiaMissionTraceFacetV0,
 	createEndophasiaRuntimeFactsFacetV0,
+	createEndophasiaRuntimeProfileFacetV0,
 	createEndophasiaUsageFacetV0,
+	ENDOPHASIA_RUNTIME_CAPABILITY_IDS_V0,
 	EndophasiaContinuityV0,
 	EndophasiaInspectorV0,
 	EndophasiaMissionTraceV0,
+	type EndophasiaRuntimeCapabilityIdV0,
 	EndophasiaRuntimeFactsV0,
+	EndophasiaRuntimeProfileV0,
 	EndophasiaUsageV0,
 	type MissionTraceObservationV0,
+	type RuntimeProfileV0,
 	readUsageLedgerV0,
 	type SessionOverviewV0,
 	type UsageObservationV0,
@@ -111,6 +117,7 @@ async function worker(
 			options.withInspector === false
 				? []
 				: [
+						createEndophasiaRuntimeProfileFacetV0(PI_STANDARD_RUNTIME_PROFILE_V0),
 						createEndophasiaInspectorFacetV0(options.observed ?? harness),
 						createEndophasiaMissionTraceFacetV0(createPiMissionTraceSourceV0(harness)),
 						createEndophasiaRuntimeFactsFacetV0({
@@ -152,6 +159,7 @@ describe("Endophasia Inspector v0 in a Session worker", () => {
 		const without = await catalogueIds(await worker(harness, { withInspector: false }));
 		const withEndophasia = await catalogueIds(await worker(harness));
 		const endophasia = [
+			EndophasiaRuntimeProfileV0.id,
 			EndophasiaInspectorV0.id,
 			EndophasiaMissionTraceV0.id,
 			EndophasiaRuntimeFactsV0.id,
@@ -163,7 +171,89 @@ describe("Endophasia Inspector v0 in a Session worker", () => {
 			expect(withEndophasia.filter((entry) => entry === id)).toHaveLength(1);
 		}
 		expect(withEndophasia.filter((id) => !without.includes(id)).sort()).toEqual(endophasia.sort());
-		expect(withEndophasia).toHaveLength(without.length + 5);
+		expect(withEndophasia).toHaveLength(without.length + 6);
+	});
+
+	it("advertises exactly the capabilities the standard composition installs, by a reviewed mapping", async () => {
+		// Reviewed by hand: each Endophasia service the standard worker installs, and the exact v0 capabilities it
+		// implements. A service gained or lost without this mapping and the profile being reviewed fails here.
+		const reviewed: Record<string, readonly EndophasiaRuntimeCapabilityIdV0[]> = {
+			[EndophasiaRuntimeProfileV0.id]: [],
+			[EndophasiaInspectorV0.id]: ["endophasia.session-overview.v0"],
+			[EndophasiaMissionTraceV0.id]: ["endophasia.mission-trace.v0"],
+			[EndophasiaRuntimeFactsV0.id]: ["endophasia.runtime-metrics.v0", "endophasia.operation-outcome.v0"],
+			[EndophasiaUsageV0.id]: ["endophasia.usage.v0"],
+			[EndophasiaContinuityV0.id]: ["endophasia.continuity.v0"],
+		};
+		const { harness } = await fixture();
+		const session = sessionOf.get(harness)!;
+		const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+		const hostFacets = await createEndophasiaSessionWorkerFacetsV0({
+			harness,
+			usageReader: { scanUsage: (query, context) => session.scanUsage(query, context) },
+		});
+		expect(hostFacets).toHaveLength(6);
+		const plain = await catalogueIds(await worker(harness, { withInspector: false }));
+		let seen: RuntimeProfileV0 | undefined;
+		const standard = await createSessionWorkerServices({
+			lane,
+			modelRuntime: undefined,
+			hostFacets,
+			facetLoader: createStaticFacetLoader([
+				defineFacet({
+					id: "@test/profile-reader",
+					setup(env) {
+						const profile = env.use(EndophasiaRuntimeProfileV0);
+						env.onActivate(() => {
+							seen = profile.state.value;
+						});
+					},
+				}),
+			]),
+			publish: async () => {},
+		});
+		workers.push(standard);
+		const added = (await catalogueIds(standard)).filter((id) => !plain.includes(id));
+		expect(added.sort()).toEqual(Object.keys(reviewed).sort());
+		const expected = ENDOPHASIA_RUNTIME_CAPABILITY_IDS_V0.filter((id) => Object.values(reviewed).flat().includes(id));
+		expect(seen).toEqual({
+			schemaVersion: "runtime-profile.v0",
+			scope: "session-worker-lifetime",
+			runtimeFamily: "pi",
+			adapterProfileId: "endophasia.pi-standard.v0",
+			capabilities: expected,
+		});
+		expect(expected).toEqual(ENDOPHASIA_RUNTIME_CAPABILITY_IDS_V0);
+	});
+
+	it("keeps one fixed Runtime Profile across plugin reloads, and gives each worker its own", async () => {
+		const { harness } = await fixture();
+		const seen: RuntimeProfileV0[] = [];
+		const read = {
+			id: "@test/profile-reloads",
+			setup(env: FacetEnvironment) {
+				const profile = env.use(EndophasiaRuntimeProfileV0);
+				env.onActivate(() => {
+					if (profile.state.value !== undefined) seen.push(profile.state.value);
+				});
+			},
+		};
+		const services = await worker(harness, { plugin: read });
+		const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+		await lane.setThinkingLevel("high", BACKGROUND_CONTEXT);
+		await services.invoke({ serviceId: SessionPlugins.id, member: "reload", args: [] }, scope, BACKGROUND_CONTEXT);
+		expect((await catalogueIds(services)).filter((id) => id === EndophasiaRuntimeProfileV0.id)).toHaveLength(1);
+		expect(seen).toHaveLength(2);
+		// The host's one state, unchanged by Pi activity and the reload.
+		expect(seen[1]).toBe(seen[0]);
+		expect(seen[0]).toEqual(PI_STANDARD_RUNTIME_PROFILE_V0);
+
+		// Another worker composition publishes its own state for its own lifetime, with an equal value.
+		const other = await worker(harness, { plugin: read });
+		expect(other).not.toBe(services);
+		expect(seen).toHaveLength(3);
+		expect(seen[2]).toEqual(seen[0]);
+		expect(seen[2]).not.toBe(seen[0]);
 	});
 
 	it("reacquires the established main lane for Runtime Facts without creating a lane or mutating Pi", async () => {

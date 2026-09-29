@@ -25,7 +25,9 @@ import {
 	EndophasiaInspectorV0,
 	EndophasiaMissionTraceV0,
 	EndophasiaRuntimeFactsV0,
+	EndophasiaRuntimeProfileV0,
 	EndophasiaUsageV0,
+	type RuntimeProfileV0,
 	type UsageObservationV0,
 } from "../src/index.ts";
 
@@ -132,6 +134,22 @@ async function recordDurableUsage(agentDir: string, sessionId: string, totals: r
 	}
 }
 
+/** Read the attached Session worker's hydrated Runtime Profile through an ordinary Pi client. */
+async function runtimeProfile(client: Client, sessionId: string): Promise<RuntimeProfileV0 | undefined> {
+	const source = createSessionServiceSource(client);
+	const services = source.open({ services: [EndophasiaRuntimeProfileV0], assertAccess() {}, onError() {} });
+	try {
+		await services.ready(BACKGROUND_CONTEXT);
+		await source.whenAttached(sessionId, BACKGROUND_CONTEXT);
+		const state = services.use(EndophasiaRuntimeProfileV0).state;
+		await expect.poll(() => state.value, { timeout: 10_000 }).toBeDefined();
+		return state.value;
+	} finally {
+		await services.dispose(BACKGROUND_CONTEXT);
+		await source.dispose(BACKGROUND_CONTEXT);
+	}
+}
+
 /** Read the attached Session's hydrated Usage observation through an ordinary Pi client. */
 async function usageObservation(client: Client, sessionId: string): Promise<UsageObservationV0 | undefined> {
 	const source = createSessionServiceSource(client);
@@ -167,6 +185,7 @@ describe("Endophasia runtime v0", () => {
 		expect(catalogue.filter((id) => id === EndophasiaRuntimeFactsV0.id)).toHaveLength(1);
 		expect(catalogue.filter((id) => id === EndophasiaUsageV0.id)).toHaveLength(1);
 		expect(catalogue.filter((id) => id === EndophasiaContinuityV0.id)).toHaveLength(1);
+		expect(catalogue.filter((id) => id === EndophasiaRuntimeProfileV0.id)).toHaveLength(1);
 		for (const service of [AgentController, Models, Transcript, SessionPlugins]) {
 			expect(catalogue).toContain(service.id);
 		}
@@ -223,7 +242,7 @@ describe("Endophasia runtime v0", () => {
 		}
 
 		// Compared with a plain Pi server's worker, the Endophasia worker adds exactly Inspector, Mission Trace, Runtime
-		// Facts, Usage and Continuity.
+		// Facts, Usage, Continuity and the Runtime Profile.
 		const plain = await startServer({ ...workerModel, directory: await temporaryDirectory("endophasia-plain-") });
 		servers.push(plain);
 		const plainCatalogue = await sessionCatalogue(await attach(plain, "plain"));
@@ -232,7 +251,8 @@ describe("Endophasia runtime v0", () => {
 		expect(plainCatalogue).not.toContain(EndophasiaRuntimeFactsV0.id);
 		expect(plainCatalogue).not.toContain(EndophasiaUsageV0.id);
 		expect(plainCatalogue).not.toContain(EndophasiaContinuityV0.id);
-		// The Endophasia worker adds exactly its five trusted host services, no more and no less.
+		expect(plainCatalogue).not.toContain(EndophasiaRuntimeProfileV0.id);
+		// The Endophasia worker adds exactly its six trusted host services, no more and no less.
 		expect(catalogue.filter((id) => !plainCatalogue.includes(id)).sort()).toEqual(
 			[
 				EndophasiaInspectorV0.id,
@@ -240,9 +260,43 @@ describe("Endophasia runtime v0", () => {
 				EndophasiaRuntimeFactsV0.id,
 				EndophasiaUsageV0.id,
 				EndophasiaContinuityV0.id,
+				EndophasiaRuntimeProfileV0.id,
 			].sort(),
 		);
 		expect(plainCatalogue.filter((id) => !catalogue.includes(id))).toEqual([]);
+	});
+
+	it("serves each worker's Runtime Profile for that worker's lifetime", async () => {
+		const server = await startEndophasiaServer({
+			...workerModel,
+			directory: await temporaryDirectory("endophasia-profile-restart-"),
+		});
+		servers.push(server);
+		const expected = {
+			schemaVersion: "runtime-profile.v0",
+			scope: "session-worker-lifetime",
+			runtimeFamily: "pi",
+			adapterProfileId: "endophasia.pi-standard.v0",
+			capabilities: [
+				"endophasia.session-overview.v0",
+				"endophasia.mission-trace.v0",
+				"endophasia.runtime-metrics.v0",
+				"endophasia.operation-outcome.v0",
+				"endophasia.usage.v0",
+				"endophasia.continuity.v0",
+			],
+		};
+		const first = await attach(server, "endophasia");
+		const firstPid = server.workerPids.get("endophasia");
+		expect(await runtimeProfile(first, "endophasia")).toEqual(expected);
+		clients.splice(clients.indexOf(first), 1);
+		await first.dispose();
+		await expect.poll(() => server.workerPids.size, { timeout: 10_000 }).toBe(0);
+
+		// A new worker process publishes its own profile: an equal claim, not a value carried over.
+		const second = await attach(server, "endophasia");
+		expect(server.workerPids.get("endophasia")).not.toBe(firstPid);
+		expect(await runtimeProfile(second, "endophasia")).toEqual(expected);
 	});
 
 	it("reseeds a new worker's Usage observation from the durable ledger, not from worker memory", async () => {
