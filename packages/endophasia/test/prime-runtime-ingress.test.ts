@@ -504,6 +504,30 @@ describe("Prime RPC connection: correlation", () => {
 		await Promise.all(sent);
 	});
 
+	it("counts the input backlog in bytes, not string length", async () => {
+		const { connection } = connect("stall", { maxInputBacklogBytes: 512 * 1024, closeTimeoutMs: 200 });
+		// 100 Ki characters, 300 KiB of UTF-8: counted by string length, five of these would fit in the backlog.
+		const payload = "界".repeat(100 * 1024);
+		const sent: Promise<unknown>[] = [];
+		let accepted = 0;
+		let refused = false;
+		for (let attempt = 0; attempt < 20 && !refused; attempt++) {
+			sent.push(
+				connection.request({ type: "prompt", message: payload }).catch((error: Error) => {
+					if (error.message.includes("backlog")) refused = true;
+				}),
+			);
+			await new Promise((done) => setImmediate(done));
+			if (!refused) accepted++;
+		}
+		expect(refused).toBe(true);
+		// A 300 KiB record fits a 512 KiB backlog once; a second would exceed it. Counted by string length (100 Ki per
+		// record), three would have been accepted.
+		expect(accepted).toBeLessThanOrEqual(2);
+		await connection.close();
+		await Promise.all(sent);
+	});
+
 	it("never settles a request with a malformed response", async () => {
 		const { connection, diagnostics } = connect("malformed-response");
 		expect(await connection.request({ type: "get_state" })).toEqual({
@@ -637,6 +661,36 @@ describe("Prime RPC connection: listeners", () => {
 		expect(log).toEqual(["command abort endophasia-1"]);
 		await response;
 		expect(log.slice(0, 3)).toEqual(["command abort endophasia-1", "event agent_start", "event message_end"]);
+	});
+
+	it("delivers command notices to every observer in write order, even when an observer writes a command", async () => {
+		const { connection } = connect("echo");
+		const first: string[] = [];
+		const last: string[] = [];
+		let nested: Promise<unknown> | undefined;
+		connection.observeCommands((command) => {
+			first.push(`${command.type} ${command.status}`);
+			// An observer that reacts to a command by writing another (as an adapter might answer with an abort).
+			if (command.type === "get_state") nested ??= connection.request({ type: "get_messages" });
+		});
+		connection.observeCommands((command) => last.push(`${command.type} ${command.status}`));
+		await connection.request({ type: "get_state" });
+		await nested;
+		expect(first).toEqual(["get_state sent", "get_messages sent"]);
+		expect(last).toEqual(["get_state sent", "get_messages sent"]);
+	});
+
+	it("reports a command whose write failed after it was announced as undelivered", async () => {
+		const { connection } = connect("close-stdin", { closeTimeoutMs: 200 });
+		await connection.request({ type: "get_state" });
+		// The fake has closed its input; the next write passes the checks, is announced, then fails with EPIPE.
+		await new Promise((done) => setTimeout(done, 100));
+		const notices: string[] = [];
+		connection.observeCommands((command) => notices.push(`${command.type} ${command.id} ${command.status}`));
+		await expect(connection.request({ type: "abort" })).rejects.toThrow("Prime RPC input failed");
+		const deadline = Date.now() + 5_000;
+		while (notices.length < 2 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 10));
+		expect(notices).toEqual(["abort endophasia-2 sent", "abort endophasia-2 undelivered"]);
 	});
 
 	it("stops delivering to an unsubscribed listener", async () => {

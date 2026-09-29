@@ -27,6 +27,11 @@ export interface PrimeRpcSentCommandV0 {
 	/** The connection's request ID; for an `extension_ui_response`, Prime's request ID it answers. */
 	readonly id: string;
 	readonly type: string;
+	/**
+	 * "sent" as the command is written to Prime's stdin, in write order. "undelivered" later, for a command already
+	 * announced as sent whose write then failed (e.g. EPIPE): Prime never received it.
+	 */
+	readonly status: "sent" | "undelivered";
 }
 
 export type PrimeRpcProtocolFaultV0 =
@@ -156,6 +161,9 @@ export class PrimeRpcConnectionV0 {
 	readonly #pending = new Map<string, Pending>();
 	readonly #events = new Set<(event: PrimeRpcEventV0) => void>();
 	readonly #commands = new Set<(command: PrimeRpcSentCommandV0) => void>();
+	/** Command notices not yet delivered to every observer, in write order (see #announce). */
+	readonly #notices: PrimeRpcSentCommandV0[] = [];
+	#announcing = false;
 	readonly #options: PrimeRpcConnectionOptionsV0;
 	#nextId = 0;
 	/**
@@ -230,7 +238,11 @@ export class PrimeRpcConnectionV0 {
 		};
 	}
 
-	/** Observe each command synchronously as it is written, before any response or later event can arrive. */
+	/**
+	 * Observe each command as it is written (`status: "sent"`), in write order and before any response or later event
+	 * can arrive, and a later `status: "undelivered"` notice if that write fails. A throwing observer is reported and
+	 * does not affect others.
+	 */
 	observeCommands(listener: (command: PrimeRpcSentCommandV0) => void): () => void {
 		this.#commands.add(listener);
 		return () => {
@@ -250,7 +262,7 @@ export class PrimeRpcConnectionV0 {
 		// Every read of the caller's object happens inside this guard: a throwing getter or Proxy trap (on `type`, on
 		// `id`, or while serializing) rejects instead of throwing. The thrown message is never quoted.
 		let type: string;
-		let record: string;
+		let record: Uint8Array;
 		// Reserved before any caller hook runs: a getter or nested toJSON may itself call request() while this command
 		// is copied or serialized, and must get its own ID. An ID whose command is never sent is simply skipped.
 		const sequence = ++this.#nextId;
@@ -281,7 +293,8 @@ export class PrimeRpcConnectionV0 {
 			if (Object.hasOwn(envelope, "toJSON")) {
 				return refuse(new PrimeRpcErrorV0("A Prime RPC command must not define toJSON"));
 			}
-			record = encodePrimeJsonlRecordV0(envelope);
+			// Written as bytes, so the stdin backlog is counted in bytes, whatever the text's encoding width.
+			record = Buffer.from(encodePrimeJsonlRecordV0(envelope), "utf8");
 		} catch {
 			return refuse(new PrimeRpcErrorV0("A Prime RPC command could not be serialized"));
 		}
@@ -312,7 +325,7 @@ export class PrimeRpcConnectionV0 {
 		answer: { readonly value: string } | { readonly confirmed: boolean } | { readonly cancelled: true },
 	): Promise<void> {
 		const type = "extension_ui_response";
-		let record: string;
+		let record: Uint8Array;
 		try {
 			if (typeof requestId !== "string" || requestId.length === 0) {
 				return Promise.reject(new PrimeRpcErrorV0("An extension UI answer needs Prime's request ID"));
@@ -329,7 +342,7 @@ export class PrimeRpcConnectionV0 {
 				(field === "confirmed" && typeof value === "boolean") ||
 				(field === "value" && typeof value === "string");
 			if (!valid) return Promise.reject(new PrimeRpcErrorV0("An extension UI answer is malformed"));
-			record = encodePrimeJsonlRecordV0({ type, id: requestId, [field]: value });
+			record = Buffer.from(encodePrimeJsonlRecordV0({ type, id: requestId, [field]: value }), "utf8");
 		} catch {
 			return Promise.reject(new PrimeRpcErrorV0("An extension UI answer could not be serialized"));
 		}
@@ -344,25 +357,50 @@ export class PrimeRpcConnectionV0 {
 	}
 
 	/** Why a record cannot be written now, if it cannot: the process is gone, closing, its input failed, or backlogged. */
-	#refuseWrite(type: string, record: string): Error | undefined {
+	#refuseWrite(type: string, record: Uint8Array): Error | undefined {
 		if (this.#exit !== undefined) return new PrimeRpcExitErrorV0(type, this.#exit);
 		if (this.#closing !== undefined)
 			return new PrimeRpcErrorV0(`Prime RPC connection is closing; ${type} was not sent`);
 		if (this.#stdinFailed) return new PrimeRpcErrorV0(`Prime RPC input failed; ${type} was not sent`);
+		// Every record is written as a Buffer, so writableLength is a byte count.
 		const backlog = this.#group.stdin?.writableLength ?? 0;
 		const maxBacklog = this.#options.maxInputBacklogBytes ?? DEFAULT_MAX_INPUT_BACKLOG_BYTES;
-		if (backlog + Buffer.byteLength(record) > maxBacklog) {
+		if (backlog + record.length > maxBacklog) {
 			return new PrimeRpcErrorV0(`Prime RPC input backlog is full; ${type} was not sent`);
 		}
 		return undefined;
 	}
 
 	/** The only stdin write: every record is announced to command observers synchronously as it is written. */
-	#write(id: string, type: string, record: string, written?: (error: Error | undefined) => void): void {
+	#write(id: string, type: string, record: Uint8Array, written?: (error: Error | undefined) => void): void {
 		const stdin = this.#group.stdin;
-		if (stdin === null) written?.(new Error("no stdin"));
-		else stdin.write(record, (error) => written?.(error ?? undefined));
-		this.#notify(this.#commands, { id, type }, "command");
+		if (stdin === null) {
+			written?.(new Error("no stdin"));
+			return;
+		}
+		stdin.write(record, (error) => {
+			if (error !== undefined && error !== null) this.#announce({ id, type, status: "undelivered" });
+			written?.(error ?? undefined);
+		});
+		this.#announce({ id, type, status: "sent" });
+	}
+
+	/**
+	 * Deliver a command notice to every observer, in write order. An observer may itself write a command (call
+	 * request()); that command's notice is queued and delivered once the current notice reached every observer, so no
+	 * observer sees a later write before an earlier one.
+	 */
+	#announce(notice: PrimeRpcSentCommandV0): void {
+		this.#notices.push(notice);
+		if (this.#announcing) return;
+		this.#announcing = true;
+		try {
+			for (let next = this.#notices.shift(); next !== undefined; next = this.#notices.shift()) {
+				this.#notify(this.#commands, next, "command");
+			}
+		} finally {
+			this.#announcing = false;
+		}
 	}
 
 	/**
