@@ -6,7 +6,7 @@ import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { EndophasiaPresentationClientV0 } from "../presentation/client.ts";
 import type { MissionTraceObservationV0 } from "../src/mission-trace-service.ts";
-import type { RuntimeMetricsV0 } from "../src/runtime-metrics.ts";
+import type { RuntimeMetricsV0 } from "../src/runtime-facts-service.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 import type { UsageObservationV0 } from "../src/usage-service.ts";
 

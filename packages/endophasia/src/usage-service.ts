@@ -1,7 +1,61 @@
 // The Usage contract only: schemas and the service handle, free of runtime reads, so presentations can bind it without
 // bundling the ledger or feed implementation. The host facet is in usage-facet.ts.
 import { type Context, defineService, type ReplicatedState } from "@earendil-works/chord";
-import type { UsageLedgerPageV0, UsageLedgerQueryV0, UsageLedgerRowV0 } from "./usage-ledger.ts";
+
+export interface UsageLedgerQueryV0 {
+	/** Return rows whose session sequence is strictly greater than this value. Default 0. */
+	afterSequence?: number;
+	/** Maximum rows in this page. Default 1000, maximum 10000. */
+	limit?: number;
+}
+
+/**
+ * One durable usage row. The ledger stores no lane, cause, operation, attempt, or timestamp on the row, so none is
+ * reported. Row details are deliberately omitted.
+ */
+export interface UsageLedgerRowV0 {
+	/** Opaque usage-row identity. */
+	id: string;
+	/**
+	 * The Session's session-global durable sequence, shared with entries and values: gaps between rows are normal.
+	 * Unrelated to Mission Trace sequence numbers.
+	 */
+	sequence: number;
+	/** True when the row was recorded as a caller adjustment (recordUsage); false says only that it was not. */
+	adjustment: boolean;
+	/** Association identifier only: not resolved, and not proof that the entry exists or of the row's cause. */
+	entryId?: string;
+	usage: {
+		input: number;
+		output: number;
+		cacheRead: number;
+		cacheWrite: number;
+		cacheWrite1h?: number;
+		reasoning?: number;
+		/** The reported value, not recomputed from components. */
+		totalTokens: number;
+		cost: {
+			input: number;
+			output: number;
+			cacheRead: number;
+			cacheWrite: number;
+			total: number;
+		};
+	};
+}
+
+/**
+ * A forward page of committed usage rows after a durable session sequence cursor.
+ * Not an atomic snapshot of the whole ledger: later commits are reached by calling again with `nextAfterSequence`.
+ */
+export interface UsageLedgerPageV0 {
+	schemaVersion: "usage-ledger.v0";
+	scope: "session";
+	order: "ascending";
+	rows: UsageLedgerRowV0[];
+	/** The last returned row's sequence, or the input afterSequence when no rows were returned. */
+	nextAfterSequence: number;
+}
 
 /**
  * Maximum number of durable usage rows retained in the replicated observation. A new or reconnecting consumer receives

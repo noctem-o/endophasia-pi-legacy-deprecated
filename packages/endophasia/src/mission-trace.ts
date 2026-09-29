@@ -1,36 +1,9 @@
+// Pi-specific: projects Pi harness lifecycle events onto the runtime-neutral Mission Trace v0 schema.
 import type { AgentHarness } from "@earendil-works/pi-agent-core";
+import type { MissionTraceEventV0 } from "./mission-trace-service.ts";
 
-interface TraceBaseV0 {
-	schemaVersion: "mission-trace.v0";
-	sequence: number;
-	lane: string;
-}
-
-interface RunTraceBaseV0 extends TraceBaseV0 {
-	runId: string;
-}
-
-interface TurnTraceBaseV0 extends RunTraceBaseV0 {
-	turnId: string;
-}
-
-interface ToolTraceBaseV0 extends TurnTraceBaseV0 {
-	toolCallId: string;
-	toolName: string;
-}
-
-export type MissionTraceEventV0 =
-	| (RunTraceBaseV0 & { kind: "mission.started" })
-	| (RunTraceBaseV0 & { kind: "mission.resumed" })
-	| (RunTraceBaseV0 & { kind: "mission.suspended" })
-	| (TurnTraceBaseV0 & { kind: "turn.started" })
-	| (RunTraceBaseV0 & { kind: "model.completed" })
-	| (ToolTraceBaseV0 & { kind: "tool.started" })
-	| (ToolTraceBaseV0 & { kind: "tool.finished"; isError: boolean })
-	| (TurnTraceBaseV0 & { kind: "turn.finished" })
-	| (RunTraceBaseV0 & { kind: "mission.completed" })
-	| (RunTraceBaseV0 & { kind: "mission.aborted" })
-	| (RunTraceBaseV0 & { kind: "mission.failed" });
+// The schema is the runtime-neutral contract's; re-exported for the modules that already import it from here.
+export type { MissionTraceEventV0 };
 
 type TraceInputV0 = MissionTraceEventV0 extends infer Event
 	? Event extends MissionTraceEventV0

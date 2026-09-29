@@ -1,62 +1,13 @@
+// Pi-specific: reads Pi's durable session usage ledger and projects its rows onto the runtime-neutral usage schema.
 import type { Context, Session, UsageRow } from "@earendil-works/pi-agent-core";
+import type { RuntimeUsageTailV0 } from "./runtime-observation.ts";
+import type { UsageLedgerPageV0, UsageLedgerQueryV0, UsageLedgerRowV0 } from "./usage-service.ts";
+
+// The schemas are the runtime-neutral contract's; re-exported for the modules that already import them from here.
+export type { UsageLedgerPageV0, UsageLedgerQueryV0, UsageLedgerRowV0 };
 
 const DEFAULT_LIMIT = 1000;
 const MAX_LIMIT = 10_000;
-
-export interface UsageLedgerQueryV0 {
-	/** Return rows whose Pi session sequence is strictly greater than this value. Default 0. */
-	afterSequence?: number;
-	/** Maximum rows in this page. Default 1000, maximum 10000. */
-	limit?: number;
-}
-
-/**
- * One durable Pi usage row. Pi stores no lane, cause, operation, attempt, or timestamp on the row,
- * so none is reported. `details` is deliberately omitted.
- */
-export interface UsageLedgerRowV0 {
-	/** Opaque Pi usage-row identity. */
-	id: string;
-	/**
-	 * Pi's session-global durable sequence, shared with entries and values: gaps between rows are normal.
-	 * Unrelated to Mission Trace sequence numbers.
-	 */
-	sequence: number;
-	/** True when the row was recorded as a caller adjustment (recordUsage); false says only that it was not. */
-	adjustment: boolean;
-	/** Association identifier only: not resolved, and not proof that the entry exists or of the row's cause. */
-	entryId?: string;
-	usage: {
-		input: number;
-		output: number;
-		cacheRead: number;
-		cacheWrite: number;
-		cacheWrite1h?: number;
-		reasoning?: number;
-		/** Pi's reported value, not recomputed from components. */
-		totalTokens: number;
-		cost: {
-			input: number;
-			output: number;
-			cacheRead: number;
-			cacheWrite: number;
-			total: number;
-		};
-	};
-}
-
-/**
- * A forward page of committed usage rows after a durable session sequence cursor.
- * Not an atomic snapshot of the whole ledger: later commits are reached by calling again with `nextAfterSequence`.
- */
-export interface UsageLedgerPageV0 {
-	schemaVersion: "usage-ledger.v0";
-	scope: "session";
-	order: "ascending";
-	rows: UsageLedgerRowV0[];
-	/** The last returned row's sequence, or the input afterSequence when no rows were returned. */
-	nextAfterSequence: number;
-}
 
 /** Package-internal: the one payload-minimal projection shared by the ledger inspector and the usage feed. */
 export function projectUsageLedgerRowV0(row: UsageRow): UsageLedgerRowV0 {
@@ -112,5 +63,24 @@ export async function readUsageLedgerV0(
 		order: "ascending",
 		rows,
 		nextAfterSequence: rows.length === 0 ? afterSequence : rows[rows.length - 1]!.sequence,
+	};
+}
+
+/**
+ * Read the latest `limit` rows of Pi's durable session usage ledger, ascending, and whether any row precedes them, from
+ * one descending read of limit + 1 rows: the whole ledger is never replayed. Read failures propagate.
+ */
+export async function readUsageLedgerTailV0(
+	session: Pick<Session, "scanUsage">,
+	limit: number,
+	context: Context,
+): Promise<RuntimeUsageTailV0> {
+	if (!Number.isSafeInteger(limit) || limit < 1 || limit >= Number.MAX_SAFE_INTEGER) {
+		throw new RangeError("Invalid usage tail limit");
+	}
+	const recent = await session.scanUsage({ order: "desc", limit: limit + 1 }, context);
+	return {
+		rows: recent.slice(0, limit).reverse().map(projectUsageLedgerRowV0),
+		hasEarlierRows: recent.length > limit,
 	};
 }

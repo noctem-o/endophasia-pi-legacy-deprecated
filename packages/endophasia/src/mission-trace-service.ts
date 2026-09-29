@@ -1,7 +1,38 @@
 import { defineFacet, defineService, type Facet, type ReplicatedState } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { AgentHarness } from "@earendil-works/pi-agent-core";
-import { type MissionTraceEventV0, observeMissionTraceV0 } from "./mission-trace.ts";
+import type { RuntimeMissionTraceSourceV0 } from "./runtime-observation.ts";
+
+interface TraceBaseV0 {
+	schemaVersion: "mission-trace.v0";
+	sequence: number;
+	lane: string;
+}
+
+interface RunTraceBaseV0 extends TraceBaseV0 {
+	runId: string;
+}
+
+interface TurnTraceBaseV0 extends RunTraceBaseV0 {
+	turnId: string;
+}
+
+interface ToolTraceBaseV0 extends TurnTraceBaseV0 {
+	toolCallId: string;
+	toolName: string;
+}
+
+export type MissionTraceEventV0 =
+	| (RunTraceBaseV0 & { kind: "mission.started" })
+	| (RunTraceBaseV0 & { kind: "mission.resumed" })
+	| (RunTraceBaseV0 & { kind: "mission.suspended" })
+	| (TurnTraceBaseV0 & { kind: "turn.started" })
+	| (RunTraceBaseV0 & { kind: "model.completed" })
+	| (ToolTraceBaseV0 & { kind: "tool.started" })
+	| (ToolTraceBaseV0 & { kind: "tool.finished"; isError: boolean })
+	| (TurnTraceBaseV0 & { kind: "turn.finished" })
+	| (RunTraceBaseV0 & { kind: "mission.completed" })
+	| (RunTraceBaseV0 & { kind: "mission.aborted" })
+	| (RunTraceBaseV0 & { kind: "mission.failed" });
 
 /**
  * Maximum number of Mission Trace events retained in the replicated observation. Every new or reconnecting consumer
@@ -39,12 +70,59 @@ export interface EndophasiaMissionTraceV0 {
 export const EndophasiaMissionTraceV0 = defineService<EndophasiaMissionTraceV0>("endophasia.mission-trace.v0");
 
 /**
- * Provide EndophasiaMissionTraceV0 from one streaming Mission Trace observer for the facet's lifetime. Nothing but the
- * replicated state's bounded trailing window is retained, so memory stays bounded however long the worker lives. The
- * host owns the authoritative state; consumers receive immutable replicated revisions. It needs only the harness event
- * bus.
+ * The event as the v0 schema defines it, field for field and in its field order: whatever else a source's object
+ * carries (a payload, a runtime-native field) never crosses the service boundary.
  */
-export function createEndophasiaMissionTraceFacetV0(harness: Pick<AgentHarness, "events">): Facet {
+function missionTraceEventV0(event: MissionTraceEventV0): MissionTraceEventV0 {
+	const { schemaVersion, sequence } = event;
+	switch (event.kind) {
+		case "turn.started":
+		case "turn.finished":
+			return {
+				kind: event.kind,
+				lane: event.lane,
+				runId: event.runId,
+				turnId: event.turnId,
+				schemaVersion,
+				sequence,
+			};
+		case "tool.started":
+			return {
+				kind: event.kind,
+				lane: event.lane,
+				runId: event.runId,
+				turnId: event.turnId,
+				toolCallId: event.toolCallId,
+				toolName: event.toolName,
+				schemaVersion,
+				sequence,
+			};
+		case "tool.finished":
+			return {
+				kind: event.kind,
+				lane: event.lane,
+				runId: event.runId,
+				turnId: event.turnId,
+				toolCallId: event.toolCallId,
+				toolName: event.toolName,
+				isError: event.isError,
+				schemaVersion,
+				sequence,
+			};
+		default:
+			return { kind: event.kind, lane: event.lane, runId: event.runId, schemaVersion, sequence };
+	}
+}
+
+/**
+ * Provide EndophasiaMissionTraceV0 from one Mission Trace source for the facet's lifetime. Nothing but the replicated
+ * state's bounded trailing window is retained, so memory stays bounded however long the worker lives. The host owns
+ * the authoritative state; consumers receive immutable replicated revisions. The facet knows nothing of how a runtime
+ * produces its lifecycle: the source delivers finished Mission Trace v0 events.
+ */
+export function createEndophasiaMissionTraceFacetV0(source: RuntimeMissionTraceSourceV0): Facet {
+	// An absent capability is never replaced by an empty trace: a runtime without one does not install this facet.
+	if (source === undefined || source === null) throw new TypeError("A Mission Trace source is required");
 	return defineFacet({
 		id: "@endophasia/mission-trace",
 		setup(env) {
@@ -55,13 +133,14 @@ export function createEndophasiaMissionTraceFacetV0(harness: Pick<AgentHarness, 
 			});
 			env.provide(EndophasiaMissionTraceV0, { state });
 			// Observe from setup, before any other worker service runs, so the trace covers the whole worker lifetime.
-			const stop = observeMissionTraceV0(harness, (event) => {
+			const stop = source.observe((event) => {
+				const retained = missionTraceEventV0(event);
 				state.change(BACKGROUND_CONTEXT, (draft) => {
 					// Dropping the oldest event and appending the newest replicates as two small splices, not the window.
 					if (draft.events.length >= MISSION_TRACE_REPLICATED_EVENT_LIMIT) {
 						draft.events.splice(0, draft.events.length - MISSION_TRACE_REPLICATED_EVENT_LIMIT + 1);
 					}
-					draft.events.push(event);
+					draft.events.push(retained);
 				});
 			});
 			env.own(stop);

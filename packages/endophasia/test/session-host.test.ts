@@ -43,6 +43,12 @@ import {
 	type SessionOverviewV0,
 	type UsageObservationV0,
 } from "../src/index.ts";
+import {
+	createPiMissionTraceSourceV0,
+	createPiOperationOutcomeSourceV0,
+	createPiRuntimeMetricsSourceV0,
+	createPiUsageSourceV0,
+} from "../src/pi-runtime-observation.ts";
 
 const sessions: Session[] = [];
 /** The Session behind each fixture harness, which a real worker pairs with it for the Usage facet. */
@@ -102,13 +108,18 @@ async function worker(
 				? []
 				: [
 						createEndophasiaInspectorFacetV0(options.observed ?? harness),
-						createEndophasiaMissionTraceFacetV0(harness),
-						createEndophasiaRuntimeFactsFacetV0(main),
-						// As the worker's host runtime provides them: events of this harness, usage reads of its Session.
-						createEndophasiaUsageFacetV0({
-							events: options.usageEvents ?? harness.events,
-							session: { scanUsage: (query, context) => session.scanUsage(query, context) },
+						createEndophasiaMissionTraceFacetV0(createPiMissionTraceSourceV0(harness)),
+						createEndophasiaRuntimeFactsFacetV0({
+							runtimeMetrics: createPiRuntimeMetricsSourceV0(main),
+							operationOutcome: createPiOperationOutcomeSourceV0(main),
 						}),
+						// As the worker's host runtime provides them: events of this harness, usage reads of its Session.
+						createEndophasiaUsageFacetV0(
+							createPiUsageSourceV0({
+								events: options.usageEvents ?? harness.events,
+								session: { scanUsage: (query, context) => session.scanUsage(query, context) },
+							}),
+						),
 					],
 		facetLoader: options.plugin === undefined ? undefined : createStaticFacetLoader([defineFacet(options.plugin)]),
 		publish: async () => {},

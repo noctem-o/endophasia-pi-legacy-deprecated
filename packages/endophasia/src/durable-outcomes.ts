@@ -1,22 +1,6 @@
-import type { AgentLane, Context, OperationResultRecord, TerminalStatus } from "@earendil-works/pi-agent-core";
-
-/**
- * Payload-minimal projection of Pi's immutable terminal result record for one operation ID.
- * It carries no lane: Pi's result lookup is keyed by operation ID only, so the lane handle used
- * for the read does not establish which lane ran the operation.
- */
-export interface OperationOutcomeV0 {
-	schemaVersion: "operation-outcome.v0";
-	operationId: string;
-	kind: OperationResultRecord["kind"];
-	status: TerminalStatus;
-	fromTipId: string | null;
-	tipId: string | null;
-	startedAt: number;
-	endedAt: number;
-	/** Pi's machine-readable error code only; message and details are never exposed. */
-	errorCode?: string;
-}
+// Pi-specific: projects Pi's immutable terminal result record onto the runtime-neutral OperationOutcomeV0 schema.
+import type { AgentLane, Context } from "@earendil-works/pi-agent-core";
+import type { OperationOutcomeV0 } from "./runtime-facts-service.ts";
 
 /**
  * Read Pi's durable terminal result for an operation ID.

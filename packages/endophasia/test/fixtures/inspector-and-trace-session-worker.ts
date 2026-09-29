@@ -7,6 +7,7 @@ import {
 import { runCodingAgentSessionWorker } from "@earendil-works/pi-coding-agent/experimental/session-worker";
 import { createEndophasiaInspectorFacetV0 } from "../../src/inspector-service.ts";
 import { createEndophasiaMissionTraceFacetV0 } from "../../src/mission-trace-service.ts";
+import { createPiMissionTraceSourceV0 } from "../../src/pi-runtime-observation.ts";
 
 if (isDirectInternalProcessEntry(import.meta.url)) {
 	const role = consumeInternalProcessRole();
@@ -14,7 +15,7 @@ if (isDirectInternalProcessEntry(import.meta.url)) {
 	void runCodingAgentSessionWorker(process.argv.slice(2), {
 		createHostFacets: ({ harness }) => [
 			createEndophasiaInspectorFacetV0(harness),
-			createEndophasiaMissionTraceFacetV0(harness),
+			createEndophasiaMissionTraceFacetV0(createPiMissionTraceSourceV0(harness)),
 		],
 	}).catch(() => process.exit(1));
 }

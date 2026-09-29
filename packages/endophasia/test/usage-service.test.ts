@@ -43,6 +43,7 @@ import {
 	type UsageLedgerRowV0,
 	type UsageObservationV0,
 } from "../src/index.ts";
+import { createPiUsageSourceV0 } from "../src/pi-runtime-observation.ts";
 import { exactUsageProvider, usage } from "./exact-usage-provider.ts";
 import { connectStrictJson, HOST_REQUEST } from "./strict-json-transport.ts";
 
@@ -128,7 +129,9 @@ async function connect(
 	binding: RemoteServiceBinding;
 	connection: ReturnType<typeof connectStrictJson>;
 }> {
-	const host = await createFacetHost({ facets: [createEndophasiaUsageFacetV0(source), ...extraFacets] });
+	const host = await createFacetHost({
+		facets: [createEndophasiaUsageFacetV0(createPiUsageSourceV0(source)), ...extraFacets],
+	});
 	cleanups.push(() => host.dispose());
 	const connection = connectStrictJson(host.services);
 	const errors: Error[] = [];
@@ -572,9 +575,9 @@ describe("Endophasia Usage v0 service", () => {
 					},
 				},
 			};
-			await expect(createFacetHost({ facets: [createEndophasiaUsageFacetV0(failing)] })).rejects.toThrow(
-				"usage ledger unavailable",
-			);
+			await expect(
+				createFacetHost({ facets: [createEndophasiaUsageFacetV0(createPiUsageSourceV0(failing))] }),
+			).rejects.toThrow("usage ledger unavailable");
 			expect(fake.listenerCount()).toBe(0);
 		});
 
@@ -590,9 +593,9 @@ describe("Endophasia Usage v0 service", () => {
 					},
 				},
 			};
-			await expect(createFacetHost({ facets: [createEndophasiaUsageFacetV0(failing)] })).rejects.toThrow(
-				"high-water read failed",
-			);
+			await expect(
+				createFacetHost({ facets: [createEndophasiaUsageFacetV0(createPiUsageSourceV0(failing))] }),
+			).rejects.toThrow("high-water read failed");
 			expect(fake.listenerCount()).toBe(0);
 		});
 

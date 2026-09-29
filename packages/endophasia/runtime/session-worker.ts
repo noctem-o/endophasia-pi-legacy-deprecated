@@ -10,31 +10,31 @@ import {
 import { runCodingAgentSessionWorker } from "@earendil-works/pi-coding-agent/experimental/session-worker";
 import { createEndophasiaInspectorFacetV0 } from "../src/inspector-service.ts";
 import { createEndophasiaMissionTraceFacetV0 } from "../src/mission-trace-service.ts";
+import { createPiRuntimeObservationSourcesV0 } from "../src/pi-runtime-observation.ts";
 import { createEndophasiaRuntimeFactsFacetV0 } from "../src/runtime-facts-service.ts";
 import { createEndophasiaUsageFacetV0 } from "../src/usage-facet.ts";
 
 /**
  * Run the standard coding-agent Session worker with the read-only Endophasia Inspector, Mission Trace, Runtime Facts and
- * Usage as trusted host facets, each given only the harness, lane or Session capability it needs.
+ * Usage as trusted host facets. This composition root is the one place that knows the worker's runtime is Pi: it
+ * builds Pi's runtime observation capabilities and gives each facet only the capability it needs.
  */
 export function runEndophasiaSessionWorker(args: readonly string[]): Promise<void> {
 	return runCodingAgentSessionWorker(args, {
 		createHostFacets: async ({ harness, usageReader }) => {
 			// The standard worker has already established the main lane, so this returns that lane without creating one.
 			const main = await harness.lane("main", BACKGROUND_CONTEXT);
+			// The worker's usage events and usage reader come from the same harness and Session, as Pi's usage feed
+			// requires.
+			const pi = createPiRuntimeObservationSourcesV0({ harness, lane: main, usageReader });
 			return [
 				createEndophasiaInspectorFacetV0(harness),
-				createEndophasiaMissionTraceFacetV0(harness),
+				createEndophasiaMissionTraceFacetV0(pi.missionTrace),
 				createEndophasiaRuntimeFactsFacetV0({
-					watch: (context) => main.watch(context),
-					getResult: (operationId, context) => main.getResult(operationId, context),
+					runtimeMetrics: pi.runtimeMetrics,
+					operationOutcome: pi.operationOutcome,
 				}),
-				// The worker's usage events and usage reader come from the same harness and Session, as the usage feed
-				// requires; the facet can subscribe to events and read usage rows, nothing more.
-				createEndophasiaUsageFacetV0({
-					events: { on: harness.events.on.bind(harness.events) },
-					session: usageReader,
-				}),
+				createEndophasiaUsageFacetV0(pi.usage),
 			];
 		},
 	});

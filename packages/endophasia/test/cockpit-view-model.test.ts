@@ -24,9 +24,9 @@ import {
 	projectVisibleTranscript,
 	USAGE_ROW_LIMIT,
 } from "../cockpit/view-model.ts";
-import type { RuntimeMetricsV0 } from "../src/runtime-metrics.ts";
+import type { RuntimeMetricsV0 } from "../src/runtime-facts-service.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
-import type { UsageLedgerRowV0 } from "../src/usage-ledger.ts";
+import type { UsageLedgerRowV0 } from "../src/usage-service.ts";
 
 const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: {} };
 
