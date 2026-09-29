@@ -138,6 +138,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const DEFAULT_DRAIN_GRACE_MS = 2_000;
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_INPUT_BACKLOG_BYTES = 16 * 1024 * 1024;
+const MAX_UNSENT_IDS = 1024;
 /** After SIGTERM, how long before SIGKILL. */
 const TERMINATE_GRACE_MS = 2_000;
 
@@ -158,6 +159,11 @@ export class PrimeRpcConnectionV0 {
 	readonly #commands = new Set<(command: PrimeRpcSentCommandV0) => void>();
 	readonly #options: PrimeRpcConnectionOptionsV0;
 	#nextId = 0;
+	/**
+	 * Reserved IDs that were never sent and could not be handed back because a re-entrant request reserved a later one
+	 * meanwhile. Only that rare case adds to it, and it is capped; see #release.
+	 */
+	readonly #unsent = new Set<number>();
 	#exit: PrimeRpcExitV0 | undefined;
 	#stdinFailed = false;
 	#stdoutOpen = true;
@@ -253,14 +259,20 @@ export class PrimeRpcConnectionV0 {
 		let record: string;
 		// Reserved before any caller hook runs: a getter or nested toJSON may itself call request() while this command
 		// is copied or serialized, and must get its own ID. An ID whose command is never sent is simply skipped.
-		const id = `endophasia-${++this.#nextId}`;
+		const sequence = ++this.#nextId;
+		const id = `endophasia-${sequence}`;
+		// A command that is not sent gives its ID back, so only IDs Prime actually received count as issued.
+		const refuse = (error: Error) => {
+			this.#release(sequence);
+			return Promise.reject(error);
+		};
 		try {
 			const declared: unknown = command.type;
 			if (typeof declared !== "string" || declared.length === 0) {
-				return Promise.reject(new PrimeRpcErrorV0("A Prime RPC command needs a type"));
+				return refuse(new PrimeRpcErrorV0("A Prime RPC command needs a type"));
 			}
 			if ("id" in command) {
-				return Promise.reject(new PrimeRpcErrorV0("Prime RPC request IDs are assigned by the connection"));
+				return refuse(new PrimeRpcErrorV0("Prime RPC request IDs are assigned by the connection"));
 			}
 			type = declared;
 			// Serialized before anything is registered, so a command that cannot be encoded (a cycle, a BigInt, a
@@ -273,14 +285,14 @@ export class PrimeRpcConnectionV0 {
 			for (const key of Object.keys(command)) if (key !== "type") envelope[key] = command[key];
 			envelope.id = id;
 			if (Object.hasOwn(envelope, "toJSON")) {
-				return Promise.reject(new PrimeRpcErrorV0("A Prime RPC command must not define toJSON"));
+				return refuse(new PrimeRpcErrorV0("A Prime RPC command must not define toJSON"));
 			}
 			record = encodePrimeJsonlRecordV0(envelope);
 		} catch {
-			return Promise.reject(new PrimeRpcErrorV0("A Prime RPC command could not be serialized"));
+			return refuse(new PrimeRpcErrorV0("A Prime RPC command could not be serialized"));
 		}
 		const refusal = this.#refuseWrite(type, record);
-		if (refusal !== undefined) return Promise.reject(refusal);
+		if (refusal !== undefined) return refuse(refusal);
 		const timeoutMs = options.timeoutMs ?? this.#options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 		const response = new Promise<PrimeRpcResponseV0>((resolve, reject) => {
 			const timer = setTimeout(() => {
@@ -545,7 +557,25 @@ export class PrimeRpcConnectionV0 {
 	/** IDs are sequential, so whether this connection issued an ID needs no per-request history. */
 	#issued(id: string): boolean {
 		const match = /^endophasia-([1-9][0-9]*)$/.exec(id);
-		return match !== null && Number(match[1]) <= this.#nextId;
+		if (match === null) return false;
+		const sequence = Number(match[1]);
+		return sequence <= this.#nextId && !this.#unsent.has(sequence);
+	}
+
+	/**
+	 * Give back a reserved ID whose command was not sent. The latest reservation is simply undone; an earlier one (a
+	 * re-entrant request reserved after it) is remembered as unsent, so a response carrying it is classified unknown.
+	 * That set only grows through re-entrant failures and is capped: past the cap the oldest entries are dropped, and a
+	 * forged response for one of those IDs would be reported as stale instead of unknown.
+	 */
+	#release(sequence: number): void {
+		if (sequence === this.#nextId) {
+			this.#nextId--;
+			while (this.#unsent.delete(this.#nextId)) this.#nextId--;
+			return;
+		}
+		this.#unsent.add(sequence);
+		if (this.#unsent.size > MAX_UNSENT_IDS) this.#unsent.delete(this.#unsent.values().next().value as number);
 	}
 
 	#diagnose(diagnostic: PrimeRpcDiagnosticV0): void {

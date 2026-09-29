@@ -160,8 +160,13 @@ export async function readPrimeRuntimeIdentityV0(
 	const [version] = versions;
 	if (versions.size !== 1 || version === undefined) throw new Error("Could not read a Prime version from --version");
 	if (installation.mode === "binary") return { version, installation };
+	// Git's own GIT_* variables (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_CONFIG_PARAMETERS...) can select another
+	// repository or rewrite configuration despite -C, so the probes run without any of them.
+	const gitEnv = Object.fromEntries(
+		Object.entries(options.env).filter(([key]) => !key.toUpperCase().startsWith("GIT_")),
+	);
 	const git = (args: readonly string[]) =>
-		run("git", ["-C", installation.root, ...args], { env: options.env, cwd: options.cwd, timeoutMs });
+		run("git", ["-C", installation.root, ...args], { env: gitEnv, cwd: options.cwd, timeoutMs });
 	// Git walks up from the root: a root that is not itself a checkout but sits inside another repository would report
 	// that ancestor's commit. Provenance is accepted only when the repository's top level is the configured root.
 	const toplevel = (await git(["rev-parse", "--show-toplevel"]))?.trim();
@@ -170,6 +175,10 @@ export async function readPrimeRuntimeIdentityV0(
 	}
 	const head = (await git(["rev-parse", "HEAD"]))?.trim();
 	const status = await git(["status", "--porcelain", "--untracked-files=no"]);
+	// HEAD is read again after the status: a checkout that moved in between would pair the old commit with the new
+	// tree's state, so a changed HEAD makes the provenance unknown.
+	const headAfter = (await git(["rev-parse", "HEAD"]))?.trim();
+	if (head !== headAfter) return { version, installation, source: { tree: "unknown" } };
 	// A SHA-1 or SHA-256 object ID: git supports both object formats.
 	const commit = head !== undefined && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head) ? head : undefined;
 	const tree =

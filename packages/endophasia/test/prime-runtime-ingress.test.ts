@@ -327,11 +327,30 @@ describe("Prime RPC connection: correlation", () => {
 		);
 		// Any orphaned timer would have rejected by now and failed the run as an unhandled rejection.
 		await new Promise((done) => setTimeout(done, 100));
-		// A command that was never sent still used its reserved ID; the next one gets a fresh ID and settles normally.
+		// A command that was never sent hands its ID back: the next one reuses it and settles normally.
 		expect(await connection.request({ type: "get_state" }, { timeoutMs: 10_000 })).toMatchObject({
-			id: "endophasia-3",
+			id: "endophasia-1",
 			success: true,
 		});
+	});
+
+	it("classifies a response for an ID that was reserved but never sent as unknown, not stale", async () => {
+		const { connection, diagnostics } = connect("forge");
+		let inner: Promise<unknown> | undefined;
+		// The outer command reserves endophasia-1, a getter sends endophasia-2, then the outer command fails to encode:
+		// endophasia-1 cannot be handed back, and was never sent.
+		const outer = connection.request({
+			type: "get_state",
+			get payload() {
+				inner ??= connection.request({ type: "get_state" });
+				return 1n;
+			},
+		});
+		await expect(outer).rejects.toThrow("A Prime RPC command could not be serialized");
+		expect(await inner).toMatchObject({ id: "endophasia-2" });
+		await connection.request({ type: "forge", target: "endophasia-1" });
+		await connection.request({ type: "forge", target: "endophasia-2" });
+		expect(faults(diagnostics)).toEqual(["unknown-response-id", "stale-response-id"]);
 	});
 
 	it("gives a request issued from inside another command's getter or toJSON its own ID", async () => {
@@ -502,7 +521,7 @@ describe("Prime RPC connection: correlation", () => {
 		);
 		await expect(connection.request({ type: "" })).rejects.toThrow("A Prime RPC command needs a type");
 		await expect(connection.request({ type: "get_state" }, { timeoutMs: 100 })).rejects.toThrow(
-			"Prime RPC get_state (endophasia-3) timed out after 100 ms",
+			"Prime RPC get_state (endophasia-1) timed out after 100 ms",
 		);
 	});
 });
@@ -998,6 +1017,81 @@ describe("Prime runtime identity", () => {
 		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
 		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
 			commit,
+			tree: "clean",
+		});
+	});
+
+	it.runIf(POSIX)("ignores GIT_* variables that would select another repository", async () => {
+		const home = temporaryDirectory("prime-git-home-");
+		const base = { PATH: process.env.PATH ?? "", HOME: home, GIT_CONFIG_NOSYSTEM: "1" };
+		const commitIn = (root: string) => {
+			const git = (...args: string[]) =>
+				execFileSync("git", ["-C", root, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+					env: base,
+					encoding: "utf8",
+				});
+			git("init", "-q");
+			writeFileSync(join(root, "file.txt"), root);
+			git("add", ".");
+			git("commit", "-q", "-m", "init");
+			return git("rev-parse", "HEAD").trim();
+		};
+		const other = temporaryDirectory("prime-other-repo-");
+		commitIn(other);
+		const prime = temporaryDirectory("prime-own-repo-");
+		writeFileSync(join(prime, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(prime, "prime-agent.sh"), 0o755);
+		const own = commitIn(prime);
+		const redirect = { ...base, GIT_DIR: join(other, ".git"), GIT_WORK_TREE: prime };
+		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: prime }, tmpdir()) as PrimeInstallationV0;
+		expect((await readPrimeRuntimeIdentityV0(installation, { env: redirect, cwd: tmpdir() })).source).toEqual({
+			commit: own,
+			tree: "clean",
+		});
+		// A root that is not a repository stays unknown even when GIT_DIR names one.
+		const plain = temporaryDirectory("prime-plain-");
+		writeFileSync(join(plain, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(plain, "prime-agent.sh"), 0o755);
+		const plainInstallation = resolvePrimeInstallationV0(
+			{ PRIME_AGENT_ROOT: plain },
+			tmpdir(),
+		) as PrimeInstallationV0;
+		const toPlain = { ...base, GIT_DIR: join(other, ".git"), GIT_WORK_TREE: plain };
+		expect((await readPrimeRuntimeIdentityV0(plainInstallation, { env: toPlain, cwd: tmpdir() })).source).toEqual({
+			tree: "unknown",
+		});
+	});
+
+	it.runIf(POSIX)("reports an unknown tree when HEAD moves while the status is read", async () => {
+		const root = temporaryDirectory("prime-moving-head-");
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(root, "prime-agent.sh"), 0o755);
+		// A stand-in git whose HEAD changes between reads, as if another process checked out a different commit.
+		const bin = temporaryDirectory("prime-fake-git-");
+		const counter = join(bin, "reads");
+		writeFileSync(
+			join(bin, "git"),
+			[
+				"#!/bin/sh",
+				'root="$2"; shift 2',
+				'if [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then echo "$root"; exit 0; fi',
+				'if [ "$1" = rev-parse ]; then',
+				'  n=$(cat "$PRIME_TEST_COUNTER" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$PRIME_TEST_COUNTER"',
+				`  if [ "$n" = 1 ]; then echo ${"a".repeat(40)}; else echo ${"b".repeat(40)}; fi; exit 0`,
+				"fi",
+				"exit 0",
+			].join("\n"),
+		);
+		chmodSync(join(bin, "git"), 0o755);
+		const env = { PATH: `${bin}:${process.env.PATH ?? ""}`, PRIME_TEST_COUNTER: counter };
+		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
+		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
+			tree: "unknown",
+		});
+		// With a stable HEAD, the same stand-in reports the commit and a clean tree.
+		writeFileSync(counter, "1");
+		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
+			commit: "b".repeat(40),
 			tree: "clean",
 		});
 	});

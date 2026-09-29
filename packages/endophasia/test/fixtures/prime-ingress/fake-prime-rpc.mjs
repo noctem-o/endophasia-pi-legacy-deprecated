@@ -92,6 +92,11 @@ function handle(command) {
 			);
 			return;
 		}
+		case "forge":
+			// A malformed peer: "forge" also answers, as get_state, the ID named in `target`; anything else is echoed.
+			if (command.type === "forge") write({ type: "response", id: command.target, command: "get_state", success: true });
+			write(respond(command));
+			return;
 		case "success-with-error":
 			write({ type: "response", id: command.id, command: command.type, success: true, error: SENTINEL.prompt });
 			write(respond(command));
