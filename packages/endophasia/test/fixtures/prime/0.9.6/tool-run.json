@@ -1,0 +1,442 @@
+{
+	"provenance": {
+		"source": "prime-agent",
+		"version": "0.9.6",
+		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
+		"artifactsHash": "376c327e06c7523ed5ea7eb16232d4f166d711fcf6a05474d6472b514107bc09",
+		"build": "clean-checkout",
+		"mode": "rpc",
+		"generatedBy": "prime-conformance-v0",
+		"probeVersion": "0.13.0",
+		"platform": "linux-x64",
+		"node": "v22.22.2",
+		"scenario": "tool-run"
+	},
+	"description": "Assistant tool call, successful tool execution, second assistant completion.",
+	"events": [
+		{
+			"type": "agent_start"
+		},
+		{
+			"type": "turn_start"
+		},
+		{
+			"type": "message_start",
+			"role": "custom"
+		},
+		{
+			"type": "message_end",
+			"role": "custom"
+		},
+		{
+			"type": "message_start",
+			"role": "user"
+		},
+		{
+			"type": "message_end",
+			"role": "user"
+		},
+		{
+			"type": "message_start",
+			"role": "assistant"
+		},
+		{
+			"type": "message_end",
+			"role": "assistant",
+			"assistant": {
+				"stopReason": "toolUse",
+				"provider": "probe-local",
+				"model": "probe-model",
+				"usage": {
+					"input": 1000,
+					"output": 60,
+					"cacheRead": 0,
+					"cacheWrite": 200,
+					"totalTokens": 1260,
+					"cost": {
+						"input": 1000,
+						"output": 120,
+						"cacheRead": 0,
+						"cacheWrite": 50,
+						"total": 1170
+					},
+					"extraKeys": []
+				},
+				"toolCalls": [
+					{
+						"id": "call_probe_1",
+						"name": "probe_tool"
+					}
+				],
+				"hasErrorMessage": false
+			}
+		},
+		{
+			"type": "tool_execution_start",
+			"toolCallId": "call_probe_1",
+			"toolName": "probe_tool"
+		},
+		{
+			"type": "tool_execution_end",
+			"toolCallId": "call_probe_1",
+			"toolName": "probe_tool",
+			"isError": false
+		},
+		{
+			"type": "message_start",
+			"role": "toolResult"
+		},
+		{
+			"type": "message_end",
+			"role": "toolResult"
+		},
+		{
+			"type": "turn_end",
+			"assistant": {
+				"stopReason": "toolUse",
+				"provider": "probe-local",
+				"model": "probe-model",
+				"usage": {
+					"input": 1000,
+					"output": 60,
+					"cacheRead": 0,
+					"cacheWrite": 200,
+					"totalTokens": 1260,
+					"cost": {
+						"input": 1000,
+						"output": 120,
+						"cacheRead": 0,
+						"cacheWrite": 50,
+						"total": 1170
+					},
+					"extraKeys": []
+				},
+				"toolCalls": [
+					{
+						"id": "call_probe_1",
+						"name": "probe_tool"
+					}
+				],
+				"hasErrorMessage": false
+			},
+			"toolResults": [
+				{
+					"toolCallId": "call_probe_1",
+					"toolName": "probe_tool",
+					"isError": false
+				}
+			]
+		},
+		{
+			"type": "turn_start"
+		},
+		{
+			"type": "message_start",
+			"role": "assistant"
+		},
+		{
+			"type": "message_end",
+			"role": "assistant",
+			"assistant": {
+				"stopReason": "stop",
+				"provider": "probe-local",
+				"model": "probe-model",
+				"usage": {
+					"input": 600,
+					"output": 30,
+					"cacheRead": 800,
+					"cacheWrite": 0,
+					"totalTokens": 1430,
+					"cost": {
+						"input": 600,
+						"output": 60,
+						"cacheRead": 400,
+						"cacheWrite": 0,
+						"total": 1060
+					},
+					"extraKeys": []
+				},
+				"toolCalls": [],
+				"hasErrorMessage": false
+			}
+		},
+		{
+			"type": "turn_end",
+			"assistant": {
+				"stopReason": "stop",
+				"provider": "probe-local",
+				"model": "probe-model",
+				"usage": {
+					"input": 600,
+					"output": 30,
+					"cacheRead": 800,
+					"cacheWrite": 0,
+					"totalTokens": 1430,
+					"cost": {
+						"input": 600,
+						"output": 60,
+						"cacheRead": 400,
+						"cacheWrite": 0,
+						"total": 1060
+					},
+					"extraKeys": []
+				},
+				"toolCalls": [],
+				"hasErrorMessage": false
+			},
+			"toolResults": []
+		},
+		{
+			"type": "agent_end",
+			"messageRoles": [
+				"custom",
+				"user",
+				"assistant",
+				"toolResult",
+				"assistant"
+			],
+			"assistantStopReasons": [
+				"toolUse",
+				"stop"
+			]
+		}
+	],
+	"abortRequestedAfter": [],
+	"commands": [
+		{
+			"command": "prompt",
+			"success": true,
+			"dataKeys": []
+		},
+		{
+			"command": "get_session_stats",
+			"success": true,
+			"dataKeys": [
+				"assistantMessages",
+				"contextUsage",
+				"cost",
+				"sessionFile",
+				"sessionId",
+				"tokens",
+				"toolCalls",
+				"toolResults",
+				"totalMessages",
+				"userMessages"
+			]
+		}
+	],
+	"stats": [
+		{
+			"label": "after",
+			"userMessages": 1,
+			"assistantMessages": 2,
+			"toolCalls": 1,
+			"toolResults": 1,
+			"totalMessages": 5,
+			"tokens": {
+				"input": 1600,
+				"output": 90,
+				"cacheRead": 800,
+				"cacheWrite": 200,
+				"total": 2690
+			},
+			"cost": 2230,
+			"contextUsageTokens": 1430,
+			"keys": [
+				"assistantMessages",
+				"contextUsage",
+				"cost",
+				"sessionFile",
+				"sessionId",
+				"tokens",
+				"toolCalls",
+				"toolResults",
+				"totalMessages",
+				"userMessages"
+			]
+		}
+	],
+	"sessionEntries": [
+		{
+			"type": "session",
+			"id": "01a0eaad-9b0f-7098-bfdd-0af09bf3282b",
+			"keys": [
+				"cwd",
+				"id",
+				"rlmDepth",
+				"timestamp",
+				"type",
+				"version"
+			]
+		},
+		{
+			"type": "model_change",
+			"id": "18e3aa15",
+			"parentId": null,
+			"keys": [
+				"id",
+				"modelId",
+				"parentId",
+				"provider",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "thinking_level_change",
+			"id": "7229dc39",
+			"parentId": "18e3aa15",
+			"keys": [
+				"id",
+				"parentId",
+				"thinkingLevel",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "service_tier_change",
+			"id": "c8552dc1",
+			"parentId": "7229dc39",
+			"keys": [
+				"id",
+				"parentId",
+				"serviceTier",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "session_state",
+			"id": "5945cbb8",
+			"parentId": "c8552dc1",
+			"keys": [
+				"id",
+				"parentId",
+				"state",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "custom_message",
+			"id": "31708939",
+			"parentId": "5945cbb8",
+			"keys": [
+				"content",
+				"customType",
+				"details",
+				"display",
+				"id",
+				"parentId",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "message",
+			"id": "95a7df1b",
+			"parentId": "31708939",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			],
+			"role": "user"
+		},
+		{
+			"type": "message",
+			"id": "f5c3bf3c",
+			"parentId": "95a7df1b",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			],
+			"role": "assistant",
+			"stopReason": "toolUse",
+			"usage": {
+				"input": 1000,
+				"output": 60,
+				"cacheRead": 0,
+				"cacheWrite": 200,
+				"totalTokens": 1260,
+				"cost": {
+					"input": 1000,
+					"output": 120,
+					"cacheRead": 0,
+					"cacheWrite": 50,
+					"total": 1170
+				},
+				"extraKeys": []
+			}
+		},
+		{
+			"type": "message",
+			"id": "f141dfea",
+			"parentId": "f5c3bf3c",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			],
+			"role": "toolResult"
+		},
+		{
+			"type": "message",
+			"id": "708c4e07",
+			"parentId": "f141dfea",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			],
+			"role": "assistant",
+			"stopReason": "stop",
+			"usage": {
+				"input": 600,
+				"output": 30,
+				"cacheRead": 800,
+				"cacheWrite": 0,
+				"totalTokens": 1430,
+				"cost": {
+					"input": 600,
+					"output": 60,
+					"cacheRead": 400,
+					"cacheWrite": 0,
+					"total": 1060
+				},
+				"extraKeys": []
+			}
+		}
+	],
+	"entrySnapshots": [],
+	"stateKeys": [
+		"autoCompactionEnabled",
+		"followUpMode",
+		"goal",
+		"isCompacting",
+		"isStreaming",
+		"messageCount",
+		"model",
+		"sessionActions",
+		"sessionFile",
+		"sessionId",
+		"steeringMode",
+		"thinkingLevel"
+	],
+	"observations": {
+		"providerRequests": 2,
+		"summaryRequests": 0
+	},
+	"protocolErrors": [],
+	"failures": []
+}

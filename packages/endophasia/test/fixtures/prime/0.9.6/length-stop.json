@@ -1,0 +1,303 @@
+{
+	"provenance": {
+		"source": "prime-agent",
+		"version": "0.9.6",
+		"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
+		"artifactsHash": "376c327e06c7523ed5ea7eb16232d4f166d711fcf6a05474d6472b514107bc09",
+		"build": "clean-checkout",
+		"mode": "rpc",
+		"generatedBy": "prime-conformance-v0",
+		"probeVersion": "0.13.0",
+		"platform": "linux-x64",
+		"node": "v22.22.2",
+		"scenario": "length-stop"
+	},
+	"description": "The assistant stops on the output-length limit.",
+	"events": [
+		{
+			"type": "agent_start"
+		},
+		{
+			"type": "turn_start"
+		},
+		{
+			"type": "message_start",
+			"role": "custom"
+		},
+		{
+			"type": "message_end",
+			"role": "custom"
+		},
+		{
+			"type": "message_start",
+			"role": "user"
+		},
+		{
+			"type": "message_end",
+			"role": "user"
+		},
+		{
+			"type": "message_start",
+			"role": "assistant"
+		},
+		{
+			"type": "message_end",
+			"role": "assistant",
+			"assistant": {
+				"stopReason": "length",
+				"provider": "probe-local",
+				"model": "probe-model",
+				"usage": {
+					"input": 400,
+					"output": 64,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 464,
+					"cost": {
+						"input": 400,
+						"output": 128,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 528
+					},
+					"extraKeys": []
+				},
+				"toolCalls": [],
+				"hasErrorMessage": false
+			}
+		},
+		{
+			"type": "turn_end",
+			"assistant": {
+				"stopReason": "length",
+				"provider": "probe-local",
+				"model": "probe-model",
+				"usage": {
+					"input": 400,
+					"output": 64,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 464,
+					"cost": {
+						"input": 400,
+						"output": 128,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 528
+					},
+					"extraKeys": []
+				},
+				"toolCalls": [],
+				"hasErrorMessage": false
+			},
+			"toolResults": []
+		},
+		{
+			"type": "agent_end",
+			"messageRoles": [
+				"custom",
+				"user",
+				"assistant"
+			],
+			"assistantStopReasons": [
+				"length"
+			]
+		}
+	],
+	"abortRequestedAfter": [],
+	"commands": [
+		{
+			"command": "prompt",
+			"success": true,
+			"dataKeys": []
+		},
+		{
+			"command": "get_session_stats",
+			"success": true,
+			"dataKeys": [
+				"assistantMessages",
+				"contextUsage",
+				"cost",
+				"sessionFile",
+				"sessionId",
+				"tokens",
+				"toolCalls",
+				"toolResults",
+				"totalMessages",
+				"userMessages"
+			]
+		}
+	],
+	"stats": [
+		{
+			"label": "after",
+			"userMessages": 1,
+			"assistantMessages": 1,
+			"toolCalls": 0,
+			"toolResults": 0,
+			"totalMessages": 3,
+			"tokens": {
+				"input": 400,
+				"output": 64,
+				"cacheRead": 0,
+				"cacheWrite": 0,
+				"total": 464
+			},
+			"cost": 528,
+			"contextUsageTokens": 464,
+			"keys": [
+				"assistantMessages",
+				"contextUsage",
+				"cost",
+				"sessionFile",
+				"sessionId",
+				"tokens",
+				"toolCalls",
+				"toolResults",
+				"totalMessages",
+				"userMessages"
+			]
+		}
+	],
+	"sessionEntries": [
+		{
+			"type": "session",
+			"id": "01a0eaae-6824-7374-9331-cd8f1c175ba3",
+			"keys": [
+				"cwd",
+				"id",
+				"rlmDepth",
+				"timestamp",
+				"type",
+				"version"
+			]
+		},
+		{
+			"type": "model_change",
+			"id": "1a88175e",
+			"parentId": null,
+			"keys": [
+				"id",
+				"modelId",
+				"parentId",
+				"provider",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "thinking_level_change",
+			"id": "ae13ec17",
+			"parentId": "1a88175e",
+			"keys": [
+				"id",
+				"parentId",
+				"thinkingLevel",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "service_tier_change",
+			"id": "985c4147",
+			"parentId": "ae13ec17",
+			"keys": [
+				"id",
+				"parentId",
+				"serviceTier",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "session_state",
+			"id": "06da5c55",
+			"parentId": "985c4147",
+			"keys": [
+				"id",
+				"parentId",
+				"state",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "custom_message",
+			"id": "05ee8a63",
+			"parentId": "06da5c55",
+			"keys": [
+				"content",
+				"customType",
+				"details",
+				"display",
+				"id",
+				"parentId",
+				"timestamp",
+				"type"
+			]
+		},
+		{
+			"type": "message",
+			"id": "a5a41805",
+			"parentId": "05ee8a63",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			],
+			"role": "user"
+		},
+		{
+			"type": "message",
+			"id": "3c1d0e53",
+			"parentId": "a5a41805",
+			"keys": [
+				"id",
+				"message",
+				"parentId",
+				"timestamp",
+				"type"
+			],
+			"role": "assistant",
+			"stopReason": "length",
+			"usage": {
+				"input": 400,
+				"output": 64,
+				"cacheRead": 0,
+				"cacheWrite": 0,
+				"totalTokens": 464,
+				"cost": {
+					"input": 400,
+					"output": 128,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"total": 528
+				},
+				"extraKeys": []
+			}
+		}
+	],
+	"entrySnapshots": [],
+	"stateKeys": [
+		"autoCompactionEnabled",
+		"followUpMode",
+		"goal",
+		"isCompacting",
+		"isStreaming",
+		"messageCount",
+		"model",
+		"sessionActions",
+		"sessionFile",
+		"sessionId",
+		"steeringMode",
+		"thinkingLevel"
+	],
+	"observations": {
+		"providerRequests": 1,
+		"summaryRequests": 0
+	},
+	"protocolErrors": [],
+	"failures": []
+}
