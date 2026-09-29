@@ -1331,14 +1331,15 @@ describe("Prime runtime identity", () => {
 			join(bin, "git"),
 			[
 				"#!/bin/sh",
-				'root="$2"; shift 2',
+				'root="$2"; shift 2; if [ "$1" = -c ]; then shift 2; fi',
 				'if [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then echo "$root"; exit 0; fi',
 				// The launcher is reported as a tracked regular file, as in a real checkout.
 				'if [ "$1" = ls-files ] && [ "$2" = -v ]; then printf "H prime-agent.sh\\000"; exit 0; fi',
 				`if [ "$1" = ls-files ]; then printf "100755 %s 0\\t%s\\n" ${"c".repeat(40)} "$4"; exit 0; fi`,
 				'if [ "$1" = rev-parse ]; then',
-				'  n=$(cat "$PRIME_TEST_COUNTER" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$PRIME_TEST_COUNTER"',
-				'  if [ "$PRIME_TEST_MODE" = always ]; then [ $((n % 2)) = 1 ] && moved=no || moved=yes; else [ "$n" = 1 ] && moved=no || moved=yes; fi',
+				`  counter=${JSON.stringify(join(bin, "reads"))}; mode=${mode}`,
+				'  n=$(cat "$counter" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$counter"',
+				'  if [ "$mode" = always ]; then [ $((n % 2)) = 1 ] && moved=no || moved=yes; else [ "$n" = 1 ] && moved=no || moved=yes; fi',
 				`  if [ "$moved" = no ]; then echo ${"a".repeat(40)}; else echo ${"b".repeat(40)}; fi; exit 0`,
 				"fi",
 				"exit 0",
@@ -1632,7 +1633,7 @@ describe("Prime runtime identity", () => {
 			join(bin, "git"),
 			[
 				"#!/bin/sh",
-				'root="$2"; shift 2',
+				'root="$2"; shift 2; if [ "$1" = -c ]; then shift 2; fi',
 				'if [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then echo "$root"; exit 0; fi',
 				// The launcher is reported as a tracked regular file, as in a real checkout.
 				'if [ "$1" = ls-files ] && [ "$2" = -v ]; then printf "H prime-agent.sh\\000"; exit 0; fi',
@@ -1649,6 +1650,35 @@ describe("Prime runtime identity", () => {
 		).toEqual({ tree: "unknown" });
 	});
 
+	it.runIf(POSIX)("runs no repository-configured fsmonitor hook, and never with Prime's credentials", async () => {
+		const root = temporaryDirectory("prime-fsmonitor-");
+		const home = temporaryDirectory("prime-git-home-");
+		const setupEnv = { PATH: process.env.PATH ?? "", HOME: home, GIT_CONFIG_NOSYSTEM: "1" };
+		const git = (...args: string[]) =>
+			execFileSync("git", ["-C", root, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+				env: setupEnv,
+				encoding: "utf8",
+			});
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(root, "prime-agent.sh"), 0o755);
+		git("init", "-q");
+		git("add", "prime-agent.sh");
+		git("commit", "-q", "-m", "init");
+		// A hook the repository configures: it records that it ran, and with which environment.
+		const marker = join(temporaryDirectory("prime-fsmonitor-marker-"), "ran");
+		const hook = join(root, ".git", "fsmonitor-hook");
+		writeFileSync(hook, `#!/bin/sh\nenv > ${JSON.stringify(marker)}\nexit 1\n`);
+		chmodSync(hook, 0o755);
+		git("config", "core.fsmonitor", hook);
+		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
+		const env = { PATH: process.env.PATH ?? "", OPENAI_API_KEY: "PROMPT_SENTINEL" };
+		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
+			commit: git("rev-parse", "HEAD").trim(),
+			tree: "clean",
+		});
+		expect(existsSync(marker)).toBe(false);
+	});
+
 	it.runIf(POSIX)("never runs a git found on the PATH given to Prime", async () => {
 		// A directory that is not a repository, and a git shim on Prime's PATH that claims it is a clean checkout.
 		const root = temporaryDirectory("prime-git-shim-");
@@ -1659,7 +1689,7 @@ describe("Prime runtime identity", () => {
 			join(bin, "git"),
 			[
 				"#!/bin/sh",
-				'root="$2"; shift 2',
+				'root="$2"; shift 2; if [ "$1" = -c ]; then shift 2; fi',
 				'if [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then echo "$root"; exit 0; fi',
 				`if [ "$1" = rev-parse ]; then echo ${"f".repeat(40)}; exit 0; fi`,
 				'if [ "$1" = ls-files ] && [ "$2" = -v ]; then printf "H prime-agent.sh\\000"; exit 0; fi',

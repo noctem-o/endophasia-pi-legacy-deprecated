@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { createReadStream } from "node:fs";
 import { access, constants, lstat, opendir, realpath } from "node:fs/promises";
+import { devNull } from "node:os";
 import { delimiter, isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import type { Readable } from "node:stream";
 import { PrimeProcessGroupV0 } from "./process-group.ts";
@@ -194,19 +195,26 @@ export async function readPrimeRuntimeIdentityV0(
 		return version;
 	};
 	if (installation.mode === "binary") return { version: await readVersion(), installation };
-	// Git's own GIT_* variables (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_CONFIG_PARAMETERS...) can select another
-	// repository or rewrite configuration despite -C, so the probes run without any of them.
-	const gitEnv = Object.fromEntries(
-		Object.entries(options.env).filter(([key]) => !key.toUpperCase().startsWith("GIT_")),
-	);
-	const gitCommand = options.gitCommand ?? (await resolveOnPath("git", process.env.PATH ?? ""));
+	// The git probes get an environment of their own, built from scratch: never Prime's, which holds provider
+	// credentials, and which a program the repository configures (core.fsmonitor, a filter driver) could read. No GIT_*
+	// variable from outside (GIT_DIR and the like select another repository despite -C); system and global git config
+	// are ignored, so only the checkout's own configuration applies, and core.fsmonitor is disabled on every probe
+	// (see gitArgs), so no repository-chosen hook runs and none can report modified files as unchanged.
+	const gitEnv: Record<string, string> = {
+		PATH: process.env.PATH ?? "",
+		GIT_CONFIG_NOSYSTEM: "1",
+		GIT_CONFIG_GLOBAL: devNull,
+		LC_ALL: "C",
+	};
+	const gitArgs = ["-C", installation.root, "-c", "core.fsmonitor=false"];
+	const gitCommand = options.gitCommand ?? (await timeLimit(resolveOnPath("git", process.env.PATH ?? ""), timeoutMs));
 	if (gitCommand === undefined) return { version: await readVersion(), installation, source: { tree: "unknown" } };
 	const git = (args: readonly string[]) =>
-		run(gitCommand, ["-C", installation.root, ...args], { env: gitEnv, cwd: options.cwd, timeoutMs });
+		run(gitCommand, [...gitArgs, ...args], { env: gitEnv, cwd: options.cwd, timeoutMs });
 	// Git walks up from the root: a root that is not itself a checkout but sits inside another repository would report
 	// that ancestor's commit. Provenance is accepted only when the repository's top level is the configured root.
 	const toplevel = (await git(["rev-parse", "--show-toplevel"]))?.trim();
-	if (toplevel === undefined || !(await sameDirectory(toplevel, installation.root))) {
+	if (toplevel === undefined || !(await timeLimit(sameDirectory(toplevel, installation.root), timeoutMs))) {
 		return { version: await readVersion(), installation, source: { tree: "unknown" } };
 	}
 	// The version and the provenance must describe one runtime. HEAD, the tracked-file status and the launcher file
@@ -217,11 +225,14 @@ export async function readPrimeRuntimeIdentityV0(
 		const status = await git(["status", "--porcelain", "--untracked-files=no"]);
 		// The launcher is what actually runs: it must be a regular file (not a symlink to code elsewhere) that git
 		// tracks, so the commit and the tracked-file status describe it. Its stat also shows a replacement mid-read.
-		const launcher = await lstat(installation.command).then(
+		// Bounded like every probe: a stalled filesystem makes the launcher unverifiable, not the read endless.
+		const launcher = await timeLimit(lstat(installation.command), timeoutMs).then(
 			(file) =>
-				file.isFile()
-					? `${file.dev}:${file.ino}:${file.size}:${file.mtimeMs}:${file.ctimeMs}`
-					: "not-a-regular-file",
+				file === undefined
+					? undefined
+					: file.isFile()
+						? `${file.dev}:${file.ino}:${file.size}:${file.mtimeMs}:${file.ctimeMs}`
+						: "not-a-regular-file",
 			() => undefined,
 		);
 		const launcherEntry = await git(["ls-files", "--stage", "--", relative(installation.root, installation.command)]);
@@ -229,7 +240,7 @@ export async function readPrimeRuntimeIdentityV0(
 		const artifactsHash = await hashBuildOutput(installation.root, Date.now() + timeoutMs);
 		// `git status` does not see modifications to entries flagged assume-unchanged or skip-worktree (or unmerged
 		// ones): every index entry must carry the plain "H" tag, or the tracked-file status proves nothing.
-		const index = await run(gitCommand, ["-C", installation.root, "ls-files", "-v", "-z"], {
+		const index = await run(gitCommand, [...gitArgs, "ls-files", "-v", "-z"], {
 			env: gitEnv,
 			cwd: options.cwd,
 			timeoutMs,
@@ -426,6 +437,20 @@ async function resolveOnPath(name: string, path: string): Promise<string | undef
 		}
 	}
 	return undefined;
+}
+
+/**
+ * `operation`, or undefined once `ms` passed: a filesystem call on a stalled mount may never settle. Rejections are
+ * passed through.
+ */
+function timeLimit<T>(operation: Promise<T>, ms: number): Promise<T | undefined> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	return Promise.race([
+		operation,
+		new Promise<undefined>((resolve) => {
+			timer = setTimeout(() => resolve(undefined), ms);
+		}),
+	]).finally(() => clearTimeout(timer));
 }
 
 async function sameDirectory(a: string, b: string): Promise<boolean> {
