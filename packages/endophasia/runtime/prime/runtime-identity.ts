@@ -1,7 +1,7 @@
 // Prime RPC Runtime Ingress v0: which Prime is running. This is runtime identity, not conformance certification: it
 // records what can be known (the reported version, how Prime is installed, a source checkout's commit and tree state)
 // and claims nothing more. A Prime semantic adapter decides whether an identity belongs to a profile it supports.
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { isAbsolute, join, resolve, win32 } from "node:path";
 
@@ -52,8 +52,15 @@ export function resolvePrimeInstallationV0(
  * A semver version standing alone as a whitespace-delimited word (optionally prefixed with "v"), so a version-like
  * segment of a path such as /opt/prime/1.2.3 is never taken for one. Prime 0.9.6 prints the bare version.
  */
-const VERSION = /(?<![^\s])v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*)(?![^\s])/;
+const VERSION = /(?<![^\s])v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*)(?![^\s])/g;
+/** Output beyond this is not a version report; the command is stopped and nothing is read from it. */
+const MAX_OUTPUT_BYTES = 64 * 1024;
 
+/**
+ * Run a short command with exactly the given environment and return its output on exit code 0. Bounded: at the
+ * timeout (or past MAX_OUTPUT_BYTES) its process group is sent SIGKILL and the result is undefined at once, without
+ * waiting for a process that ignores signals or a descendant that holds the pipes open.
+ */
 function run(
 	command: string,
 	args: readonly string[],
@@ -66,13 +73,54 @@ function run(
 	},
 ): Promise<string | undefined> {
 	return new Promise((done) => {
-		execFile(
-			command,
-			[...args],
-			{ env: { ...options.env }, cwd: options.cwd, timeout: options.timeoutMs, encoding: "utf8", windowsHide: true },
-			(error, stdout, stderr) =>
-				done(error !== null ? undefined : options.withStderr === true ? `${stdout} ${stderr}` : stdout),
-		);
+		const group = process.platform !== "win32";
+		const child = spawn(command, [...args], {
+			env: { ...options.env },
+			cwd: options.cwd,
+			stdio: ["ignore", "pipe", options.withStderr === true ? "pipe" : "ignore"],
+			detached: group,
+			windowsHide: true,
+		});
+		// Kept per stream and joined with a newline, so the two streams never run together into one word.
+		const streams: [Buffer[], Buffer[]] = [[], []];
+		let length = 0;
+		let settled = false;
+		const finish = (output: string | undefined) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			done(output);
+		};
+		const stop = () => {
+			try {
+				if (group && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+				else child.kill("SIGKILL");
+			} catch {
+				// Already gone.
+			}
+			child.stdout?.destroy();
+			child.stderr?.destroy();
+			finish(undefined);
+		};
+		const timer = setTimeout(stop, options.timeoutMs);
+		const collect = (into: Buffer[]) => (chunk: Buffer) => {
+			length += chunk.length;
+			if (length > MAX_OUTPUT_BYTES) stop();
+			else into.push(chunk);
+		};
+		child.stdout?.on("data", collect(streams[0]));
+		child.stderr?.on("data", collect(streams[1]));
+		child.on("error", () => finish(undefined));
+		child.on("close", (code) => {
+			let output: string | undefined;
+			try {
+				const decoder = new TextDecoder("utf-8", { fatal: true });
+				output = code === 0 ? streams.map((chunks) => decoder.decode(Buffer.concat(chunks))).join("\n") : undefined;
+			} catch {
+				output = undefined;
+			}
+			finish(output);
+		});
 	});
 }
 
@@ -90,8 +138,10 @@ export async function readPrimeRuntimeIdentityV0(
 		timeoutMs,
 		withStderr: true,
 	});
-	const version = output === undefined ? undefined : VERSION.exec(output)?.[1];
-	if (version === undefined) throw new Error("Could not read a Prime version from --version");
+	// Exactly one distinct version: output that also names another (e.g. a launcher's Node version) is ambiguous.
+	const versions = new Set(output === undefined ? [] : [...output.matchAll(VERSION)].map((match) => match[1]));
+	const [version] = versions;
+	if (versions.size !== 1 || version === undefined) throw new Error("Could not read a Prime version from --version");
 	if (installation.mode === "binary") return { version, installation };
 	const git = (args: readonly string[]) =>
 		run("git", ["-C", installation.root, ...args], { env: options.env, cwd: options.cwd, timeoutMs });

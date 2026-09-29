@@ -130,6 +130,35 @@ describe("Prime JSONL framing", () => {
 	});
 });
 
+describe("Prime JSONL framing: large and oversized records", () => {
+	it("decodes a large record split over many chunks", () => {
+		const text = "é".repeat(512 * 1024);
+		const record = bytes(`${JSON.stringify({ type: "big", text })}\n`);
+		const chunks: Uint8Array[] = [];
+		for (let start = 0; start < record.length; start += 4096) chunks.push(record.subarray(start, start + 4096));
+		expect(decodeAll(chunks)).toEqual([{ kind: "object", value: { type: "big", text } }]);
+	});
+
+	it("skips a record over the bound up to its LF and keeps decoding", () => {
+		const oversized = bytes('{"type":"aaaaaaaaaaaaaaaaaaaaaaaa"}\n{"type":"b"}\n');
+		const expected = [
+			{ kind: "fault", fault: "oversized-record", byteLength: 35 },
+			{ kind: "object", value: { type: "b" } },
+		];
+		for (const size of [1, 3, 7, oversized.length]) {
+			const decoder = new PrimeJsonlDecoderV0({ maxRecordBytes: 16 });
+			const records: PrimeJsonlRecordV0[] = [];
+			for (let start = 0; start < oversized.length; start += size) {
+				records.push(...decoder.push(oversized.subarray(start, start + size)));
+			}
+			expect([...records, ...decoder.end()]).toEqual(expected);
+		}
+		const decoder = new PrimeJsonlDecoderV0({ maxRecordBytes: 16 });
+		expect(decoder.push(bytes('{"type":"aaaaaaaaaaaaaaaaaaaaaaaa"'))).toEqual([]);
+		expect(decoder.end()).toEqual([{ kind: "fault", fault: "oversized-record", byteLength: 34 }]);
+	});
+});
+
 describe("Prime JSONL framing is no weaker than the research probe's", () => {
 	const corpus: readonly Uint8Array[] = [
 		bytes('{"type":"a"}\n'),
@@ -256,10 +285,10 @@ describe("Prime RPC connection: correlation", () => {
 		const circular: Record<string, unknown> = { type: "prompt" };
 		circular.self = circular;
 		await expect(connection.request(circular as { type: string })).rejects.toThrow(
-			"Prime RPC prompt could not be serialized",
+			"A Prime RPC command could not be serialized",
 		);
 		await expect(connection.request({ type: "prompt", n: 1n })).rejects.toThrow(
-			"Prime RPC prompt could not be serialized",
+			"A Prime RPC command could not be serialized",
 		);
 		// Any orphaned timer would have rejected by now and failed the run as an unhandled rejection.
 		await new Promise((done) => setTimeout(done, 100));
@@ -284,6 +313,65 @@ describe("Prime RPC connection: correlation", () => {
 		expect(error).toBeInstanceOf(PrimeRpcErrorV0);
 		expect((error as Error).message).toBe("Prime RPC response endophasia-1 does not echo get_state");
 		expect(faults(diagnostics)).toEqual(["command-mismatch"]);
+	});
+
+	it("rejects instead of throwing when reading the command itself throws", async () => {
+		const { connection } = connect("echo");
+		const throwingType = {
+			get type(): string {
+				throw new Error("PROMPT_SENTINEL");
+			},
+		};
+		const error = await connection.request(throwingType).catch((caught: unknown) => caught);
+		expect((error as Error).message).toBe("A Prime RPC command could not be serialized");
+		const hostile = new Proxy(
+			{ type: "prompt" },
+			{
+				has() {
+					throw new Error("PROMPT_SENTINEL");
+				},
+			},
+		);
+		await expect(connection.request(hostile)).rejects.toThrow("A Prime RPC command could not be serialized");
+		// `type` is read once and pinned: a getter answering differently later cannot change what is sent.
+		let reads = 0;
+		const shifting = {
+			get type(): string {
+				reads++;
+				return reads === 1 ? "get_state" : "prompt";
+			},
+		};
+		expect(await connection.request(shifting)).toMatchObject({ command: "get_state", data: { echoed: "get_state" } });
+	});
+
+	it("treats an error on a successful response as malformed, never delivering its text", async () => {
+		const { connection, diagnostics } = connect("success-with-error");
+		expect(await connection.request({ type: "get_state" })).toEqual({
+			id: "endophasia-1",
+			command: "get_state",
+			success: true,
+		});
+		expect(faults(diagnostics)).toEqual(["malformed-response"]);
+		expect(JSON.stringify(diagnostics)).not.toMatch(SENTINEL);
+	});
+
+	it("bounds the input backlog when Prime stops reading, rejecting new requests unsent", async () => {
+		const { connection } = connect("stall", { maxInputBacklogBytes: 256 * 1024, closeTimeoutMs: 200 });
+		const payload = "x".repeat(100 * 1024);
+		const sent: Promise<unknown>[] = [];
+		let refused: Error | undefined;
+		for (let attempt = 0; attempt < 50 && refused === undefined; attempt++) {
+			// Requests that were written stay pending until close, where they reject; only a refusal is recorded.
+			sent.push(
+				connection.request({ type: "prompt", message: payload }).catch((error: Error) => {
+					if (error.message.includes("backlog")) refused = error;
+				}),
+			);
+			await new Promise((done) => setImmediate(done));
+		}
+		expect(refused?.message).toBe("Prime RPC input backlog is full; prompt was not sent");
+		await connection.close();
+		await Promise.all(sent);
 	});
 
 	it("never settles a request with a malformed response", async () => {
@@ -591,12 +679,14 @@ describe("Prime runtime identity", () => {
 		});
 	});
 
-	function versionScript(output: string, stream: "stdout" | "stderr" = "stdout"): PrimeInstallationV0 {
+	function scriptInstallation(source: string): PrimeInstallationV0 {
 		const directory = temporaryDirectory("prime-identity-");
 		const script = join(directory, "version.mjs");
-		writeFileSync(script, `process.${stream}.write(${JSON.stringify(output)});\n`);
+		writeFileSync(script, source);
 		return { mode: "binary", command: process.execPath, leadingArgs: [script] };
 	}
+	const versionScript = (output: string, stream: "stdout" | "stderr" = "stdout") =>
+		scriptInstallation(`process.${stream}.write(${JSON.stringify(output)});\n`);
 	const options = { env: { PATH: process.env.PATH ?? "" }, cwd: tmpdir() };
 
 	it("reads a binary's version and claims no source commit", async () => {
@@ -610,6 +700,38 @@ describe("Prime runtime identity", () => {
 		expect((await readPrimeRuntimeIdentityV0(versionScript("/opt/prime-1.2.3/bin 0.9.6\n"), options)).version).toBe(
 			"0.9.6",
 		);
+	});
+
+	it("rejects output that names more than one version, and accepts one version on both streams", async () => {
+		await expect(readPrimeRuntimeIdentityV0(versionScript("node v20.1.0\n0.9.6\n"), options)).rejects.toThrow(
+			"Could not read a Prime version from --version",
+		);
+		const both = scriptInstallation('process.stdout.write("0.9.6");\nprocess.stderr.write("0.9.6\\n");\n');
+		expect((await readPrimeRuntimeIdentityV0(both, options)).version).toBe("0.9.6");
+		// The streams are never glued into one word.
+		const glued = scriptInstallation('process.stdout.write("0.9.6");\nprocess.stderr.write("x");\n');
+		expect((await readPrimeRuntimeIdentityV0(glued, options)).version).toBe("0.9.6");
+	});
+
+	it("bounds --version when it ignores SIGTERM or a descendant holds its output open", async () => {
+		const stubborn = scriptInstallation("process.on('SIGTERM', () => {});\nsetInterval(() => {}, 1000);\n");
+		let started = Date.now();
+		await expect(readPrimeRuntimeIdentityV0(stubborn, { ...options, timeoutMs: 300 })).rejects.toThrow(
+			"Could not read a Prime version from --version",
+		);
+		expect(Date.now() - started).toBeLessThan(5_000);
+		const holder = scriptInstallation(
+			[
+				'import { spawn } from "node:child_process";',
+				'spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: ["ignore", "inherit", "ignore"] });',
+				'process.stdout.write("0.9.6\\n");',
+			].join("\n"),
+		);
+		started = Date.now();
+		await expect(readPrimeRuntimeIdentityV0(holder, { ...options, timeoutMs: 500 })).rejects.toThrow(
+			"Could not read a Prime version from --version",
+		);
+		expect(Date.now() - started).toBeLessThan(5_000);
 	});
 
 	it("rejects when no version can be read", async () => {

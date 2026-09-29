@@ -96,6 +96,13 @@ export interface PrimeRpcConnectionOptionsV0 {
 	readonly drainGraceMs?: number;
 	/** How long close() waits for a voluntary exit after ending stdin, before SIGTERM and then SIGKILL. Default 10 s. */
 	readonly closeTimeoutMs?: number;
+	/** Largest record accepted from Prime; a longer one is skipped as `oversized-record`. Default 64 MiB. */
+	readonly maxRecordBytes?: number;
+	/**
+	 * Most command bytes buffered for Prime's stdin while Prime reads slowly. A request that would exceed it is rejected
+	 * unsent, so a stalled reader cannot grow the queue without bound. Default 16 MiB.
+	 */
+	readonly maxInputBacklogBytes?: number;
 	readonly onDiagnostic?: (diagnostic: PrimeRpcDiagnosticV0) => void;
 }
 
@@ -128,6 +135,7 @@ interface Pending {
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const DEFAULT_DRAIN_GRACE_MS = 2_000;
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000;
+const DEFAULT_MAX_INPUT_BACKLOG_BYTES = 16 * 1024 * 1024;
 /** After SIGTERM, how long before SIGKILL. */
 const TERMINATE_GRACE_MS = 2_000;
 
@@ -142,7 +150,7 @@ export class PrimeRpcConnectionV0 {
 	readonly terminated: Promise<PrimeRpcTerminationV0>;
 
 	readonly #child: ChildProcess;
-	readonly #decoder = new PrimeJsonlDecoderV0();
+	readonly #decoder: PrimeJsonlDecoderV0;
 	readonly #pending = new Map<string, Pending>();
 	readonly #events = new Set<(event: PrimeRpcEventV0) => void>();
 	readonly #commands = new Set<(command: PrimeRpcSentCommandV0) => void>();
@@ -157,6 +165,9 @@ export class PrimeRpcConnectionV0 {
 
 	constructor(options: PrimeRpcConnectionOptionsV0) {
 		this.#options = options;
+		this.#decoder = new PrimeJsonlDecoderV0(
+			options.maxRecordBytes === undefined ? {} : { maxRecordBytes: options.maxRecordBytes },
+		);
 		this.exited = new Promise((resolve) => {
 			this.#resolveExited = resolve;
 		});
@@ -224,39 +235,50 @@ export class PrimeRpcConnectionV0 {
 		command: { readonly type: string } & Record<string, unknown>,
 		options: { readonly timeoutMs?: number } = {},
 	): Promise<PrimeRpcResponseV0> {
-		if (typeof command.type !== "string" || command.type.length === 0) {
-			return Promise.reject(new PrimeRpcErrorV0("A Prime RPC command needs a type"));
+		// Every read of the caller's object happens inside this guard: a throwing getter or Proxy trap (on `type`, on
+		// `id`, or while serializing) rejects instead of throwing. The thrown message is never quoted.
+		let type: string;
+		let record: string;
+		const id = `endophasia-${this.#nextId + 1}`;
+		try {
+			const declared: unknown = command.type;
+			if (typeof declared !== "string" || declared.length === 0) {
+				return Promise.reject(new PrimeRpcErrorV0("A Prime RPC command needs a type"));
+			}
+			if ("id" in command) {
+				return Promise.reject(new PrimeRpcErrorV0("Prime RPC request IDs are assigned by the connection"));
+			}
+			type = declared;
+			// Serialized before anything is registered, so a command that cannot be encoded (a cycle, a BigInt, a
+			// throwing getter) leaves no pending entry or timer behind. `type` is pinned to the value that was checked.
+			record = encodePrimeJsonlRecordV0({ ...command, type, id });
+		} catch {
+			return Promise.reject(new PrimeRpcErrorV0("A Prime RPC command could not be serialized"));
 		}
-		if ("id" in command)
-			return Promise.reject(new PrimeRpcErrorV0("Prime RPC request IDs are assigned by the connection"));
-		if (this.#exit !== undefined) return Promise.reject(new PrimeRpcExitErrorV0(command.type, this.#exit));
+		if (this.#exit !== undefined) return Promise.reject(new PrimeRpcExitErrorV0(type, this.#exit));
 		if (this.#closing !== undefined) {
-			return Promise.reject(new PrimeRpcErrorV0(`Prime RPC connection is closing; ${command.type} was not sent`));
+			return Promise.reject(new PrimeRpcErrorV0(`Prime RPC connection is closing; ${type} was not sent`));
 		}
 		if (this.#stdinFailed) {
-			return Promise.reject(new PrimeRpcErrorV0(`Prime RPC input failed; ${command.type} was not sent`));
+			return Promise.reject(new PrimeRpcErrorV0(`Prime RPC input failed; ${type} was not sent`));
 		}
-		const id = `endophasia-${this.#nextId + 1}`;
-		// Serialize before anything is registered: a command that cannot be encoded (a cycle, a BigInt, a throwing
-		// getter) leaves no pending entry or timer behind. The thrown message is not quoted: it may name payload values.
-		let record: string;
-		try {
-			record = encodePrimeJsonlRecordV0({ ...command, id });
-		} catch {
-			return Promise.reject(new PrimeRpcErrorV0(`Prime RPC ${command.type} could not be serialized`));
+		const backlog = this.#child.stdin?.writableLength ?? 0;
+		const maxBacklog = this.#options.maxInputBacklogBytes ?? DEFAULT_MAX_INPUT_BACKLOG_BYTES;
+		if (backlog + Buffer.byteLength(record) > maxBacklog) {
+			return Promise.reject(new PrimeRpcErrorV0(`Prime RPC input backlog is full; ${type} was not sent`));
 		}
 		this.#nextId++;
 		const timeoutMs = options.timeoutMs ?? this.#options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 		const response = new Promise<PrimeRpcResponseV0>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.#pending.delete(id);
-				// A late response for this ID is then reported as unknown, never delivered to anyone.
-				reject(new PrimeRpcErrorV0(`Prime RPC ${command.type} (${id}) timed out after ${timeoutMs} ms`));
+				// A late response for this ID is then reported as stale, never delivered to anyone.
+				reject(new PrimeRpcErrorV0(`Prime RPC ${type} (${id}) timed out after ${timeoutMs} ms`));
 			}, timeoutMs);
-			this.#pending.set(id, { command: command.type, resolve, reject, timer });
+			this.#pending.set(id, { command: type, resolve, reject, timer });
 		});
 		this.#child.stdin?.write(record);
-		this.#notify(this.#commands, { id, type: command.type }, "command");
+		this.#notify(this.#commands, { id, type }, "command");
 		return response;
 	}
 
@@ -393,7 +415,8 @@ export class PrimeRpcConnectionV0 {
 			typeof success !== "boolean" ||
 			(id !== undefined && (typeof id !== "string" || id.length === 0)) ||
 			(error !== undefined && typeof error !== "string") ||
-			(success === false && error === undefined)
+			// `error` is present exactly on a refusal: a success carrying one is not a response this contract admits.
+			(success === false) !== (error !== undefined)
 		) {
 			this.#fault("malformed-response");
 			return;

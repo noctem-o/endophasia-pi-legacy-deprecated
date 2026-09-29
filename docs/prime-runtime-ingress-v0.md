@@ -51,7 +51,7 @@ A production substrate built on the same transport can be checked against that e
 - **Unchanged here.** The research code, its fixtures and its findings are unchanged. Production code copies the probe's framing rules and does not import them. Differential tests hold production to the research decoder instead.
 
 `readPrimeRuntimeIdentityV0` records which Prime is running:
-- the version from `--version`: a semver string standing alone as a word (optionally `v`-prefixed), so a versioned path such as `/opt/prime/1.2.3` is never read as a version;
+- the version from `--version`: a semver string standing alone as a word (optionally `v`-prefixed), so a versioned path such as `/opt/prime/1.2.3` is never read as a version. The output must name exactly one distinct version (a launcher that also prints its Node version is ambiguous and rejected). `--version` and the git reads are bounded: at the timeout the process group is killed and the read fails, even if the command ignores SIGTERM or a descendant holds its output open;
 - whether Prime is a standalone binary (`PRIME_AGENT_BIN`) or a source checkout (`PRIME_AGENT_ROOT`, launched through `prime-agent.sh`);
 - for a source checkout, the HEAD commit and whether tracked files are modified. The result is `clean`, `dirty` or `unknown`; untracked files do not count. Provenance is accepted only when git's top level is the configured root itself: a root that merely sits inside another repository reports `unknown`, never the ancestor's commit.
 
@@ -76,7 +76,8 @@ ACP is excluded for the reason in section 2.
 **Framing** (`PrimeJsonlDecoderV0`):
 - Bytes are split on LF only; readline is never used. U+2028 and U+2029 inside JSON strings stay part of the record.
 - One trailing CR is stripped. A lone CR is not a separator.
-- UTF-8 split across chunks, including inside a code point, is reassembled.
+- UTF-8 split across chunks, including inside a code point, is reassembled. An incomplete record is kept as a list of chunks and joined once at its LF, so a large record split over many chunks is not recopied per chunk.
+- A record longer than `maxRecordBytes` (default 64 MiB) is discarded up to its LF and reported as `oversized-record`; decoding continues with the next record.
 - Each record is decoded with a fatal UTF-8 decoder. Malformed bytes, overlong encodings, lone surrogates and a truncated final code point are faults. They are never turned into U+FFFD.
 - A record must be exactly one JSON object. A blank line, malformed JSON, an array, `null` or a scalar is a fault.
 - A final record without an LF is still decoded at end of stream.
@@ -84,7 +85,8 @@ ACP is excluded for the reason in section 2.
 
 **Correlation** (`PrimeRpcConnectionV0.request`):
 - The connection assigns unique IDs (`endophasia-N`). A command that carries its own `id` is rejected.
-- A command is serialized before anything is registered. One that cannot be encoded (a cycle, a `BigInt`, a throwing getter) is rejected with no pending entry or timer left behind.
+- A command is read and serialized before anything is registered. One that cannot be read or encoded (a cycle, a `BigInt`, a throwing getter or Proxy trap, including on `type`) is rejected, never thrown, with no pending entry or timer left behind. `type` is read once and the checked value is what is sent.
+- Commands buffered for a slow reader are bounded by `maxInputBacklogBytes` (default 16 MiB): a request that would exceed it is rejected unsent.
 - A response settles its request at most once:
   - a response for an ID this connection issued whose request already settled (answered, rejected or timed out) is a `stale-response-id` fault. IDs are sequential, so this needs no per-request history;
   - any other ID is `unknown-response-id`;
@@ -92,7 +94,7 @@ ACP is excluded for the reason in section 2.
 - A response must have:
   - a non-empty `command` string;
   - a boolean `success`;
-  - a string `error` whenever `success` is false.
+  - a string `error` exactly when `success` is false. A success carrying an `error` is malformed, so refusal text never arrives through a successful response.
 
   Anything else is a `malformed-response` fault and never settles a request.
 - A response whose `command` differs from the request's rejects that request. The caller would otherwise receive another command's data shape.
@@ -226,11 +228,14 @@ A later Prime semantic adapter builds on `PrimeRpcConnectionV0` and `readPrimeRu
   - U+2028 and U+2029;
   - CRLF and a lone CR;
   - a partial final record;
-  - blank lines, malformed JSON, malformed UTF-8 and non-objects.
+  - blank lines, malformed JSON, malformed UTF-8 and non-objects;
+  - a large record over many chunks, and oversized records.
 - **Differential framing:** the production decoder against the research decoder.
 - **Correlation:**
   - duplicate, stale (after a timeout), unknown and missing response IDs;
-  - commands that cannot be serialized;
+  - commands that cannot be read or serialized, and `type` pinning;
+  - an `error` on a successful response;
+  - a bounded input backlog when Prime stops reading;
   - a wrong echoed command and malformed responses;
   - out-of-order responses, refusals and timeouts.
 - **Events:**
@@ -249,7 +254,8 @@ A later Prime semantic adapter builds on `PrimeRpcConnectionV0` and `readPrimeRu
   - privacy sentinels absent from diagnostics and errors.
 - **Identity:**
   - resolution precedence;
-  - version parsing from stdout or stderr, and rejection of versioned paths;
+  - version parsing from stdout or stderr, and rejection of versioned paths and of output naming more than one version;
+  - a bounded `--version` that ignores SIGTERM or leaves a descendant holding its output;
   - binary without a source commit;
   - a checkout's commit and clean, dirty or unknown tree, and never an enclosing repository's commit.
 - **Import-graph guards.**

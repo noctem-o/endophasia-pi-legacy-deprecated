@@ -11,7 +11,8 @@ const respond = (command, extra = {}) => ({ type: "response", id: command.id, co
 
 let buffer = "";
 process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
+// "stall" never reads its input, so the pipe fills and the connection's writes back up.
+process.stdin.on(mode === "stall" ? "end" : "data", (chunk = "") => {
 	buffer += chunk;
 	let newline = buffer.indexOf("\n");
 	while (newline !== -1) {
@@ -21,7 +22,10 @@ process.stdin.on("data", (chunk) => {
 		newline = buffer.indexOf("\n");
 	}
 });
-const lingers = ["ignore-stdin-end", "ignore-sigterm", "close-stdin", "descendant-ignores-sigterm"].includes(mode);
+const lingers = ["ignore-stdin-end", "ignore-sigterm", "close-stdin", "descendant-ignores-sigterm", "stall"].includes(
+	mode,
+);
+if (mode === "stall") process.stdin.pause();
 process.stdin.on("end", () => {
 	if (lingers) return;
 	process.exit(0);
@@ -63,6 +67,10 @@ function handle(command) {
 			return;
 		case "wrong-command":
 			write(respond(command, { command: "get_messages" }));
+			return;
+		case "success-with-error":
+			write({ type: "response", id: command.id, command: command.type, success: true, error: SENTINEL.prompt });
+			write(respond(command));
 			return;
 		case "malformed-response":
 			write({ type: "response", id: command.id, command: command.type });
