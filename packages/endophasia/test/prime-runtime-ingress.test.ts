@@ -327,10 +327,36 @@ describe("Prime RPC connection: correlation", () => {
 		);
 		// Any orphaned timer would have rejected by now and failed the run as an unhandled rejection.
 		await new Promise((done) => setTimeout(done, 100));
-		// The ID sequence is not consumed by a command that was never sent.
+		// A command that was never sent still used its reserved ID; the next one gets a fresh ID and settles normally.
 		expect(await connection.request({ type: "get_state" }, { timeoutMs: 10_000 })).toMatchObject({
-			id: "endophasia-1",
+			id: "endophasia-3",
+			success: true,
 		});
+	});
+
+	it("gives a request issued from inside another command's getter or toJSON its own ID", async () => {
+		const { connection } = connect("echo");
+		let fromGetter: Promise<unknown> | undefined;
+		let fromToJson: Promise<unknown> | undefined;
+		const outer = connection.request({
+			type: "get_state",
+			get payload() {
+				fromGetter ??= connection.request({ type: "get_messages" });
+				return {
+					toJSON: () => {
+						fromToJson ??= connection.request({ type: "get_session_stats" });
+						return 1;
+					},
+				};
+			},
+		});
+		const responses = (await Promise.all([outer, fromGetter, fromToJson])) as { id: string; data: unknown }[];
+		expect(responses.map((response) => response.data)).toEqual([
+			{ echoed: "get_state" },
+			{ echoed: "get_messages" },
+			{ echoed: "get_session_stats" },
+		]);
+		expect(new Set(responses.map((response) => response.id)).size).toBe(3);
 	});
 
 	it("reports an unknown response ID and a response without an ID, and delivers neither", async () => {
@@ -476,7 +502,7 @@ describe("Prime RPC connection: correlation", () => {
 		);
 		await expect(connection.request({ type: "" })).rejects.toThrow("A Prime RPC command needs a type");
 		await expect(connection.request({ type: "get_state" }, { timeoutMs: 100 })).rejects.toThrow(
-			"Prime RPC get_state (endophasia-1) timed out after 100 ms",
+			"Prime RPC get_state (endophasia-3) timed out after 100 ms",
 		);
 	});
 });
@@ -656,6 +682,16 @@ describe("Prime RPC connection: lifecycle", () => {
 		);
 		expect(diagnostics).toContainEqual({ kind: "stdin-failure" });
 		expect((await connection.close()).exit.signal).toBe("SIGTERM");
+	});
+
+	it("rejects an extension UI answer whose write fails after the checks passed", async () => {
+		const { connection } = connect("close-stdin", { closeTimeoutMs: 200 });
+		await connection.request({ type: "get_state" });
+		// The fake has closed its input, but no write has failed yet, so the answer passes the checks and then hits EPIPE.
+		await new Promise((done) => setTimeout(done, 100));
+		await expect(connection.answerExtensionUi("ui-1", { cancelled: true })).rejects.toThrow(
+			"Prime RPC input failed; extension_ui_response was not delivered",
+		);
 	});
 
 	it.runIf(POSIX)(

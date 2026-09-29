@@ -84,7 +84,7 @@ ACP is excluded for the reason in section 2.
 - Differential tests feed a hostile corpus to both the production decoder and the research `JsonlDecoderV0`, in 200 random chunkings. The classifications must be identical.
 
 **Correlation** (`PrimeRpcConnectionV0.request`):
-- The connection assigns unique IDs (`endophasia-N`). A command that carries its own `id` is rejected.
+- The connection assigns unique IDs (`endophasia-N`). A command that carries its own `id` is rejected. The ID is reserved before any of the caller's getters or nested `toJSON` run, so a request issued from inside one gets its own ID; an ID whose command is never sent is skipped.
 - A command is read and serialized before anything is registered. One that cannot be read or encoded (a cycle, a `BigInt`, a throwing getter or Proxy trap, including on `type`) is rejected, never thrown, with no pending entry or timer left behind. `type` is read once and the checked value is what is sent. A command with its own `toJSON` is refused unsent, since `JSON.stringify` would let it replace the envelope's `type` and `id`.
 - Commands buffered for a slow reader are bounded by `maxInputBacklogBytes` (default 16 MiB): a request that would exceed it is rejected unsent.
 - A response settles its request at most once:
@@ -107,7 +107,7 @@ ACP is excluded for the reason in section 2.
 
 **Commands** (`observeCommands`):
 - The connection is the sole stdin writer. Each command is announced synchronously as it is written, before any response or later event can arrive.
-- `answerExtensionUi(requestId, answer)` answers a dialog Prime opened with `extension_ui_request`. Prime blocks until an `extension_ui_response` with the same ID arrives and sends no reply to it (`prime:packages/coding-agent/src/modes/rpc/rpc-mode.ts:461-473`), so it is a write, not a request, and it keeps Prime's ID. The record is built only from the three answer shapes Prime accepts (`value`, `confirmed`, `cancelled: true`). The ingress still does not interpret the dialog.
+- `answerExtensionUi(requestId, answer)` answers a dialog Prime opened with `extension_ui_request`. Prime blocks until an `extension_ui_response` with the same ID arrives and sends no reply to it (`prime:packages/coding-agent/src/modes/rpc/rpc-mode.ts:461-473`), so it is a write, not a request, and it keeps Prime's ID. It resolves once the record is written to Prime's stdin pipe and rejects if that write fails (e.g. EPIPE), so an undelivered answer is never reported as sent. The record is built only from the three answer shapes Prime accepts (`value`, `confirmed`, `cancelled: true`). The ingress still does not interpret the dialog.
 - This lets a future adapter know, in order, which aborts it sent itself.
 
 **Lifecycle**:

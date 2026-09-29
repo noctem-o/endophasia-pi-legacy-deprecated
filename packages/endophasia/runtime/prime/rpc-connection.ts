@@ -251,7 +251,9 @@ export class PrimeRpcConnectionV0 {
 		// `id`, or while serializing) rejects instead of throwing. The thrown message is never quoted.
 		let type: string;
 		let record: string;
-		const id = `endophasia-${this.#nextId + 1}`;
+		// Reserved before any caller hook runs: a getter or nested toJSON may itself call request() while this command
+		// is copied or serialized, and must get its own ID. An ID whose command is never sent is simply skipped.
+		const id = `endophasia-${++this.#nextId}`;
 		try {
 			const declared: unknown = command.type;
 			if (typeof declared !== "string" || declared.length === 0) {
@@ -279,7 +281,6 @@ export class PrimeRpcConnectionV0 {
 		}
 		const refusal = this.#refuseWrite(type, record);
 		if (refusal !== undefined) return Promise.reject(refusal);
-		this.#nextId++;
 		const timeoutMs = options.timeoutMs ?? this.#options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 		const response = new Promise<PrimeRpcResponseV0>((resolve, reject) => {
 			const timer = setTimeout(() => {
@@ -296,7 +297,8 @@ export class PrimeRpcConnectionV0 {
 	/**
 	 * Answer a dialog Prime opened with `extension_ui_request` (select, confirm, input, editor). Prime blocks until an
 	 * `extension_ui_response` carrying the same `id` arrives, and sends no response to it, so this is a write, not a
-	 * request: it resolves once the record is handed to stdin. The ID is Prime's, which is why it cannot go through
+	 * request: it resolves once the record was written to Prime's stdin pipe, and rejects if that write fails (e.g.
+	 * EPIPE when Prime closed its input), so an undelivered answer is never reported as sent. The ID is Prime's, which is why it cannot go through
 	 * request(). The record is built field by field from the three shapes Prime accepts, nothing else.
 	 */
 	answerExtensionUi(
@@ -327,8 +329,12 @@ export class PrimeRpcConnectionV0 {
 		}
 		const refusal = this.#refuseWrite(type, record);
 		if (refusal !== undefined) return Promise.reject(refusal);
-		this.#write(requestId, type, record);
-		return Promise.resolve();
+		return new Promise((resolve, reject) => {
+			this.#write(requestId, type, record, (error) => {
+				if (error === undefined) resolve();
+				else reject(new PrimeRpcErrorV0(`Prime RPC input failed; ${type} was not delivered`));
+			});
+		});
 	}
 
 	/** Why a record cannot be written now, if it cannot: the process is gone, closing, its input failed, or backlogged. */
@@ -346,8 +352,10 @@ export class PrimeRpcConnectionV0 {
 	}
 
 	/** The only stdin write: every record is announced to command observers synchronously as it is written. */
-	#write(id: string, type: string, record: string): void {
-		this.#child.stdin?.write(record);
+	#write(id: string, type: string, record: string, written?: (error: Error | undefined) => void): void {
+		const stdin = this.#child.stdin;
+		if (stdin === null) written?.(new Error("no stdin"));
+		else stdin.write(record, (error) => written?.(error ?? undefined));
 		this.#notify(this.#commands, { id, type }, "command");
 	}
 
