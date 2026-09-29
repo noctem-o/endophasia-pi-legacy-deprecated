@@ -413,6 +413,15 @@ describe("classification", () => {
 		expect(report.findings[0]!.basis).toBe("contradicted");
 	});
 
+	it("contradicts Usage when the fork header does not link back to the original", () => {
+		const run = fixture("fork");
+		const unlinked = { ...run, observations: { ...run.observations, forkParentLinked: false } };
+		const usage = buildPrimeConformanceReportV0(withScenario(unlinked)).findings.find(
+			(finding) => finding.contract === "UsageLedgerRowV0",
+		)!;
+		expect(usage).toMatchObject({ basis: "contradicted", contradictions: ["forkParentLinked = true"] });
+	});
+
 	it("scopes tool identity to the turn that declared the call", () => {
 		const run = fixture("tool-run");
 		// Move the execution pair and its turn results from turn 1 into turn 2, whose assistant declared no tool.
@@ -645,6 +654,39 @@ const INVARIANT_MUTATIONS: readonly Mutation[] = [
 	],
 	["simple", "an abort marker outside an abort scenario", (r) => ({ ...r, abortRequestedAfter: [0] })],
 	[
+		"provider-failure",
+		"the provider rejection never requested",
+		(r) => ({ ...r, observations: { ...r.observations, providerRequests: 0 } }),
+	],
+	[
+		"simple",
+		"a summary request outside compaction",
+		(r) => ({ ...r, observations: { ...r.observations, providerRequests: 2, summaryRequests: 1 } }),
+	],
+	[
+		"compaction",
+		"a repeated stats label",
+		(r) => ({
+			...r,
+			stats: [...r.stats, { ...r.stats.find((item) => item.label === "before-compaction")!, cost: 0 }],
+		}),
+	],
+	["simple", "an unexpected stats label", (r) => ({ ...r, stats: [...r.stats, { ...r.stats[0]!, label: "extra" }] })],
+	[
+		"simple",
+		"an extra persisted user message",
+		(r) => {
+			const user = r.sessionEntries.find((entry) => entry.type === "message" && entry.role === "user")!;
+			const last = r.sessionEntries.at(-1)!;
+			return { ...r, sessionEntries: [...r.sessionEntries, { ...user, id: "e0000001", parentId: last.id }] };
+		},
+	],
+	[
+		"fork",
+		"original file content changed where the evidence drops it",
+		(r) => ({ ...r, observations: { ...r.observations, forkOriginalUnchanged: false } }),
+	],
+	[
 		"compaction",
 		"no compaction entry",
 		(r) => ({
@@ -843,6 +885,23 @@ describe("publication gate", () => {
 				return withScenario({ ...run, events });
 			},
 			"invalid",
+		],
+		[
+			"a known event type disguised as unknown",
+			() => {
+				const run = fixture("simple");
+				const events = [
+					...run.events,
+					{ type: "unknown", primeType: "agent_start" } as (typeof run.events)[number],
+				];
+				return withScenario({ ...run, events });
+			},
+			"invalid",
+		],
+		[
+			"a clean checkout of another revision that reports the audited version",
+			() => withProvenance(fixtures, { commit: "0".repeat(40) }),
+			"unpublishable",
 		],
 		[
 			"an assistant message_start after the run ended",

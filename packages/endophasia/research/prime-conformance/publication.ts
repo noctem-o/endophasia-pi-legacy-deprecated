@@ -59,6 +59,13 @@ export function assessPrimeEvidenceV0(input: PrimeEvidenceAssessmentInputV0): Pr
 			: [
 					`provenance is ${provenance.build}${provenance.commit === undefined ? " without a commit" : ""}: fixtures require a clean PRIME_AGENT_ROOT checkout at a known commit`,
 				]),
+		// The reference certifies the audited revision's classifications; evidence from any other revision (even one that
+		// reports the same version) would replace an established reference with unverified findings.
+		...(report.facts.auditedRevision === true
+			? []
+			: [
+					"evidence is not from the audited Prime revision: re-audit Prime and update AUDITED_PRIME before refreshing fixtures",
+				]),
 		...(provenance.generatedBy === PROBE_NAME && provenance.probeVersion === PROBE_VERSION
 			? []
 			: [`evidence was produced by probe ${provenance.probeVersion}, not the current ${PROBE_VERSION}`]),

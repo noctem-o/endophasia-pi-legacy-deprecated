@@ -17,7 +17,7 @@ import {
 	realpathSync,
 	writeFileSync,
 } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import {
 	commandEvidenceV0,
 	decodePrimeCompactionResultV0,
@@ -249,8 +249,15 @@ class ProbeSession {
  * durable file never held.
  */
 export function readPrimeSessionFileV0(path: string, sessionDir: string): PrimeSessionEntryEvidenceV0[] {
-	// Confined again at the read itself, and opened without following a final symlink: Prime could replace the file
-	// between the earlier check and this read (e.g. at shutdown) with a link to a session outside the isolation.
+	return decodePrimeSessionFileV0(readSessionTextV0(path, sessionDir));
+}
+
+/**
+ * A session file's raw text, held in memory only (never evidence): confined again at the read itself, opened without
+ * following a final symlink (Prime could replace the file with a link to a session outside the isolation between the
+ * earlier check and this read, e.g. at shutdown), and decoded as fatal UTF-8.
+ */
+function readSessionTextV0(path: string, sessionDir: string): string {
 	const confined = confinedSessionFileV0(path, sessionDir);
 	let fd: number;
 	try {
@@ -264,13 +271,17 @@ export function readPrimeSessionFileV0(path: string, sessionDir: string): PrimeS
 	} finally {
 		closeSync(fd);
 	}
-	let content: string;
 	try {
-		content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+		return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 	} catch {
 		throw new PrimeDecodeError("session file is not valid UTF-8");
 	}
-	return decodePrimeSessionFileV0(content);
+}
+
+/** Raw lines by entry id (the header excluded), for exact in-memory comparison; only the result is kept. */
+function rawLinesById(text: string): Map<string, string> {
+	const lines = text.split("\n").filter((line) => line.length > 0);
+	return new Map(lines.slice(1).map((line) => [String((JSON.parse(line) as { id?: unknown }).id), line] as const));
 }
 
 function sameFile(a: string, b: string): boolean {
@@ -505,7 +516,8 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			await session.prompt("multi-b");
 			await session.stats("before-fork");
 			const originalFile = await session.sessionFile();
-			const beforeFork = readPrimeSessionFileV0(originalFile, environment.sessionDir);
+			const rawOriginalBefore = readSessionTextV0(originalFile, environment.sessionDir);
+			const beforeFork = decodePrimeSessionFileV0(rawOriginalBefore);
 			run.entrySnapshots.push({ label: "fork-original-before", entries: beforeFork });
 			// The fork is the operation under test: no target, a cancelled fork or no new session fails the scenario. The
 			// target is the second user message, identified in the file, never by its position in Prime's list.
@@ -521,18 +533,28 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			await session.prompt("multi-c");
 			await session.stats("after-fork-prompt");
 			await session.close();
-			run.sessionEntries = readPrimeSessionFileV0(forkFile, environment.sessionDir);
-			const original = readPrimeSessionFileV0(originalFile, environment.sessionDir);
+			const rawFork = readSessionTextV0(forkFile, environment.sessionDir);
+			const rawOriginal = readSessionTextV0(originalFile, environment.sessionDir);
+			run.sessionEntries = decodePrimeSessionFileV0(rawFork);
+			const original = decodePrimeSessionFileV0(rawOriginal);
 			run.entrySnapshots.push({ label: "fork-original-after", entries: original });
 			run.observations.originalEntriesAfterFork = original.length;
-			const originalIds = new Set(original.flatMap((entry) => (entry.type === "session" ? [] : [entry.id])));
-			const shared = run.sessionEntries.filter((entry) => entry.type !== "session" && originalIds.has(entry.id));
+			// Compared on the raw text in memory, not the reduced evidence: content the evidence drops (message text, tool
+			// payloads, timestamps) must not change either. Only the booleans are kept.
+			run.observations.forkOriginalUnchanged = rawOriginal === rawOriginalBefore;
+			const originalLines = rawLinesById(rawOriginal);
+			const forkLines = rawLinesById(rawFork);
+			const shared = [...forkLines.keys()].filter((id) => originalLines.has(id));
 			run.observations.forkSharedEntryIds = shared.length;
 			// Treating shared ids as copies (and de-duplicating by id) is only safe if the entries are identical.
-			const originalById = new Map(original.map((entry) => [entry.id, JSON.stringify(entry)]));
 			run.observations.forkSharedEntriesIdentical = shared.every(
-				(entry) => originalById.get(entry.id) === JSON.stringify(entry),
+				(id) => forkLines.get(id) === originalLines.get(id),
 			);
+			// The fork's header must link back to the original file: an adapter discovers the fork family through it.
+			const parentSession = (JSON.parse(rawFork.split("\n")[0] ?? "{}") as { parentSession?: unknown })
+				.parentSession;
+			run.observations.forkParentLinked =
+				typeof parentSession === "string" && sameFile(resolve(dirname(forkFile), parentSession), originalFile);
 		},
 	},
 	{

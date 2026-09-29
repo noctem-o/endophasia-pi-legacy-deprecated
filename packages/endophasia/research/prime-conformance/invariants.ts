@@ -7,12 +7,54 @@
 // behavior (e.g. a tool error Prime does not flag) is conformance evidence, not an invalid run.
 import { PROBE_MODEL, PROBE_PROVIDER } from "./environment.ts";
 import type { PrimeScenarioEvidenceV0 } from "./evidence.ts";
+import { EXPECTED_ASSISTANT_USAGE } from "./fake-provider.ts";
 
 type Invariant = (run: PrimeScenarioEvidenceV0) => string[];
 
+/** Exactly these stats labels, each once: a repeated or extra label would let a later record contradict the first. */
 function stats(...labels: string[]): Invariant {
-	return (run) =>
-		labels.flatMap((label) => (run.stats.some((item) => item.label === label) ? [] : [`missing stats "${label}"`]));
+	return (run) => {
+		const observed = run.stats.map((item) => item.label);
+		return [
+			...labels.flatMap((label) => {
+				const count = observed.filter((item) => item === label).length;
+				return count === 1 ? [] : [`expected stats "${label}" once, observed ${count}`];
+			}),
+			...observed.filter((label) => !labels.includes(label)).map((label) => `unexpected stats "${label}"`),
+		];
+	};
+}
+
+/**
+ * The fake served exactly one request per assistant message the scenario scripts (a provider failure and a hung stream
+ * included, though they report no usage), and summary requests only in the compaction scenario.
+ */
+function providerRequests(): Invariant {
+	return (run) => {
+		const scripted = EXPECTED_ASSISTANT_USAGE[run.provenance.scenario]?.length;
+		const total = run.observations.providerRequests;
+		const summaries = run.observations.summaryRequests;
+		if (scripted === undefined || total === undefined || summaries === undefined)
+			return ["provider requests cannot be reconciled with the script"];
+		return [
+			...(total - summaries === scripted
+				? []
+				: [`expected ${scripted} scripted provider request(s), observed ${total - summaries}`]),
+			...(run.provenance.scenario === "compaction" || summaries === 0
+				? []
+				: [`unexpected summary request(s) outside compaction: ${summaries}`]),
+		];
+	};
+}
+
+/** The final file's message roles, in order: exactly the prompts, completions and tool results the scenario made. */
+function persistedMessages(...roles: string[]): Invariant {
+	return (run) => {
+		const observed = run.sessionEntries.flatMap((entry) => (entry.type === "message" ? [entry.role ?? "none"] : []));
+		return JSON.stringify(observed) === JSON.stringify(roles)
+			? []
+			: [`persisted message roles ${observed.join(",") || "none"}, expected ${roles.join(",")}`];
+	};
 }
 
 function succeeded(command: string, times = 1): Invariant {
@@ -153,14 +195,41 @@ function noAbortRequested(): Invariant {
 			: [`unexpected abort request(s) at ${run.abortRequestedAfter.join(", ")}`];
 }
 
-const COMMON: Invariant[] = [sessionFileRead(), observed("providerRequests", "summaryRequests"), probeModel()];
+const COMMON: Invariant[] = [
+	sessionFileRead(),
+	observed("providerRequests", "summaryRequests"),
+	providerRequests(),
+	probeModel(),
+];
 
 const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
-	simple: [runs(1), stats("after"), noAbortRequested(), refusals(0)],
-	"tool-run": [runs(1), stats("after"), toolExecuted(), noAbortRequested(), refusals(0)],
-	"tool-error": [runs(1), stats("after"), toolExecuted(), noAbortRequested(), refusals(0)],
-	"provider-failure": [runs(1), stats("after"), succeeded("set_auto_retry"), noAbortRequested(), refusals(0)],
+	simple: [persistedMessages("user", "assistant"), runs(1), stats("after"), noAbortRequested(), refusals(0)],
+	"tool-run": [
+		persistedMessages("user", "assistant", "toolResult", "assistant"),
+		runs(1),
+		stats("after"),
+		toolExecuted(),
+		noAbortRequested(),
+		refusals(0),
+	],
+	"tool-error": [
+		persistedMessages("user", "assistant", "toolResult", "assistant"),
+		runs(1),
+		stats("after"),
+		toolExecuted(),
+		noAbortRequested(),
+		refusals(0),
+	],
+	"provider-failure": [
+		persistedMessages("user", "assistant"),
+		runs(1),
+		stats("after"),
+		succeeded("set_auto_retry"),
+		noAbortRequested(),
+		refusals(0),
+	],
 	"abort-stream": [
+		persistedMessages("user", "assistant", "user", "assistant"),
 		runs(2),
 		stats("after", "after-resume"),
 		abortRequested("assistant-start"),
@@ -169,6 +238,7 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		refusals(1),
 	],
 	"abort-tool": [
+		persistedMessages("user", "assistant", "toolResult"),
 		runs(1),
 		stats("after"),
 		toolExecuted(),
@@ -176,9 +246,16 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		succeeded("abort"),
 		refusals(0),
 	],
-	"length-stop": [runs(1), stats("after"), noAbortRequested(), refusals(0)],
-	"reasoning-usage": [runs(1), stats("after"), noAbortRequested(), refusals(0)],
+	"length-stop": [persistedMessages("user", "assistant"), runs(1), stats("after"), noAbortRequested(), refusals(0)],
+	"reasoning-usage": [
+		persistedMessages("user", "assistant"),
+		runs(1),
+		stats("after"),
+		noAbortRequested(),
+		refusals(0),
+	],
 	"multi-turn-reopen": [
+		persistedMessages("user", "assistant", "user", "assistant", "user", "assistant"),
 		runs(3),
 		stats("after-multi-a", "after-multi-b", "after-multi-c", "after-reopen"),
 		succeeded("switch_session"),
@@ -198,6 +275,7 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		refusals(0),
 	],
 	compaction: [
+		persistedMessages("user", "assistant", "user", "assistant", "user", "assistant"),
 		runs(3),
 		stats("before-compaction", "after-compaction", "after-next-prompt"),
 		succeeded("compact"),
@@ -208,10 +286,14 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		refusals(1),
 	],
 	fork: [
+		persistedMessages("user", "assistant", "user", "assistant"),
 		runs(3),
 		stats("before-fork", "after-fork", "after-fork-prompt"),
 		succeeded("fork"),
 		forkSnapshots(),
+		// Byte-level, not only the reduced snapshots: content the evidence drops must not change either.
+		(run) =>
+			run.observations.forkOriginalUnchanged === true ? [] : ["the original session file changed across the fork"],
 		observed("originalEntriesAfterFork", "forkSharedEntryIds"),
 		(run) => ((run.observations.forkTargets ?? 0) >= 1 ? [] : ["no fork target was offered"]),
 		(run) => (run.observations.forkCreatedNewFile === true ? [] : ["the fork produced no new session file"]),
@@ -219,6 +301,7 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		refusals(0),
 	],
 	"child-usage-replay": [
+		persistedMessages("user", "assistant"),
 		runs(0),
 		stats("after-open"),
 		succeeded("switch_session"),

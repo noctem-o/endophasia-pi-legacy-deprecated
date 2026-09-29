@@ -5,7 +5,7 @@
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.11.0";
+export const PROBE_VERSION = "0.12.0";
 
 /**
  * How the Prime that ran is known:
@@ -110,6 +110,10 @@ export interface PrimeObservationsV0 {
 	readonly forkSharedEntryIds?: number;
 	/** Every entry the fork file shares by id with the original is identical to it (a copy, not a reused id). */
 	readonly forkSharedEntriesIdentical?: boolean;
+	/** The original file's raw text is byte-identical before and after the fork (compared in memory). */
+	readonly forkOriginalUnchanged?: boolean;
+	/** The fork header's parentSession resolves to the original session file. */
+	readonly forkParentLinked?: boolean;
 	readonly providerRequests?: number;
 	/** Summarization requests the fake served (all during compaction); what a compaction entry's usage must sum. */
 	readonly summaryRequests?: number;
@@ -206,6 +210,26 @@ function assistantAgreementProblems(events: readonly PrimeEvidenceEventV0[]): st
 		return agrees ? [] : [`event ${index} (turn_end): its assistant does not match the preceding message_end`];
 	});
 }
+
+/** Every Prime event type decode.ts decodes (or deliberately drops): never recorded as `unknown`. */
+const DECODED_PRIME_EVENT_TYPES: ReadonlySet<string> = new Set([
+	"agent_start",
+	"agent_end",
+	"turn_start",
+	"turn_end",
+	"message_start",
+	"message_update",
+	"message_end",
+	"tool_execution_start",
+	"tool_execution_update",
+	"tool_execution_end",
+	"compaction_start",
+	"compaction_end",
+	"auto_retry_start",
+	"auto_retry_end",
+	"session_action_update",
+	"extension_error",
+]);
 
 /** A count, cost or attempt: finite and never negative. */
 export function isCountV0(value: unknown): value is number {
@@ -390,7 +414,11 @@ export function evidenceProblemsV0(run: PrimeScenarioEvidenceV0): string[] {
 					...(isCountV0(event.attempt) ? [] : [`${label}: retry attempt is not a non-negative finite number`]),
 				];
 			case "unknown":
-				return missingText(event.primeType) ? [`${label}: unknown event without its Prime type`] : [];
+				if (missingText(event.primeType)) return [`${label}: unknown event without its Prime type`];
+				// The decoder keeps only genuinely new types as unknown: a known name here would hide a lifecycle event.
+				return DECODED_PRIME_EVENT_TYPES.has(event.primeType)
+					? [`${label}: a known event type recorded as unknown`]
+					: [];
 			case "agent_start":
 			case "turn_start":
 			case "session_action_update":

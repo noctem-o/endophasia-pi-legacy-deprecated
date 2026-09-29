@@ -134,8 +134,10 @@ export const PRIME_SOURCE = {
 export interface PrimeFactsV0 {
 	/** The evidence came from a clean checkout of the audited Prime revision; undefined otherwise (not re-audited). */
 	readonly auditedRevision: true | undefined;
-	/** Every entry a fork file shares by id with the original is identical to it. */
+	/** Every entry a fork file shares by id with the original is identical to it, raw line for raw line. */
 	readonly forkSharedEntriesIdentical: boolean | undefined;
+	/** The fork's header links back to the original file (parentSession), so the fork family is discoverable. */
+	readonly forkParentLinked: boolean | undefined;
 	/** Every assistant usage equals what the fake provider scripted, through Prime's documented mapping, in every field. */
 	readonly providerUsageDecodedExactly: boolean | undefined;
 	readonly toolCallIdentityNative: boolean | undefined;
@@ -483,6 +485,7 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 				? true
 				: undefined,
 		forkSharedEntriesIdentical: fork?.observations.forkSharedEntriesIdentical,
+		forkParentLinked: fork?.observations.forkParentLinked,
 		providerUsageDecodedExactly: providerUsageDecodedExactly(evidence),
 		toolCallIdentityNative,
 		toolErrorRecovered,
@@ -783,6 +786,7 @@ export function classifyPrimeConformanceV0(
 			expect("providerUsageDecodedExactly", true),
 			expect("reopenEntryIdsStable", true),
 			expect("forkSharedEntriesIdentical", true),
+			expect("forkParentLinked", true),
 			expect("compactionUsageDurable", true),
 			expect("childUsageRewritesEarlierRow", true),
 			expect("forkNewFile", true),
@@ -795,7 +799,7 @@ export function classifyPrimeConformanceV0(
 			`probe:multi-turn-reopen: entry ids stable across reopen: ${show(facts.reopenEntryIdsStable)}`,
 			`probe:compaction: compaction entry carries usage: ${show(facts.compactionUsageDurable)}`,
 			`probe:child-usage-replay: a later child_usage_attributed entry changes the reported usage of an earlier assistant entry on reload: ${show(facts.childUsageRewritesEarlierRow)}`,
-			`probe:fork: fork writes a new session file: ${show(facts.forkNewFile)}; entries copied with the original ids: ${show(facts.forkSharedEntryIds)}`,
+			`probe:fork: fork writes a new session file: ${show(facts.forkNewFile)}; entries copied with the original ids: ${show(facts.forkSharedEntryIds)}; copies identical to the originals: ${show(facts.forkSharedEntriesIdentical)}; header links to the original (parentSession): ${show(facts.forkParentLinked)}`,
 			PRIME_SOURCE.sessionFormat,
 			PRIME_SOURCE.compactionUsage,
 			PRIME_SOURCE.sessionRewrite,
