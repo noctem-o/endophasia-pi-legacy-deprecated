@@ -1,9 +1,10 @@
 // Prime RPC Runtime Ingress v0: which Prime is running. This is runtime identity, not conformance certification: it
 // records what can be known (the reported version, how Prime is installed, a source checkout's commit and tree state)
 // and claims nothing more. A Prime semantic adapter decides whether an identity belongs to a profile it supports.
-import { spawn } from "node:child_process";
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve, win32 } from "node:path";
+import type { Readable } from "node:stream";
+import { PrimeProcessGroupV0 } from "./process-group.ts";
 
 /** How Prime is started: a standalone executable, or a source checkout's documented launcher. */
 export type PrimeInstallationV0 =
@@ -65,9 +66,10 @@ const VERSION = new RegExp(
 const MAX_OUTPUT_BYTES = 64 * 1024;
 
 /**
- * Run a short command with exactly the given environment and return its output on exit code 0. Bounded: at the
- * timeout (or past MAX_OUTPUT_BYTES) its process group is sent SIGKILL and the result is undefined at once, without
- * waiting for a process that ignores signals or a descendant that holds the pipes open.
+ * Run a short command with exactly the given environment and return its output on exit code 0. It runs in a process
+ * group this process owns (see process-group.ts): once it exited, anything it left in the group (a descendant,
+ * detached or holding the pipes) is killed, so nothing outlives the read and no recycled group ID is ever signalled.
+ * Bounded: at the timeout, or past MAX_OUTPUT_BYTES, the group is killed and the result is undefined at once.
  */
 function run(
 	command: string,
@@ -81,14 +83,17 @@ function run(
 	},
 ): Promise<string | undefined> {
 	return new Promise((done) => {
-		const group = process.platform !== "win32";
-		const child = spawn(command, [...args], {
-			env: { ...options.env },
+		const group = new PrimeProcessGroupV0(command, args, {
 			cwd: options.cwd,
-			stdio: ["ignore", "pipe", options.withStderr === true ? "pipe" : "ignore"],
-			detached: group,
-			windowsHide: true,
+			env: options.env,
+			stderr: options.withStderr === true ? "pipe" : "ignore",
 		});
+		group.stdin?.on("error", () => {});
+		group.stdin?.end();
+		// Registered now, so a stream that closes early is not missed.
+		const closed = (stream: Readable | null) =>
+			stream === null ? Promise.resolve() : new Promise<void>((resolve) => stream.once("close", () => resolve()));
+		const streamsClosed = Promise.all([closed(group.stdout), closed(group.stderr)]);
 		// Kept per stream and joined with a newline, so the two streams never run together into one word.
 		const streams: [Buffer[], Buffer[]] = [[], []];
 		let length = 0;
@@ -97,17 +102,12 @@ function run(
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
+			void group.release();
 			done(output);
 		};
 		const stop = () => {
-			try {
-				if (group && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
-				else child.kill("SIGKILL");
-			} catch {
-				// Already gone.
-			}
-			child.stdout?.destroy();
-			child.stderr?.destroy();
+			group.stdout?.destroy();
+			group.stderr?.destroy();
 			finish(undefined);
 		};
 		const timer = setTimeout(stop, options.timeoutMs);
@@ -116,23 +116,20 @@ function run(
 			if (length > MAX_OUTPUT_BYTES) stop();
 			else into.push(chunk);
 		};
-		child.stdout?.on("data", collect(streams[0]));
-		child.stderr?.on("data", collect(streams[1]));
-		child.on("error", () => finish(undefined));
-		// The command's group is not kept: once it exited, anything it left behind (a descendant, detached or holding the
-		// pipes) is killed at once, while a live member still holds the group ID, so nothing outlives the read.
-		child.on("exit", () => {
-			try {
-				if (group && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
-			} catch {
-				// No member is left.
-			}
-		});
-		child.on("close", (code) => {
+		group.stdout?.on("data", collect(streams[0]));
+		group.stderr?.on("data", collect(streams[1]));
+		void group.exited.then(async (exit) => {
+			// What the command wrote before it exited is still read; anything it left behind is killed first, so a
+			// descendant holding the pipes cannot delay the read.
+			await group.release();
+			await streamsClosed;
 			let output: string | undefined;
 			try {
 				const decoder = new TextDecoder("utf-8", { fatal: true });
-				output = code === 0 ? streams.map((chunks) => decoder.decode(Buffer.concat(chunks))).join("\n") : undefined;
+				output =
+					exit.code === 0 && !exit.spawnFailed
+						? streams.map((chunks) => decoder.decode(Buffer.concat(chunks))).join("\n")
+						: undefined;
 			} catch {
 				output = undefined;
 			}
@@ -141,25 +138,33 @@ function run(
 	});
 }
 
+/** How many times a source checkout's identity is read before a checkout that keeps changing is reported. */
+const IDENTITY_ATTEMPTS = 3;
+
 /**
  * Read the identity of an installation: `--version` in the given environment (nothing inherited), and for a source
- * checkout its HEAD commit and whether tracked files are modified. Rejects when no version can be read.
+ * checkout its HEAD commit and whether tracked files are modified, read as one stable snapshot. Rejects when no
+ * version can be read, or when the checkout keeps changing while it is read.
  */
 export async function readPrimeRuntimeIdentityV0(
 	installation: PrimeInstallationV0,
 	options: { readonly env: Readonly<Record<string, string>>; readonly cwd: string; readonly timeoutMs?: number },
 ): Promise<PrimeRuntimeIdentityV0> {
 	const timeoutMs = options.timeoutMs ?? 60_000;
-	const output = await run(installation.command, [...installation.leadingArgs, "--version"], {
-		...options,
-		timeoutMs,
-		withStderr: true,
-	});
-	// Exactly one distinct version: output that also names another (e.g. a launcher's Node version) is ambiguous.
-	const versions = new Set(output === undefined ? [] : [...output.matchAll(VERSION)].map((match) => match[1]));
-	const [version] = versions;
-	if (versions.size !== 1 || version === undefined) throw new Error("Could not read a Prime version from --version");
-	if (installation.mode === "binary") return { version, installation };
+	const readVersion = async () => {
+		const output = await run(installation.command, [...installation.leadingArgs, "--version"], {
+			...options,
+			timeoutMs,
+			withStderr: true,
+		});
+		// Exactly one distinct version: output that also names another (e.g. a launcher's Node version) is ambiguous.
+		const versions = new Set(output === undefined ? [] : [...output.matchAll(VERSION)].map((match) => match[1]));
+		const [version] = versions;
+		if (versions.size !== 1 || version === undefined)
+			throw new Error("Could not read a Prime version from --version");
+		return version;
+	};
+	if (installation.mode === "binary") return { version: await readVersion(), installation };
 	// Git's own GIT_* variables (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_CONFIG_PARAMETERS...) can select another
 	// repository or rewrite configuration despite -C, so the probes run without any of them.
 	const gitEnv = Object.fromEntries(
@@ -171,19 +176,34 @@ export async function readPrimeRuntimeIdentityV0(
 	// that ancestor's commit. Provenance is accepted only when the repository's top level is the configured root.
 	const toplevel = (await git(["rev-parse", "--show-toplevel"]))?.trim();
 	if (toplevel === undefined || !(await sameDirectory(toplevel, installation.root))) {
-		return { version, installation, source: { tree: "unknown" } };
+		return { version: await readVersion(), installation, source: { tree: "unknown" } };
 	}
-	const head = (await git(["rev-parse", "HEAD"]))?.trim();
-	const status = await git(["status", "--porcelain", "--untracked-files=no"]);
-	// HEAD is read again after the status: a checkout that moved in between would pair the old commit with the new
-	// tree's state, so a changed HEAD makes the provenance unknown.
-	const headAfter = (await git(["rev-parse", "HEAD"]))?.trim();
-	if (head !== headAfter) return { version, installation, source: { tree: "unknown" } };
-	// A SHA-1 or SHA-256 object ID: git supports both object formats.
-	const commit = head !== undefined && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head) ? head : undefined;
-	const tree =
-		commit === undefined || status === undefined ? "unknown" : status.trim().length === 0 ? "clean" : "dirty";
-	return { version, installation, source: { ...(commit === undefined ? {} : { commit }), tree } };
+	// The version and the provenance must describe one runtime. HEAD, the tracked-file status and the launcher file
+	// are read before and after --version; if anything moved (an updater switched or edited the checkout), the whole
+	// read is repeated, and a checkout that keeps changing is an error rather than a mixed identity.
+	const snapshot = async () => {
+		const head = (await git(["rev-parse", "HEAD"]))?.trim();
+		const status = await git(["status", "--porcelain", "--untracked-files=no"]);
+		const launcher = await stat(installation.command).then(
+			(file) => `${file.dev}:${file.ino}:${file.size}:${file.mtimeMs}:${file.ctimeMs}`,
+			() => undefined,
+		);
+		return { head, status, launcher };
+	};
+	for (let attempt = 0; attempt < IDENTITY_ATTEMPTS; attempt++) {
+		const before = await snapshot();
+		const version = await readVersion();
+		const after = await snapshot();
+		if (before.head !== after.head || before.status !== after.status || before.launcher !== after.launcher) continue;
+		// A SHA-1 or SHA-256 object ID: git supports both object formats.
+		const head = before.head;
+		const commit = head !== undefined && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head) ? head : undefined;
+		const status = before.status;
+		const tree =
+			commit === undefined || status === undefined ? "unknown" : status.trim().length === 0 ? "clean" : "dirty";
+		return { version, installation, source: { ...(commit === undefined ? {} : { commit }), tree } };
+	}
+	throw new Error("The Prime checkout changed while its identity was read");
 }
 
 async function sameDirectory(a: string, b: string): Promise<boolean> {

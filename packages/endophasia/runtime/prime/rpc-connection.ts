@@ -2,9 +2,8 @@
 // command responses, delivers native events in order, and shuts the process down within a bounded time. It interprets
 // no event: Prime's vocabulary stays raw here, for a Prime-specific semantic adapter above it to validate and map.
 // Node-side and Prime-specific; never part of the browser-facing contract surface.
-import { type ChildProcess, spawn } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
 import { encodePrimeJsonlRecordV0, PrimeJsonlDecoderV0, type PrimeJsonlFaultV0 } from "./jsonl.ts";
+import { PrimeProcessGroupV0 } from "./process-group.ts";
 import type { PrimeInstallationV0 } from "./runtime-identity.ts";
 
 /** One command response, correlated to the request that caused it. `success: false` is a refusal, not an error. */
@@ -152,7 +151,7 @@ export class PrimeRpcConnectionV0 {
 	/** Settles when the process exited and stdout is closed, or the bounded drain grace expired. */
 	readonly terminated: Promise<PrimeRpcTerminationV0>;
 
-	readonly #child: ChildProcess;
+	readonly #group: PrimeProcessGroupV0;
 	readonly #decoder: PrimeJsonlDecoderV0;
 	readonly #pending = new Map<string, Pending>();
 	readonly #events = new Set<(event: PrimeRpcEventV0) => void>();
@@ -170,11 +169,6 @@ export class PrimeRpcConnectionV0 {
 	#closing: Promise<PrimeRpcTerminationV0> | undefined;
 	/** When the process group is due SIGKILL, once SIGTERM was sent to it. */
 	#sigkillAt: number | undefined;
-	/**
-	 * Set once the group was reaped after termination. Its ID is never probed or signalled again: once every member is
-	 * gone the OS may reuse it for an unrelated group.
-	 */
-	#groupGone = false;
 	/** Settles once the process group is reaped after termination (see #reapGroup). */
 	readonly #reaped: Promise<void>;
 	#resolveExited!: (exit: PrimeRpcExitV0) => void;
@@ -193,20 +187,15 @@ export class PrimeRpcConnectionV0 {
 		});
 		this.#reaped = this.terminated.then(() => this.#reapGroup());
 		const { installation } = options;
-		this.#child = spawn(
+		// Prime runs in a process group this connection owns (see process-group.ts), so a bounded shutdown also reaches
+		// its descendants and never signals a recycled group ID. Exactly the given environment: never process.env,
+		// which may hold provider keys. stderr is not read: it may quote payloads, and an unread pipe could block Prime.
+		this.#group = new PrimeProcessGroupV0(
 			installation.command,
 			[...installation.leadingArgs, "--mode", "rpc", ...(options.args ?? [])],
-			{
-				cwd: options.cwd,
-				// Exactly the given environment: never process.env, which may hold provider keys.
-				env: { ...options.env },
-				// stderr is not read: it may quote payloads, and an unread pipe could block Prime, so it is discarded.
-				stdio: ["pipe", "pipe", "ignore"],
-				// Its own process group on POSIX, so a bounded shutdown can also reach descendants holding stdout.
-				detached: process.platform !== "win32",
-			},
+			{ cwd: options.cwd, env: options.env, stderr: "ignore" },
 		);
-		const { stdout, stdin } = this.#child;
+		const { stdout, stdin } = this.#group;
 		stdout?.on("data", (chunk: Buffer) => this.#receive(this.#decoder.push(chunk)));
 		stdout?.on("end", () => this.#receive(this.#decoder.end()));
 		stdout?.on("close", () => {
@@ -216,16 +205,21 @@ export class PrimeRpcConnectionV0 {
 		// A write to a closed stdin fails with EPIPE. After exit the pending requests are already rejected; while Prime
 		// still runs, nothing can be sent any more, so waiting requests fail now instead of at their timeouts.
 		stdin?.on("error", () => this.#onStdinFailure());
-		this.#child.on("exit", (code, signal) => this.#onExit({ code, signal, spawnFailed: false }));
-		this.#child.on("error", () => {
-			// A spawn failure emits no exit and no stdout close.
-			this.#stdoutOpen = false;
-			this.#onExit({ code: null, signal: null, spawnFailed: true });
+		void this.#group.exited.then((exit) => {
+			// A command that never started writes nothing: stdout need not be waited for.
+			if (exit.spawnFailed) this.#stdoutOpen = false;
+			this.#onExit(exit);
 		});
 	}
 
+	/** Prime's PID, once it started. */
 	get pid(): number | undefined {
-		return this.#child.pid;
+		return this.#group.pid;
+	}
+
+	/** The ID of the process group this connection owns (POSIX only). */
+	get processGroupId(): number | undefined {
+		return this.#group.groupId;
 	}
 
 	/** Receive every native event, in arrival order. A throwing listener is reported and does not affect others. */
@@ -355,7 +349,7 @@ export class PrimeRpcConnectionV0 {
 		if (this.#closing !== undefined)
 			return new PrimeRpcErrorV0(`Prime RPC connection is closing; ${type} was not sent`);
 		if (this.#stdinFailed) return new PrimeRpcErrorV0(`Prime RPC input failed; ${type} was not sent`);
-		const backlog = this.#child.stdin?.writableLength ?? 0;
+		const backlog = this.#group.stdin?.writableLength ?? 0;
 		const maxBacklog = this.#options.maxInputBacklogBytes ?? DEFAULT_MAX_INPUT_BACKLOG_BYTES;
 		if (backlog + Buffer.byteLength(record) > maxBacklog) {
 			return new PrimeRpcErrorV0(`Prime RPC input backlog is full; ${type} was not sent`);
@@ -365,7 +359,7 @@ export class PrimeRpcConnectionV0 {
 
 	/** The only stdin write: every record is announced to command observers synchronously as it is written. */
 	#write(id: string, type: string, record: string, written?: (error: Error | undefined) => void): void {
-		const stdin = this.#child.stdin;
+		const stdin = this.#group.stdin;
 		if (stdin === null) written?.(new Error("no stdin"));
 		else stdin.write(record, (error) => written?.(error ?? undefined));
 		this.#notify(this.#commands, { id, type }, "command");
@@ -378,16 +372,20 @@ export class PrimeRpcConnectionV0 {
 	 */
 	close(): Promise<PrimeRpcTerminationV0> {
 		this.#closing ??= (async () => {
-			this.#child.stdin?.end();
+			this.#group.stdin?.end();
 			const timeoutMs = this.#options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS;
 			let escalation: ReturnType<typeof setTimeout> | undefined;
 			if (this.#exit === undefined) {
 				escalation = setTimeout(() => {
 					if (this.#exit !== undefined) return;
 					this.#diagnose({ kind: "forced-termination", signal: "SIGTERM" });
-					this.#killGroup("SIGTERM");
+					this.#group.signalGroup("SIGTERM");
 					this.#sigkillAt = Date.now() + TERMINATE_GRACE_MS;
-					escalation = setTimeout(() => this.#forceKill(), TERMINATE_GRACE_MS);
+					escalation = setTimeout(() => {
+						if (this.#exit !== undefined) return;
+						this.#diagnose({ kind: "forced-termination", signal: "SIGKILL" });
+						this.#group.killCommand();
+					}, TERMINATE_GRACE_MS);
 				}, timeoutMs);
 			}
 			try {
@@ -404,43 +402,22 @@ export class PrimeRpcConnectionV0 {
 	/**
 	 * The connection owns Prime's whole process group. Once Prime exited and stdout drained (whether or not close() was
 	 * called), any member still running, such as a descendant that does not hold stdout, gets SIGTERM (unless the
-	 * group already did) and SIGKILL when the grace expires. This runs right at termination, while a live member still
-	 * holds the group ID, never later against an ID the OS may have reused. The group is then marked gone.
+	 * group already did) and SIGKILL when the grace expires; the group is then released, which SIGKILLs anything left.
+	 * Where members cannot be observed (no /proc), the group is released at once.
 	 */
 	async #reapGroup(): Promise<void> {
-		if (this.#groupAlive()) {
+		if (this.#group.liveMembers() === true) {
 			if (this.#sigkillAt === undefined) {
 				this.#diagnose({ kind: "forced-termination", signal: "SIGTERM" });
-				this.#killGroup("SIGTERM");
+				this.#group.signalGroup("SIGTERM");
 				this.#sigkillAt = Date.now() + TERMINATE_GRACE_MS;
 			}
-			while (this.#groupAlive() && Date.now() < this.#sigkillAt) {
+			while (this.#group.liveMembers() === true && Date.now() < this.#sigkillAt) {
 				await new Promise((done) => setTimeout(done, 25));
 			}
-			this.#forceKill();
+			if (this.#group.liveMembers() === true) this.#diagnose({ kind: "forced-termination", signal: "SIGKILL" });
 		}
-		this.#groupGone = true;
-	}
-
-	#forceKill(): void {
-		if (!this.#groupAlive()) return;
-		this.#diagnose({ kind: "forced-termination", signal: "SIGKILL" });
-		this.#killGroup("SIGKILL");
-	}
-
-	/** Whether any process of Prime's group remains. On Windows there is no group: only Prime itself is tracked. */
-	#groupAlive(): boolean {
-		const pid = this.#child.pid;
-		if (pid === undefined || this.#groupGone) return false;
-		if (process.platform === "win32") return this.#exit === undefined;
-		try {
-			process.kill(-pid, 0);
-		} catch {
-			return false;
-		}
-		// A killed descendant whose parent already exited stays a zombie until init reaps it, and a container's PID 1
-		// may never do so; kill(-pgid, 0) still counts zombies. Where /proc exists, only a live member counts.
-		return liveGroupMember(pid) ?? true;
+		await this.#group.release();
 	}
 
 	#onStdinFailure(): void {
@@ -451,17 +428,6 @@ export class PrimeRpcConnectionV0 {
 			clearTimeout(pending.timer);
 			this.#pending.delete(id);
 			pending.reject(new PrimeRpcErrorV0(`Prime RPC input failed before responding to ${pending.command}`));
-		}
-	}
-
-	#killGroup(signal: "SIGTERM" | "SIGKILL"): void {
-		const pid = this.#child.pid;
-		if (pid === undefined || this.#groupGone) return;
-		try {
-			if (process.platform === "win32") this.#child.kill(signal);
-			else process.kill(-pid, signal);
-		} catch {
-			// The group is already gone.
 		}
 	}
 
@@ -480,9 +446,9 @@ export class PrimeRpcConnectionV0 {
 			setTimeout(() => {
 				if (!this.#stdoutOpen) return;
 				this.#diagnose({ kind: "stdout-drain-timeout" });
-				this.#killGroup("SIGKILL");
-				this.#child.stdout?.removeAllListeners("data");
-				this.#child.stdout?.destroy();
+				void this.#group.release();
+				this.#group.stdout?.removeAllListeners("data");
+				this.#group.stdout?.destroy();
 				this.#resolveTerminated({ exit, stdoutDrained: false });
 			}, this.#options.drainGraceMs ?? DEFAULT_DRAIN_GRACE_MS).unref();
 		}
@@ -631,30 +597,4 @@ function listenerErrorName(error: unknown): PrimeRpcListenerErrorNameV0 {
 	} catch {
 		return "other-error";
 	}
-}
-
-/**
- * Whether process group `pgid` has a member that is not a zombie, from /proc (Linux). Undefined when /proc cannot be
- * read, so the caller falls back to kill(-pgid, 0). A /proc/<pid>/stat line is "pid (comm) state ppid pgrp ...", where
- * comm may itself contain spaces and parentheses, so the fields are read after the last ")".
- */
-function liveGroupMember(pgid: number): boolean | undefined {
-	let entries: string[];
-	try {
-		entries = readdirSync("/proc");
-	} catch {
-		return undefined;
-	}
-	for (const entry of entries) {
-		if (!/^[0-9]+$/.test(entry)) continue;
-		let stat: string;
-		try {
-			stat = readFileSync(`/proc/${entry}/stat`, "utf8");
-		} catch {
-			continue; // The process ended while the directory was read.
-		}
-		const [state, , group] = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-		if (Number(group) === pgid && state !== "Z" && state !== "X") return true;
-	}
-	return false;
 }

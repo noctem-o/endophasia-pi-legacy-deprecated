@@ -3,7 +3,16 @@
 // identity, hermetic environments and import-graph boundaries. A local fake stands in for `prime-agent --mode rpc`;
 // no Prime installation, provider key, ~/.prime state or network is used. The live smoke at the end is opt-in only.
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -166,6 +175,26 @@ describe("Prime JSONL framing", () => {
 });
 
 describe("Prime JSONL framing: large and oversized records", () => {
+	it("decodes a record delivered one byte per chunk, and bounds it the same way", () => {
+		const text = "x".repeat(256 * 1024);
+		const record = bytes(`${JSON.stringify({ type: "big", text })}\n`);
+		const decoder = new PrimeJsonlDecoderV0();
+		const records: PrimeJsonlRecordV0[] = [];
+		const started = Date.now();
+		for (let index = 0; index < record.length; index++)
+			records.push(...decoder.push(record.subarray(index, index + 1)));
+		expect(records).toEqual([{ kind: "object", value: { type: "big", text } }]);
+		// Amortized: a quarter of a million one-byte chunks take well under the time a copy per chunk would.
+		expect(Date.now() - started).toBeLessThan(5_000);
+		const bounded = new PrimeJsonlDecoderV0({ maxRecordBytes: 1024 });
+		const faults: PrimeJsonlRecordV0[] = [];
+		for (let index = 0; index < record.length; index++)
+			faults.push(...bounded.push(record.subarray(index, index + 1)));
+		expect(faults).toEqual([{ kind: "fault", fault: "oversized-record", byteLength: record.length - 1 }]);
+		// The decoder is reusable after a large record.
+		expect(decoder.push(bytes('{"type":"after"}\n'))).toEqual([{ kind: "object", value: { type: "after" } }]);
+	});
+
 	it("decodes a large record split over many chunks", () => {
 		const text = "é".repeat(512 * 1024);
 		const record = bytes(`${JSON.stringify({ type: "big", text })}\n`);
@@ -648,7 +677,7 @@ describe("Prime RPC connection: lifecycle", () => {
 	it.runIf(POSIX)("bounds the drain when a descendant holds stdout, and kills the process group", async () => {
 		const { connection, diagnostics } = connect("descendant", { drainGraceMs: 300 });
 		await connection.request({ type: "get_state" });
-		const pid = connection.pid as number;
+		const pid = connection.processGroupId as number;
 		expect(await connection.exited).toEqual({ code: 0, signal: null, spawnFailed: false });
 		const termination = await connection.close();
 		expect(termination.stdoutDrained).toBe(false);
@@ -747,7 +776,7 @@ describe("Prime RPC connection: lifecycle", () => {
 			const { connection, diagnostics } = connect("exit-with-descendant");
 			const response = await connection.request({ type: "get_state" });
 			const descendant = (response.data as { descendant: number }).descendant;
-			const pid = connection.pid as number;
+			const pid = connection.processGroupId as number;
 			await connection.terminated;
 			expect(await gone({ pid: descendant })).toBe(true);
 			expect(diagnostics).toEqual([{ kind: "forced-termination", signal: "SIGTERM" }]);
@@ -819,6 +848,47 @@ describe("Prime RPC connection: extension UI answers", () => {
 			"Prime RPC connection is closing; extension_ui_response was not sent",
 		);
 		await closing;
+	});
+});
+
+describe.runIf(POSIX && existsSync("/proc/self/stat"))("Prime RPC connection: owned process group", () => {
+	it("keeps the command, arguments and environment off the keeper's command line and environment", async () => {
+		const { connection } = connect("echo", {
+			args: ["echo", "--secret", "TOOL_ARGS_SENTINEL"],
+			env: { PATH: process.env.PATH ?? "", PRIME_TOKEN: "PROMPT_SENTINEL" },
+		});
+		await connection.request({ type: "get_state" });
+		const keeper = connection.processGroupId as number;
+		expect(readFileSync(`/proc/${keeper}/cmdline`, "utf8")).not.toMatch(SENTINEL);
+		expect(readFileSync(`/proc/${keeper}/environ`, "utf8")).toBe("");
+	});
+
+	it("ends the whole group when the owning process dies without closing", async () => {
+		const directory = temporaryDirectory("prime-orphan-");
+		const script = join(directory, "owner.ts");
+		writeFileSync(
+			script,
+			[
+				`import { PrimeRpcConnectionV0 } from ${JSON.stringify(join(PACKAGE, "runtime/prime/rpc-connection.ts"))};`,
+				"const connection = new PrimeRpcConnectionV0({",
+				`\tinstallation: { mode: "binary", command: process.execPath, leadingArgs: [${JSON.stringify(FAKE)}] },`,
+				'\targs: ["descendant-ignores-sigterm"],',
+				'\tenv: { PATH: process.env.PATH ?? "" },',
+				`\tcwd: ${JSON.stringify(tmpdir())},`,
+				"});",
+				'const response = await connection.request({ type: "get_state" });',
+				"process.stdout.write(JSON.stringify({ group: connection.processGroupId, prime: connection.pid, descendant: response.data.descendant }));",
+				"process.exit(0);",
+			].join("\n"),
+		);
+		const output = execFileSync(process.execPath, [script], {
+			encoding: "utf8",
+			env: { PATH: process.env.PATH ?? "" },
+		});
+		const { group, prime, descendant } = JSON.parse(output) as { group: number; prime: number; descendant: number };
+		expect(await gone({ group })).toBe(true);
+		expect(running({ pid: prime })).toBe(false);
+		expect(running({ pid: descendant })).toBe(false);
 	});
 });
 
@@ -1062,13 +1132,12 @@ describe("Prime runtime identity", () => {
 		});
 	});
 
-	it.runIf(POSIX)("reports an unknown tree when HEAD moves while the status is read", async () => {
+	/** A checkout with a stand-in git whose HEAD is "a…" on the first read and "b…" after, or alternates on every read. */
+	function movingCheckout(mode: "once" | "always", launcher = '#!/bin/sh\necho "0.9.6"\n') {
 		const root = temporaryDirectory("prime-moving-head-");
-		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		writeFileSync(join(root, "prime-agent.sh"), launcher);
 		chmodSync(join(root, "prime-agent.sh"), 0o755);
-		// A stand-in git whose HEAD changes between reads, as if another process checked out a different commit.
 		const bin = temporaryDirectory("prime-fake-git-");
-		const counter = join(bin, "reads");
 		writeFileSync(
 			join(bin, "git"),
 			[
@@ -1077,24 +1146,55 @@ describe("Prime runtime identity", () => {
 				'if [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then echo "$root"; exit 0; fi',
 				'if [ "$1" = rev-parse ]; then',
 				'  n=$(cat "$PRIME_TEST_COUNTER" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$PRIME_TEST_COUNTER"',
-				`  if [ "$n" = 1 ]; then echo ${"a".repeat(40)}; else echo ${"b".repeat(40)}; fi; exit 0`,
+				'  if [ "$PRIME_TEST_MODE" = always ]; then [ $((n % 2)) = 1 ] && moved=no || moved=yes; else [ "$n" = 1 ] && moved=no || moved=yes; fi',
+				`  if [ "$moved" = no ]; then echo ${"a".repeat(40)}; else echo ${"b".repeat(40)}; fi; exit 0`,
 				"fi",
 				"exit 0",
 			].join("\n"),
 		);
 		chmodSync(join(bin, "git"), 0o755);
-		const env = { PATH: `${bin}:${process.env.PATH ?? ""}`, PRIME_TEST_COUNTER: counter };
+		const env = {
+			PATH: `${bin}:${process.env.PATH ?? ""}`,
+			PRIME_TEST_COUNTER: join(bin, "reads"),
+			PRIME_TEST_MODE: mode,
+		};
 		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
-		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
-			tree: "unknown",
-		});
-		// With a stable HEAD, the same stand-in reports the commit and a clean tree.
-		writeFileSync(counter, "1");
-		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
-			commit: "b".repeat(40),
-			tree: "clean",
-		});
-	});
+		return { installation, env };
+	}
+
+	it.runIf(POSIX)(
+		"rereads the identity when the checkout moves during the read, never mixing two states",
+		async () => {
+			// HEAD moves once, between the snapshots around --version: the read is repeated and reports the settled commit.
+			const once = movingCheckout("once");
+			expect((await readPrimeRuntimeIdentityV0(once.installation, { env: once.env, cwd: tmpdir() })).source).toEqual(
+				{
+					commit: "b".repeat(40),
+					tree: "clean",
+				},
+			);
+			// A checkout that keeps moving is an error, not an identity that never described one runtime.
+			const always = movingCheckout("always");
+			await expect(
+				readPrimeRuntimeIdentityV0(always.installation, { env: always.env, cwd: tmpdir() }),
+			).rejects.toThrow("The Prime checkout changed while its identity was read");
+			// So is a launcher that is rewritten each time --version runs, even with a stable HEAD and status.
+			const selfEditing = movingCheckout("once", '#!/bin/sh\necho "0.9.6"\necho "# $$" >> "$0"\n');
+			writeFileSync(selfEditing.env.PRIME_TEST_COUNTER, "1");
+			await expect(
+				readPrimeRuntimeIdentityV0(selfEditing.installation, { env: selfEditing.env, cwd: tmpdir() }),
+			).rejects.toThrow("The Prime checkout changed while its identity was read");
+			// The same stand-in with a stable HEAD and an unchanging launcher reads cleanly.
+			const stable = movingCheckout("once");
+			writeFileSync(stable.env.PRIME_TEST_COUNTER, "1");
+			expect(
+				(await readPrimeRuntimeIdentityV0(stable.installation, { env: stable.env, cwd: tmpdir() })).source,
+			).toEqual({
+				commit: "b".repeat(40),
+				tree: "clean",
+			});
+		},
+	);
 
 	it.runIf(POSIX)("never reports an enclosing repository's commit as the checkout's", async () => {
 		const outer = temporaryDirectory("prime-outer-repo-");
@@ -1150,7 +1250,7 @@ describe("Prime runtime ingress import boundaries", () => {
 
 	it("runtime/prime imports only node: builtins and its own modules, never research", () => {
 		const files = tsFiles(join(PACKAGE, "runtime/prime"));
-		expect(files.length).toBe(3);
+		expect(files.length).toBe(4);
 		for (const file of files) {
 			for (const specifier of specifiers(file)) expect(specifier).toMatch(/^(node:[a-z_/]+|\.\/[a-z-]+\.ts)$/);
 		}
