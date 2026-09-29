@@ -8,10 +8,9 @@ import type {
 } from "@earendil-works/pi-coding-agent/experimental/services/connection";
 import type { ModelsState } from "@earendil-works/pi-coding-agent/experimental/services/models";
 import type { SessionDirectoryState } from "@earendil-works/pi-coding-agent/experimental/services/sessions";
-import type { RuntimeMetricsV0 } from "../src/runtime-metrics.ts";
+import type { RuntimeMetricsV0 } from "../src/runtime-facts-service.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
-import type { UsageLedgerRowV0 } from "../src/usage-ledger.ts";
-import type { UsageObservationV0 } from "../src/usage-service.ts";
+import type { UsageLedgerRowV0, UsageObservationV0 } from "../src/usage-service.ts";
 
 /** Upper bound for tool arguments, tool output and custom payload previews. */
 export const PREVIEW_LIMIT = 2_000;

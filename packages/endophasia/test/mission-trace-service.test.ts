@@ -28,6 +28,7 @@ import {
 	MISSION_TRACE_REPLICATED_EVENT_LIMIT,
 	type MissionTraceObservationV0,
 } from "../src/index.ts";
+import { createPiMissionTraceSourceV0 } from "../src/pi-runtime-observation.ts";
 import { connectStrictJson } from "./strict-json-transport.ts";
 
 const SENTINELS = [
@@ -95,7 +96,9 @@ async function connect(harness: Pick<AgentHarnessType, "events">): Promise<{
 	binding: RemoteServiceBinding;
 	connection: ReturnType<typeof connectStrictJson>;
 }> {
-	const host = await createFacetHost({ facets: [createEndophasiaMissionTraceFacetV0(harness)] });
+	const host = await createFacetHost({
+		facets: [createEndophasiaMissionTraceFacetV0(createPiMissionTraceSourceV0(harness))],
+	});
 	cleanups.push(() => host.dispose());
 	return { host, ...(await bind(host)) };
 }

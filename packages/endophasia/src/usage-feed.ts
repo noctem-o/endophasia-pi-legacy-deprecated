@@ -1,5 +1,7 @@
+// Pi-specific: the gap-safe feed over Pi's usage events and durable usage reads.
 import type { Context, Events, Session, UsageRow } from "@earendil-works/pi-agent-core";
-import { projectUsageLedgerRowV0, type UsageLedgerRowV0 } from "./usage-ledger.ts";
+import type { UsageFeedListenerV0, UsageFeedSubscriptionV0 } from "./runtime-observation.ts";
+import { projectUsageLedgerRowV0 } from "./usage-ledger.ts";
 
 const DEFAULT_PAGE_SIZE = 1000;
 const MAX_PAGE_SIZE = 10_000;
@@ -18,17 +20,6 @@ export interface UsageFeedOptionsV0 {
 	afterSequence?: number;
 	/** Durable catch-up page size. Default 1000, maximum 10000. */
 	pageSize?: number;
-}
-
-export type UsageFeedListenerV0 = (row: UsageLedgerRowV0) => void | Promise<void>;
-
-export interface UsageFeedSubscriptionV0 {
-	/** Greatest usage sequence whose listener invocation completed successfully: a safe resume cursor. */
-	readonly afterSequence: number;
-	/** False after unsubscribe() or after a listener failure. */
-	readonly active: boolean;
-	/** Idempotent. Stops future delivery. */
-	unsubscribe(): void;
 }
 
 /**

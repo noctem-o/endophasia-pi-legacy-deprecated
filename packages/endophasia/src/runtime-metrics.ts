@@ -1,36 +1,9 @@
+// Pi-specific: projects Pi's maintained session accounting onto the runtime-neutral RuntimeMetricsV0 schema.
 import type { AgentLane, Context, SessionStats } from "@earendil-works/pi-agent-core";
+import type { RuntimeMetricsV0 } from "./runtime-facts-service.ts";
 
-/**
- * Pi's maintained, session-wide accounting at one snapshot, read through a lane's public watch().
- * The lane is only the access route; these totals are not attributable to it.
- * Cumulative accounting, not current context-window occupancy. Recorded/accounted cost, not a provider invoice.
- * Totals include usage from failed, retried, and aborted attempts, plus caller adjustments, which may be negative.
- */
-export interface RuntimeMetricsV0 {
-	schemaVersion: "runtime-metrics.v0";
-	scope: "session";
-	/** Number of persisted `message` entries in the session, of any role. */
-	messageCount: number;
-	usage: {
-		input: number;
-		output: number;
-		cacheRead: number;
-		cacheWrite: number;
-		/** Present only once some accounted row reported it. Subset of cacheWrite. */
-		cacheWrite1h?: number;
-		/** Present only once some accounted row reported it. Subset of output. */
-		reasoning?: number;
-		/** Sum of reported totalTokens; not recomputed from the components. */
-		totalTokens: number;
-		cost: {
-			input: number;
-			output: number;
-			cacheRead: number;
-			cacheWrite: number;
-			total: number;
-		};
-	};
-}
+// The schema is the runtime-neutral contract's; re-exported for the modules that already import it from here.
+export type { RuntimeMetricsV0 };
 
 function projectStats(stats: SessionStats): RuntimeMetricsV0 {
 	const { usage } = stats;
@@ -57,7 +30,10 @@ function projectStats(stats: SessionStats): RuntimeMetricsV0 {
 	};
 }
 
-/** Capture Pi's maintained session accounting with a short-lived watch. Read failures propagate. */
+/**
+ * Capture Pi's maintained, session-wide accounting with a short-lived watch of a lane. The lane is only the access
+ * route; these totals are not attributable to it. Read failures propagate.
+ */
 export async function captureRuntimeMetricsV0(
 	lane: Pick<AgentLane, "watch">,
 	context: Context,

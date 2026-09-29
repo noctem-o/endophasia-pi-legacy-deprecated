@@ -39,6 +39,7 @@ import {
 	queueFollowUpV0,
 	stopV0,
 } from "../src/index.ts";
+import { createPiOperationOutcomeSourceV0, createPiRuntimeMetricsSourceV0 } from "../src/pi-runtime-observation.ts";
 import { exactUsageProvider, usage } from "./exact-usage-provider.ts";
 import { connectStrictJson, HOST_REQUEST } from "./strict-json-transport.ts";
 
@@ -140,7 +141,14 @@ async function connect(lane: Pick<AgentLane, "watch" | "getResult">): Promise<{
 	binding: RemoteServiceBinding;
 	connection: ReturnType<typeof connectStrictJson>;
 }> {
-	const host = await createFacetHost({ facets: [createEndophasiaRuntimeFactsFacetV0(lane)] });
+	const host = await createFacetHost({
+		facets: [
+			createEndophasiaRuntimeFactsFacetV0({
+				runtimeMetrics: createPiRuntimeMetricsSourceV0(lane),
+				operationOutcome: createPiOperationOutcomeSourceV0(lane),
+			}),
+		],
+	});
 	const connection = connectStrictJson(host.services);
 	const errors: Error[] = [];
 	const binding = createRemoteServiceBinding({

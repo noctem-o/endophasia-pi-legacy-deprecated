@@ -191,6 +191,12 @@ try {
 				normalized.endsWith("packages/endophasia/src/usage-facet.ts") ||
 				normalized.endsWith("packages/endophasia/src/usage-feed.ts") ||
 				normalized.endsWith("packages/endophasia/src/usage-ledger.ts") ||
+				// Runtime observation contracts are bundled; the runtime adapter and its projections stay on the host.
+				normalized.endsWith("packages/endophasia/src/pi-runtime-observation.ts") ||
+				normalized.endsWith("packages/endophasia/src/mission-trace.ts") ||
+				normalized.endsWith("packages/endophasia/src/runtime-metrics.ts") ||
+				normalized.endsWith("packages/endophasia/src/durable-outcomes.ts") ||
+				normalized.includes("packages/endophasia/research/") ||
 				normalized.includes("packages/server/") ||
 				normalized.endsWith("packages/client/src/unix.ts") ||
 				normalized.endsWith("packages/coding-agent/src/experimental/server.ts")

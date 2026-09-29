@@ -9,6 +9,11 @@ import {
 import { runCodingAgentSessionWorker } from "@earendil-works/pi-coding-agent/experimental/session-worker";
 import { createEndophasiaInspectorFacetV0 } from "../../src/inspector-service.ts";
 import { createEndophasiaMissionTraceFacetV0 } from "../../src/mission-trace-service.ts";
+import {
+	createPiMissionTraceSourceV0,
+	createPiOperationOutcomeSourceV0,
+	createPiRuntimeMetricsSourceV0,
+} from "../../src/pi-runtime-observation.ts";
 import { createEndophasiaRuntimeFactsFacetV0 } from "../../src/runtime-facts-service.ts";
 
 if (isDirectInternalProcessEntry(import.meta.url)) {
@@ -19,8 +24,11 @@ if (isDirectInternalProcessEntry(import.meta.url)) {
 			const main = await harness.lane("main", BACKGROUND_CONTEXT);
 			return [
 				createEndophasiaInspectorFacetV0(harness),
-				createEndophasiaMissionTraceFacetV0(harness),
-				createEndophasiaRuntimeFactsFacetV0(main),
+				createEndophasiaMissionTraceFacetV0(createPiMissionTraceSourceV0(harness)),
+				createEndophasiaRuntimeFactsFacetV0({
+					runtimeMetrics: createPiRuntimeMetricsSourceV0(main),
+					operationOutcome: createPiOperationOutcomeSourceV0(main),
+				}),
 			];
 		},
 	}).catch(() => process.exit(1));
