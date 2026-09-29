@@ -1144,6 +1144,40 @@ describe("Runtime Profile projection", () => {
 		}
 		expect(
 			projectRuntimeProfile({ ...profile(), schemaVersion: "runtime-profile.v9", scope: "session" }),
-		).toMatchObject({ schemaNote: "Unrecognized schema version · runtime-profile.v9", scope: "session" });
+		).toMatchObject({
+			schemaNote: "Unrecognized schema version · runtime-profile.v9",
+			scope: "session",
+			workerLifetime: false,
+		});
+	});
+
+	it("claims the worker lifetime only for the exact v0 scope", () => {
+		expect(projectRuntimeProfile(profile()).workerLifetime).toBe(true);
+		for (const scope of ["session", "Session worker lifetime", "", undefined, 7]) {
+			expect(projectRuntimeProfile({ ...profile(), scope }).workerLifetime).toBe(false);
+		}
+	});
+
+	it("bounds every rendered string field of a hostile profile", () => {
+		const huge = "y".repeat(5_000_000);
+		const view = projectRuntimeProfile({
+			schemaVersion: huge,
+			scope: huge,
+			runtimeFamily: huge,
+			adapterProfileId: huge,
+			capabilities: [huge],
+		});
+		const bounded = `${"y".repeat(200)}…`;
+		expect(view).toMatchObject({
+			runtimeFamily: bounded,
+			adapterProfileId: bounded,
+			scope: bounded,
+			schemaNote: `Unrecognized schema version · ${bounded}`,
+			unrecognized: [bounded],
+		});
+		expect(JSON.stringify(view).length).toBeLessThan(10_000);
+		// Values at the bound are shown unchanged.
+		const exact = "z".repeat(200);
+		expect(projectRuntimeProfile({ ...profile(), runtimeFamily: exact }).runtimeFamily).toBe(exact);
 	});
 });

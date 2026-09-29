@@ -600,7 +600,8 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 	const renderProfile = (controller: CockpitController): void => {
 		const visibility = controller.runtimeProfile;
 		const header = el("div", "section-header");
-		header.append(el("h3", "section-title", "Runtime Profile"), el("span", "chip", "Live · worker lifetime"));
+		const scopeChip = el("span", "chip", "Live");
+		header.append(el("h3", "section-title", "Runtime Profile"), scopeChip);
 		if (visibility.status === "hidden") {
 			const message = {
 				detached: "Attach a Session to see its worker's Runtime Profile.",
@@ -612,6 +613,8 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 			return;
 		}
 		const view = projectRuntimeProfile(visibility.profile);
+		// The lifetime is claimed only when the profile states the exact v0 scope.
+		scopeChip.textContent = view.workerLifetime ? "Live · worker lifetime" : "Live · unrecognized scope";
 		const fields = el("dl", "fields");
 		fields.append(
 			field("Runtime family", view.runtimeFamily, "mono"),

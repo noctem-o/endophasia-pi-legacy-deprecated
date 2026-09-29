@@ -922,7 +922,7 @@ export function projectContinuity(
 // ---------------------------------------------------------------------------------------------------------------
 // Runtime Profile v0
 
-/** Identifiers outside the v0 catalogue are shown at most this long. */
+/** Strings from a profile (identifiers, family, scope, schema version) are shown at most this long. */
 const PROFILE_TEXT_LIMIT = 200;
 /** Identifiers outside the v0 catalogue the cockpit renders at most; a hostile profile can list many thousands. */
 export const UNRECOGNIZED_CAPABILITY_ROW_LIMIT = 20;
@@ -979,6 +979,8 @@ export interface RuntimeProfileView {
 	readonly runtimeFamily: string;
 	readonly adapterProfileId: string;
 	readonly scope: string;
+	/** True only when the profile states the exact v0 scope, session-worker-lifetime. */
+	readonly workerLifetime: boolean;
 	/** Present when the profile's schema version is not runtime-profile.v0. */
 	readonly schemaNote?: string;
 	readonly advertised: string;
@@ -990,6 +992,10 @@ export interface RuntimeProfileView {
 	readonly unrecognized: readonly string[];
 	/** Present when more distinct unrecognized identifiers were advertised than are shown. */
 	readonly unrecognizedWindow?: string;
+}
+
+function boundProfileText(value: string): string {
+	return value.length > PROFILE_TEXT_LIMIT ? `${value.slice(0, PROFILE_TEXT_LIMIT)}…` : value;
 }
 
 function isKnownCapability(id: string): id is EndophasiaRuntimeCapabilityIdV0 {
@@ -1013,19 +1019,23 @@ export function projectRuntimeProfile(profile: unknown): RuntimeProfileView {
 		else if (shown.size < UNRECOGNIZED_CAPABILITY_ROW_LIMIT) shown.add(id);
 		else if (!shown.has(id)) more = true;
 	}
-	const unrecognized = [...shown].map((id) =>
-		id.length > PROFILE_TEXT_LIMIT ? `${id.slice(0, PROFILE_TEXT_LIMIT)}…` : id,
-	);
+	const unrecognized = [...shown].map(boundProfileText);
 	const catalogue = Object.keys(RUNTIME_CAPABILITY_VIEW) as EndophasiaRuntimeCapabilityIdV0[];
 	const scope = stringField(record, "scope");
 	const schemaVersion = stringField(record, "schemaVersion");
+	const workerLifetime = scope === "session-worker-lifetime";
+	// Every string the view renders from the profile is bounded, as a malformed worker may send megabytes in one field.
+	const text = (value: string | undefined): string => (value === undefined ? "not reported" : boundProfileText(value));
 	return {
-		runtimeFamily: stringField(record, "runtimeFamily") ?? "not reported",
-		adapterProfileId: stringField(record, "adapterProfileId") ?? "not reported",
-		scope: scope === "session-worker-lifetime" ? "Session worker lifetime" : (scope ?? "not reported"),
+		runtimeFamily: text(stringField(record, "runtimeFamily")),
+		adapterProfileId: text(stringField(record, "adapterProfileId")),
+		scope: workerLifetime ? "Session worker lifetime" : text(scope),
+		workerLifetime,
 		...(schemaVersion === "runtime-profile.v0"
 			? {}
-			: { schemaNote: `Unrecognized schema version · ${schemaVersion ?? "none"}` }),
+			: {
+					schemaNote: `Unrecognized schema version · ${schemaVersion === undefined ? "none" : boundProfileText(schemaVersion)}`,
+				}),
 		advertised: `${advertised.size} of ${catalogue.length} Endophasia v0 capabilities advertised`,
 		groups: RUNTIME_CAPABILITY_GROUPS.map(({ group, title, note }) => ({
 			title,
