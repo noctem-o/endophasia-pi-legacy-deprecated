@@ -1,0 +1,710 @@
+// Offline tests for Prime RPC Runtime Ingress v0 (runtime/prime): strict JSONL framing (held to the research probe's
+// decoder by differential tests), request correlation, ordered events, listener isolation, bounded lifecycle, runtime
+// identity, hermetic environments and import-graph boundaries. A local fake stands in for `prime-agent --mode rpc`;
+// no Prime installation, provider key, ~/.prime state or network is used. The live smoke at the end is opt-in only.
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { JsonlDecoderV0, type JsonlRecordV0 } from "../research/prime-conformance/jsonl.ts";
+import { PrimeJsonlDecoderV0, type PrimeJsonlRecordV0 } from "../runtime/prime/jsonl.ts";
+import {
+	type PrimeRpcConnectionOptionsV0,
+	PrimeRpcConnectionV0,
+	type PrimeRpcDiagnosticV0,
+	PrimeRpcErrorV0,
+	type PrimeRpcEventV0,
+	PrimeRpcExitErrorV0,
+} from "../runtime/prime/rpc-connection.ts";
+import {
+	type PrimeInstallationV0,
+	readPrimeRuntimeIdentityV0,
+	resolvePrimeInstallationV0,
+} from "../runtime/prime/runtime-identity.ts";
+
+const PACKAGE = fileURLToPath(new URL("..", import.meta.url));
+const FAKE = fileURLToPath(new URL("./fixtures/prime-ingress/fake-prime-rpc.mjs", import.meta.url));
+const SENTINEL = /PROMPT_SENTINEL|ASSISTANT_SENTINEL|TOOL_ARGS_SENTINEL/;
+const POSIX = process.platform !== "win32";
+const encoder = new TextEncoder();
+const bytes = (text: string) => encoder.encode(text);
+
+function decodeAll(chunks: readonly Uint8Array[]): PrimeJsonlRecordV0[] {
+	const decoder = new PrimeJsonlDecoderV0();
+	return [...chunks.flatMap((chunk) => decoder.push(chunk)), ...decoder.end()];
+}
+
+const opened: PrimeRpcConnectionV0[] = [];
+const temporary: string[] = [];
+afterEach(async () => {
+	await Promise.all(opened.splice(0).map((connection) => connection.close()));
+});
+afterAll(() => {
+	for (const directory of temporary) rmSync(directory, { recursive: true, force: true });
+});
+
+function temporaryDirectory(prefix: string): string {
+	const directory = mkdtempSync(join(tmpdir(), prefix));
+	temporary.push(directory);
+	return directory;
+}
+
+/** A connection to the fake in one mode, with an exact minimal environment and every diagnostic collected. */
+function connect(mode: string, options: Partial<PrimeRpcConnectionOptionsV0> = {}) {
+	const diagnostics: PrimeRpcDiagnosticV0[] = [];
+	const events: PrimeRpcEventV0[] = [];
+	const connection = new PrimeRpcConnectionV0({
+		installation: { mode: "binary", command: process.execPath, leadingArgs: [FAKE] },
+		args: [mode],
+		env: { PATH: process.env.PATH ?? "" },
+		cwd: tmpdir(),
+		requestTimeoutMs: 10_000,
+		onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+		...options,
+	});
+	connection.subscribe((event) => events.push(event));
+	opened.push(connection);
+	return { connection, diagnostics, events };
+}
+
+const faults = (diagnostics: readonly PrimeRpcDiagnosticV0[]) =>
+	diagnostics.flatMap((diagnostic) => (diagnostic.kind === "protocol-fault" ? [diagnostic.fault] : []));
+
+describe("Prime JSONL framing", () => {
+	it("decodes one record, several records in one chunk, and a partial final record at end of stream", () => {
+		expect(decodeAll([bytes('{"type":"a"}\n')])).toEqual([{ kind: "object", value: { type: "a" } }]);
+		expect(decodeAll([bytes('{"type":"a"}\n{"type":"b"}\n{"type":"c"}\n')]).map((r) => r.kind)).toEqual([
+			"object",
+			"object",
+			"object",
+		]);
+		const decoder = new PrimeJsonlDecoderV0();
+		expect(decoder.push(bytes('{"type":"a"}\n{"type":'))).toHaveLength(1);
+		expect(decoder.push(bytes('"b"}'))).toEqual([]);
+		expect(decoder.end()).toEqual([{ kind: "object", value: { type: "b" } }]);
+		expect(decoder.end()).toEqual([]);
+	});
+
+	it("reassembles UTF-8 split at every byte and keeps U+2028 and U+2029 inside a record", () => {
+		const record = bytes('{"type":"x","text":"é🙂 mid end"}\n');
+		for (let cut = 0; cut <= record.length; cut++) {
+			expect(decodeAll([record.subarray(0, cut), record.subarray(cut)])).toEqual([
+				{ kind: "object", value: { type: "x", text: "é🙂 mid end" } },
+			]);
+		}
+		expect(decodeAll([...record].map((byte) => Uint8Array.of(byte)))).toHaveLength(1);
+	});
+
+	it("strips one CR before LF and never splits on a lone CR", () => {
+		expect(decodeAll([bytes('{"type":"a"}\r\n')])).toEqual([{ kind: "object", value: { type: "a" } }]);
+		expect(decodeAll([bytes("\r\n")])).toEqual([{ kind: "fault", fault: "empty-record", byteLength: 0 }]);
+		// A lone CR is not a record separator: two objects joined by CR are one malformed record.
+		expect(decodeAll([bytes('{"type":"a"}\r{"type":"b"}\n')])).toEqual([
+			{ kind: "fault", fault: "malformed-json", byteLength: 25 },
+		]);
+	});
+
+	it("treats blank lines, malformed JSON, malformed UTF-8 and non-objects as faults, never as records", () => {
+		expect(decodeAll([bytes('\n{"type":"a"}\n')]).map((r) => (r.kind === "fault" ? r.fault : r.kind))).toEqual([
+			"empty-record",
+			"object",
+		]);
+		expect(decodeAll([bytes('{"type":"a"\n')])).toEqual([{ kind: "fault", fault: "malformed-json", byteLength: 11 }]);
+		expect(decodeAll([bytes('{"a":1}{"b":2}\n')])[0]).toMatchObject({ fault: "malformed-json" });
+		const invalid = Uint8Array.of(...bytes('{"type":"'), 0xff, ...bytes('"}\n'));
+		expect(decodeAll([invalid])).toEqual([{ kind: "fault", fault: "malformed-utf8", byteLength: 12 }]);
+		// An overlong encoding and a lone surrogate are malformed too, not replaced with U+FFFD.
+		expect(decodeAll([Uint8Array.of(...bytes('{"t":"'), 0xc0, 0xaf, ...bytes('"}\n'))])[0]).toMatchObject({
+			fault: "malformed-utf8",
+		});
+		expect(decodeAll([Uint8Array.of(...bytes('{"t":"'), 0xed, 0xa0, 0x80, ...bytes('"}\n'))])[0]).toMatchObject({
+			fault: "malformed-utf8",
+		});
+		for (const value of ["[]", "null", "1", '"text"', "true"]) {
+			expect(decodeAll([bytes(`${value}\n`)])[0]).toMatchObject({ kind: "fault", fault: "not-an-object" });
+		}
+		// A truncated multi-byte code point at end of stream is malformed, not silently dropped.
+		expect(decodeAll([Uint8Array.of(...bytes('{"t":"'), 0xf0, 0x9f)])[0]).toMatchObject({ fault: "malformed-utf8" });
+	});
+});
+
+describe("Prime JSONL framing is no weaker than the research probe's", () => {
+	const corpus: readonly Uint8Array[] = [
+		bytes('{"type":"a"}\n'),
+		bytes('{"type":"b","text":"  "}\r\n'),
+		bytes("\n"),
+		bytes("\r\n"),
+		bytes('{"type":\n'),
+		bytes("[1,2]\n"),
+		bytes("null\n"),
+		bytes('"string"\n'),
+		bytes('{"a":1}{"b":2}\n'),
+		bytes('{"type":"é🙂"}\n'),
+		Uint8Array.of(...bytes('{"x":"'), 0xff, ...bytes('"}\n')),
+		Uint8Array.of(...bytes('{"x":"'), 0xed, 0xa0, 0x80, ...bytes('"}\n')),
+		bytes('{"type":"c"}\r\r\n'),
+		bytes('{"type":"no-final-lf"}'),
+	];
+	const categories: Record<string, string> = {
+		"Empty record": "empty-record",
+		"Malformed UTF-8": "malformed-utf8",
+		"Malformed JSON": "malformed-json",
+		"Record is not a JSON object": "not-an-object",
+	};
+	const research = (chunks: readonly Uint8Array[]) => {
+		const decoder = new JsonlDecoderV0();
+		return [...chunks.flatMap((chunk) => decoder.push(chunk)), ...decoder.end()];
+	};
+	const comparable = (record: JsonlRecordV0) =>
+		record.kind === "object" ? record : { kind: "fault", fault: categories[record.error] ?? record.error };
+	const production = (record: PrimeJsonlRecordV0) =>
+		record.kind === "object" ? record : { kind: "fault", fault: record.fault };
+
+	it("classifies every record of a hostile corpus the same way, whatever the chunking", () => {
+		let seed = 7;
+		const random = () => {
+			seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+			return seed / 2_147_483_648;
+		};
+		for (let trial = 0; trial < 200; trial++) {
+			const order = corpus.map((_, index) => index).sort(() => random() - 0.5);
+			// The record without a final LF is only meaningful last.
+			const joined = Uint8Array.from(
+				order
+					.filter((index) => index !== corpus.length - 1)
+					.flatMap((index) => [...corpus[index]])
+					.concat(trial % 2 === 0 ? [...corpus[corpus.length - 1]] : []),
+			);
+			const chunks: Uint8Array[] = [];
+			let start = 0;
+			while (start < joined.length) {
+				const size = 1 + Math.floor(random() * 9);
+				chunks.push(joined.subarray(start, start + size));
+				start += size;
+			}
+			const expected = research(chunks).map(comparable);
+			expect(decodeAll(chunks).map(production)).toEqual(expected);
+			expect(expected.some((record) => record.kind === "fault")).toBe(true);
+		}
+	});
+
+	it("reports byte lengths where the research decoder does", () => {
+		for (const record of [bytes("\n"), Uint8Array.of(...bytes('{"x":"'), 0xff, ...bytes('"}\n'))]) {
+			const [expected] = research([record]);
+			const [actual] = decodeAll([record]);
+			expect(expected.kind === "invalid" && actual.kind === "fault" && actual.byteLength).toBe(
+				expected.kind === "invalid" ? expected.length : undefined,
+			);
+		}
+	});
+});
+
+describe("Prime RPC connection: correlation", () => {
+	it("delivers events before the response, with U+2028 and U+2029 intact", async () => {
+		const { connection, events, diagnostics } = connect("echo");
+		const response = await connection.request({ type: "get_state" });
+		expect(response).toEqual({
+			id: "endophasia-1",
+			command: "get_state",
+			success: true,
+			data: { echoed: "get_state" },
+		});
+		expect(events).toEqual([
+			{
+				type: "message_update",
+				record: { type: "message_update", delta: "ASSISTANT_SENTINEL", note: " line separators" },
+			},
+		]);
+		expect(diagnostics).toEqual([]);
+	});
+
+	it("resolves a refusal as success: false, never as an error", async () => {
+		const { connection } = connect("refuse");
+		const response = await connection.request({ type: "prompt", message: "hi" });
+		expect(response.success).toBe(false);
+		expect(response.error).toMatch(/^refused /);
+	});
+
+	it("correlates responses that arrive out of order", async () => {
+		const { connection } = connect("reverse");
+		const first = connection.request({ type: "get_state" });
+		const second = connection.request({ type: "get_messages" });
+		expect(await first).toMatchObject({ id: "endophasia-1", command: "get_state" });
+		expect(await second).toMatchObject({ id: "endophasia-2", command: "get_messages" });
+	});
+
+	it("settles once: a duplicate response ID is a fault", async () => {
+		const { connection, diagnostics } = connect("duplicate");
+		expect(await connection.request({ type: "get_state" })).toMatchObject({ success: true });
+		await connection.request({ type: "get_state" });
+		expect(faults(diagnostics)).toEqual(["duplicate-response-id", "duplicate-response-id"]);
+	});
+
+	it("reports an unknown response ID and a response without an ID, and delivers neither", async () => {
+		const unknown = connect("unknown-id");
+		expect(await unknown.connection.request({ type: "get_state" })).toMatchObject({ success: true });
+		expect(faults(unknown.diagnostics)).toEqual(["unknown-response-id"]);
+		const withoutId = connect("no-id");
+		expect(await withoutId.connection.request({ type: "get_state" })).toMatchObject({ success: true });
+		expect(faults(withoutId.diagnostics)).toEqual(["response-without-id"]);
+	});
+
+	it("rejects a response that echoes another command", async () => {
+		const { connection, diagnostics } = connect("wrong-command");
+		const error = await connection.request({ type: "get_state" }).catch((caught: unknown) => caught);
+		expect(error).toBeInstanceOf(PrimeRpcErrorV0);
+		expect((error as Error).message).toBe("Prime RPC response endophasia-1 does not echo get_state");
+		expect(faults(diagnostics)).toEqual(["command-mismatch"]);
+	});
+
+	it("never settles a request with a malformed response", async () => {
+		const { connection, diagnostics } = connect("malformed-response");
+		expect(await connection.request({ type: "get_state" })).toEqual({
+			id: "endophasia-1",
+			command: "get_state",
+			success: true,
+		});
+		expect(faults(diagnostics)).toEqual(["malformed-response", "malformed-response"]);
+	});
+
+	it("reports hostile records as categorized faults without content and keeps going", async () => {
+		const { connection, diagnostics, events } = connect("hostile-records");
+		expect(await connection.request({ type: "get_state" })).toMatchObject({ success: true });
+		expect(faults(diagnostics)).toEqual([
+			"empty-record",
+			"malformed-json",
+			"not-an-object",
+			"malformed-utf8",
+			"missing-type",
+		]);
+		expect(events).toEqual([]);
+		expect(JSON.stringify(diagnostics)).not.toMatch(SENTINEL);
+	});
+
+	it("reassembles records split across chunks, several per chunk, with CRLF", async () => {
+		const { connection, events, diagnostics } = connect("split");
+		expect(await connection.request({ type: "get_state" })).toMatchObject({ data: { text: "é🙂" } });
+		expect(events.map((event) => event.type)).toEqual(["turn_start", "turn_end"]);
+		expect(events[1].record.t).toBe("  ");
+		expect(diagnostics).toEqual([]);
+	});
+
+	it("keeps events without IDs in order around an interleaved response", async () => {
+		const { connection, events } = connect("interleave");
+		await connection.request({ type: "prompt", message: "hi" });
+		await connection.close();
+		expect(events.map((event) => event.type)).toEqual(["agent_start", "message_end", "agent_end"]);
+	});
+
+	it("rejects commands that carry an ID or no type, and times out an unanswered request", async () => {
+		const { connection } = connect("reverse");
+		await expect(connection.request({ type: "get_state", id: "mine" })).rejects.toThrow(
+			"Prime RPC request IDs are assigned by the connection",
+		);
+		await expect(connection.request({ type: "" })).rejects.toThrow("A Prime RPC command needs a type");
+		await expect(connection.request({ type: "get_state" }, { timeoutMs: 100 })).rejects.toThrow(
+			"Prime RPC get_state (endophasia-1) timed out after 100 ms",
+		);
+	});
+});
+
+describe("Prime RPC connection: listeners", () => {
+	it("isolates a throwing event listener and reports only its error name", async () => {
+		const { connection, diagnostics, events } = connect("interleave");
+		connection.subscribe(() => {
+			throw new TypeError("ASSISTANT_SENTINEL leaked");
+		});
+		const after: string[] = [];
+		connection.subscribe((event) => after.push(event.type));
+		connection.subscribe(() => {
+			throw "PROMPT_SENTINEL";
+		});
+		await connection.request({ type: "prompt" });
+		await connection.close();
+		expect(events.map((event) => event.type)).toEqual(["agent_start", "message_end", "agent_end"]);
+		expect(after).toEqual(["agent_start", "message_end", "agent_end"]);
+		expect(diagnostics.filter((diagnostic) => diagnostic.kind === "listener-failure")).toEqual([
+			{ kind: "listener-failure", listener: "event", errorName: "TypeError" },
+			{ kind: "listener-failure", listener: "event", errorName: "string" },
+			{ kind: "listener-failure", listener: "event", errorName: "TypeError" },
+			{ kind: "listener-failure", listener: "event", errorName: "string" },
+			{ kind: "listener-failure", listener: "event", errorName: "TypeError" },
+			{ kind: "listener-failure", listener: "event", errorName: "string" },
+		]);
+		expect(JSON.stringify(diagnostics)).not.toMatch(SENTINEL);
+	});
+
+	it("survives a throwing diagnostic sink", async () => {
+		const { connection } = connect("hostile-records", {
+			onDiagnostic: () => {
+				throw new Error("sink failed");
+			},
+		});
+		expect(await connection.request({ type: "get_state" })).toMatchObject({ success: true });
+	});
+
+	it("observes each command synchronously as it is written, before its events and response", async () => {
+		const { connection } = connect("interleave");
+		const log: string[] = [];
+		connection.observeCommands((command) => log.push(`command ${command.type} ${command.id}`));
+		connection.observeCommands(() => {
+			throw new RangeError("observer failed");
+		});
+		connection.subscribe((event) => log.push(`event ${event.type}`));
+		const response = connection.request({ type: "abort" });
+		expect(log).toEqual(["command abort endophasia-1"]);
+		await response;
+		expect(log.slice(0, 3)).toEqual(["command abort endophasia-1", "event agent_start", "event message_end"]);
+	});
+
+	it("stops delivering to an unsubscribed listener", async () => {
+		const { connection } = connect("interleave");
+		const seen: string[] = [];
+		const unsubscribe = connection.subscribe((event) => {
+			seen.push(event.type);
+			unsubscribe();
+		});
+		await connection.request({ type: "prompt" });
+		await connection.close();
+		expect(seen).toEqual(["agent_start"]);
+	});
+});
+
+describe("Prime RPC connection: lifecycle", () => {
+	it("rejects a pending request when the process exits, and every later request", async () => {
+		const { connection } = connect("exit-pending");
+		const error = await connection.request({ type: "prompt" }).catch((caught: unknown) => caught);
+		expect(error).toBeInstanceOf(PrimeRpcExitErrorV0);
+		expect((error as PrimeRpcExitErrorV0).exit).toEqual({ code: 3, signal: null, spawnFailed: false });
+		expect(await connection.exited).toEqual({ code: 3, signal: null, spawnFailed: false });
+		await expect(connection.request({ type: "get_state" })).rejects.toBeInstanceOf(PrimeRpcExitErrorV0);
+		// close() after exit still waits for the drain and returns the same termination.
+		expect(await connection.close()).toEqual(await connection.terminated);
+		expect((await connection.terminated).stdoutDrained).toBe(true);
+	});
+
+	it("decodes every record written before exit, including a final record without LF", async () => {
+		const { connection, events, diagnostics } = connect("trailing-exit");
+		await connection.request({ type: "get_state" });
+		const termination = await connection.terminated;
+		expect(termination).toEqual({ exit: { code: 0, signal: null, spawnFailed: false }, stdoutDrained: true });
+		expect(events.map((event) => event.type)).toEqual(["late_event", "final_without_lf"]);
+		expect(diagnostics).toEqual([]);
+	});
+
+	it.runIf(POSIX)("bounds the drain when a descendant holds stdout, and kills the process group", async () => {
+		const { connection, diagnostics } = connect("descendant", { drainGraceMs: 300 });
+		await connection.request({ type: "get_state" });
+		const pid = connection.pid as number;
+		expect(await connection.exited).toEqual({ code: 0, signal: null, spawnFailed: false });
+		const termination = await connection.close();
+		expect(termination.stdoutDrained).toBe(false);
+		expect(diagnostics).toContainEqual({ kind: "stdout-drain-timeout" });
+		const deadline = Date.now() + 5_000;
+		let alive = true;
+		while (alive && Date.now() < deadline) {
+			try {
+				process.kill(-pid, 0);
+				await new Promise((done) => setTimeout(done, 50));
+			} catch {
+				alive = false;
+			}
+		}
+		expect(alive).toBe(false);
+	});
+
+	it("closes idempotently, and refuses requests while closing", async () => {
+		const { connection } = connect("echo");
+		await connection.request({ type: "get_state" });
+		const first = connection.close();
+		expect(connection.close()).toBe(first);
+		await expect(connection.request({ type: "get_state" })).rejects.toThrow(
+			"Prime RPC connection is closing; get_state was not sent",
+		);
+		expect(await first).toEqual({ exit: { code: 0, signal: null, spawnFailed: false }, stdoutDrained: true });
+	});
+
+	it("escalates to SIGTERM when Prime ignores the end of its input", async () => {
+		const { connection, diagnostics } = connect("ignore-stdin-end", { closeTimeoutMs: 200 });
+		await connection.request({ type: "get_state" });
+		const termination = await connection.close();
+		expect(termination.exit).toEqual({ code: null, signal: "SIGTERM", spawnFailed: false });
+		expect(diagnostics).toEqual([{ kind: "forced-termination", signal: "SIGTERM" }]);
+	});
+
+	it.runIf(POSIX)("escalates to SIGKILL when Prime ignores SIGTERM", async () => {
+		const { connection, diagnostics } = connect("ignore-sigterm", { closeTimeoutMs: 200 });
+		await connection.request({ type: "get_state" });
+		const termination = await connection.close();
+		expect(termination.exit).toEqual({ code: null, signal: "SIGKILL", spawnFailed: false });
+		expect(diagnostics).toEqual([
+			{ kind: "forced-termination", signal: "SIGTERM" },
+			{ kind: "forced-termination", signal: "SIGKILL" },
+		]);
+	});
+
+	it("reports a process that could not start, and rejects its requests", async () => {
+		const { connection } = connect("echo", {
+			installation: { mode: "binary", command: join(tmpdir(), "no-such-prime-agent"), leadingArgs: [] },
+		});
+		const error = await connection.request({ type: "get_state" }).catch((caught: unknown) => caught);
+		expect(error).toBeInstanceOf(PrimeRpcExitErrorV0);
+		expect((error as Error).message).toMatch(/^Prime RPC process could not start before responding to get_state/);
+		expect(await connection.exited).toEqual({ code: null, signal: null, spawnFailed: true });
+		expect(await connection.close()).toMatchObject({ exit: { spawnFailed: true } });
+	});
+});
+
+describe("Prime RPC connection: hermetic environment", () => {
+	it("passes exactly the given environment, never this process's credentials", async () => {
+		const saved = process.env.OPENAI_API_KEY;
+		process.env.OPENAI_API_KEY = "sk-must-not-leak";
+		try {
+			const { connection } = connect("env");
+			const response = await connection.request({ type: "get_state" });
+			expect(response.data).toEqual({ hasOpenAiKey: false, keys: ["PATH"] });
+		} finally {
+			if (saved === undefined) delete process.env.OPENAI_API_KEY;
+			else process.env.OPENAI_API_KEY = saved;
+		}
+	});
+});
+
+describe("Prime runtime identity", () => {
+	it("resolves PRIME_AGENT_BIN before PRIME_AGENT_ROOT, against the given cwd", () => {
+		const cwd = resolve("/work");
+		expect(resolvePrimeInstallationV0({}, cwd)).toBeUndefined();
+		expect(resolvePrimeInstallationV0({ PRIME_AGENT_BIN: "", PRIME_AGENT_ROOT: "" }, cwd)).toBeUndefined();
+		expect(resolvePrimeInstallationV0({ PRIME_AGENT_BIN: "prime-agent" }, cwd)).toEqual({
+			mode: "binary",
+			command: "prime-agent",
+			leadingArgs: [],
+		});
+		expect(resolvePrimeInstallationV0({ PRIME_AGENT_BIN: "bin/prime-agent", PRIME_AGENT_ROOT: "/src" }, cwd)).toEqual(
+			{
+				mode: "binary",
+				command: resolve(cwd, "bin/prime-agent"),
+				leadingArgs: [],
+			},
+		);
+		expect(resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: "prime" }, cwd)).toEqual({
+			mode: "source-checkout",
+			root: resolve(cwd, "prime"),
+			command: join(resolve(cwd, "prime"), "prime-agent.sh"),
+			leadingArgs: [],
+		});
+	});
+
+	function versionScript(output: string, stream: "stdout" | "stderr" = "stdout"): PrimeInstallationV0 {
+		const directory = temporaryDirectory("prime-identity-");
+		const script = join(directory, "version.mjs");
+		writeFileSync(script, `process.${stream}.write(${JSON.stringify(output)});\n`);
+		return { mode: "binary", command: process.execPath, leadingArgs: [script] };
+	}
+	const options = { env: { PATH: process.env.PATH ?? "" }, cwd: tmpdir() };
+
+	it("reads a binary's version and claims no source commit", async () => {
+		const installation = versionScript("prime-agent 0.9.6\n");
+		expect(await readPrimeRuntimeIdentityV0(installation, options)).toEqual({ version: "0.9.6", installation });
+		expect(
+			(await readPrimeRuntimeIdentityV0(versionScript("prime-agent 0.9.6-beta.1\n", "stderr"), options)).version,
+		).toBe("0.9.6-beta.1");
+		// A version-like path segment is not a version.
+		expect((await readPrimeRuntimeIdentityV0(versionScript("/opt/prime-1.2.3/bin 0.9.6\n"), options)).version).toBe(
+			"0.9.6",
+		);
+	});
+
+	it("rejects when no version can be read", async () => {
+		await expect(readPrimeRuntimeIdentityV0(versionScript("prime-agent\n"), options)).rejects.toThrow(
+			"Could not read a Prime version from --version",
+		);
+		await expect(
+			readPrimeRuntimeIdentityV0(
+				{ mode: "binary", command: join(tmpdir(), "no-such-prime"), leadingArgs: [] },
+				options,
+			),
+		).rejects.toThrow("Could not read a Prime version from --version");
+	});
+
+	it.runIf(POSIX)("reads a source checkout's commit and clean or dirty tree", async () => {
+		const root = temporaryDirectory("prime-checkout-");
+		const home = temporaryDirectory("prime-git-home-");
+		const env = { PATH: process.env.PATH ?? "", HOME: home, GIT_CONFIG_NOSYSTEM: "1" };
+		const git = (...args: string[]) =>
+			execFileSync("git", ["-C", root, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+				env,
+				encoding: "utf8",
+			});
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "prime-agent 0.9.6"\n');
+		chmodSync(join(root, "prime-agent.sh"), 0o755);
+		git("init", "-q");
+		git("add", "prime-agent.sh");
+		git("commit", "-q", "-m", "init");
+		const commit = git("rev-parse", "HEAD").trim();
+		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
+		expect(await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).toEqual({
+			version: "0.9.6",
+			installation,
+			source: { commit, tree: "clean" },
+		});
+		// Untracked files do not make a tree dirty; a modified tracked file does.
+		writeFileSync(join(root, "untracked.txt"), "x");
+		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
+			commit,
+			tree: "clean",
+		});
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "prime-agent 0.9.6"\n# edited\n');
+		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
+			commit,
+			tree: "dirty",
+		});
+	});
+
+	it.runIf(POSIX)("reports an unknown tree when the checkout is not a git repository", async () => {
+		const root = temporaryDirectory("prime-not-git-");
+		mkdirSync(root, { recursive: true });
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(root, "prime-agent.sh"), 0o755);
+		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
+		const env = {
+			PATH: process.env.PATH ?? "",
+			HOME: temporaryDirectory("prime-git-home-"),
+			GIT_CEILING_DIRECTORIES: tmpdir(),
+		};
+		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
+			tree: "unknown",
+		});
+	});
+});
+
+describe("Prime runtime ingress import boundaries", () => {
+	const specifiers = (file: string) =>
+		[
+			...readFileSync(file, "utf8").matchAll(
+				/(?:^|\n)\s*(?:import|export)\b[^;]*?\bfrom\s+"([^"]+)"|import\s+"([^"]+)"/g,
+			),
+		].map((match) => match[1] ?? match[2]);
+	const tsFiles = (directory: string): string[] =>
+		readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
+			entry.isDirectory()
+				? tsFiles(join(directory, entry.name))
+				: entry.name.endsWith(".ts")
+					? [join(directory, entry.name)]
+					: [],
+		);
+
+	it("runtime/prime imports only node: builtins and its own modules, never research", () => {
+		const files = tsFiles(join(PACKAGE, "runtime/prime"));
+		expect(files.length).toBe(3);
+		for (const file of files) {
+			for (const specifier of specifiers(file)) expect(specifier).toMatch(/^(node:[a-z_/]+|\.\/[a-z-]+\.ts)$/);
+		}
+	});
+
+	it("the common layer, Presentation, Cockpit and the Pi Session worker never reach runtime/prime", () => {
+		const files = [
+			...tsFiles(join(PACKAGE, "src")),
+			...tsFiles(join(PACKAGE, "presentation")),
+			...tsFiles(join(PACKAGE, "cockpit")),
+			join(PACKAGE, "runtime/session-worker.ts"),
+		];
+		for (const file of files) {
+			for (const specifier of specifiers(file)) expect(specifier, file).not.toMatch(/prime/i);
+		}
+		// The runtime-neutral observation contract has no Prime vocabulary at all.
+		expect(readFileSync(join(PACKAGE, "src/runtime-observation.ts"), "utf8")).not.toMatch(/prime/i);
+	});
+});
+
+// Opt-in only: ENDOPHASIA_PRIME_LIVE_SMOKE=1 with PRIME_AGENT_BIN or PRIME_AGENT_ROOT. It reads the identity, starts
+// Prime in RPC mode in a disposable HOME, asks get_state (no prompt, so no provider request), and shuts down.
+const liveInstallation =
+	process.env.ENDOPHASIA_PRIME_LIVE_SMOKE === "1"
+		? resolvePrimeInstallationV0(
+				{ PRIME_AGENT_BIN: process.env.PRIME_AGENT_BIN, PRIME_AGENT_ROOT: process.env.PRIME_AGENT_ROOT },
+				process.cwd(),
+			)
+		: undefined;
+
+describe.runIf(liveInstallation !== undefined)("Prime RPC ingress live smoke (opt-in)", () => {
+	it("reads the identity and answers get_state in an isolated environment", async () => {
+		const installation = liveInstallation as PrimeInstallationV0;
+		const root = temporaryDirectory("prime-ingress-live-");
+		const home = join(root, "home");
+		const tmp = join(root, "tmp");
+		const agentDir = join(root, "agent");
+		const sessionDir = join(root, "sessions");
+		for (const directory of [home, tmp, agentDir, sessionDir]) mkdirSync(directory, { recursive: true });
+		writeFileSync(
+			join(agentDir, "models.json"),
+			JSON.stringify({
+				providers: {
+					"ingress-local": {
+						// Unreachable on purpose: no request is ever sent.
+						baseUrl: "http://127.0.0.1:9/v1",
+						api: "openai-completions",
+						apiKey: "unused",
+						models: [
+							{
+								id: "ingress-model",
+								name: "Ingress",
+								reasoning: false,
+								input: ["text"],
+								contextWindow: 1_000,
+								maxTokens: 100,
+							},
+						],
+					},
+				},
+			}),
+		);
+		const env = {
+			PATH: process.env.PATH ?? "",
+			HOME: home,
+			TMPDIR: tmp,
+			XDG_CONFIG_HOME: join(home, ".config"),
+			XDG_DATA_HOME: join(home, ".local", "share"),
+			XDG_STATE_HOME: join(home, ".local", "state"),
+			XDG_CACHE_HOME: join(home, ".cache"),
+			PRIME_AGENT_CODING_AGENT_DIR: agentDir,
+			PRIME_AGENT_SESSION_DIR: sessionDir,
+			PI_OFFLINE: "1",
+			PI_SKIP_VERSION_CHECK: "1",
+			PRIME_AGENT_TELEMETRY: "0",
+			DO_NOT_TRACK: "1",
+			NO_COLOR: "1",
+		};
+		const identity = await readPrimeRuntimeIdentityV0(installation, { env, cwd: root });
+		expect(identity.version).toMatch(/^\d+\.\d+\.\d+/);
+		if (installation.mode === "binary") expect(identity.source).toBeUndefined();
+		const connection = new PrimeRpcConnectionV0({
+			installation,
+			args: [
+				"--provider",
+				"ingress-local",
+				"--model",
+				"ingress-model",
+				"--session-dir",
+				sessionDir,
+				"--no-extensions",
+				"--no-skills",
+			],
+			env,
+			cwd: root,
+		});
+		try {
+			expect(await connection.request({ type: "get_state" })).toMatchObject({ command: "get_state", success: true });
+		} finally {
+			await connection.close();
+			execFileSync(installation.command, [...installation.leadingArgs, "shutdown", "--force"], {
+				cwd: root,
+				env,
+				stdio: "ignore",
+				timeout: 30_000,
+			});
+		}
+	}, 120_000);
+});
