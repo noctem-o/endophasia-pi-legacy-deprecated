@@ -213,14 +213,20 @@ export async function readPrimeRuntimeIdentityV0(
 		run(gitCommand, [...gitArgs, ...args], { env: gitEnv, cwd: options.cwd, timeoutMs });
 	// Git walks up from the root: a root that is not itself a checkout but sits inside another repository would report
 	// that ancestor's commit. Provenance is accepted only when the repository's top level is the configured root.
-	const toplevel = (await git(["rev-parse", "--show-toplevel"]))?.trim();
-	if (toplevel === undefined || !(await timeLimit(sameDirectory(toplevel, installation.root), timeoutMs))) {
-		return { version: await readVersion(), installation, source: { tree: "unknown" } };
-	}
+	const isRoot = async () => {
+		const toplevel = (await git(["rev-parse", "--show-toplevel"]))?.trim();
+		return (
+			toplevel !== undefined && (await timeLimit(sameDirectory(toplevel, installation.root), timeoutMs)) === true
+		);
+	};
+	if (!(await isRoot())) return { version: await readVersion(), installation, source: { tree: "unknown" } };
 	// The version and the provenance must describe one runtime. HEAD, the tracked-file status and the launcher file
 	// are read before and after --version; if anything moved (an updater switched or edited the checkout), the whole
 	// read is repeated, and a checkout that keeps changing is an error rather than a mixed identity.
 	const snapshot = async () => {
+		// Checked in every snapshot, not once: if the checkout's .git is removed or replaced mid-read, later probes could
+		// otherwise settle on an enclosing repository.
+		const root = await isRoot();
 		const head = (await git(["rev-parse", "HEAD"]))?.trim();
 		const status = await git(["status", "--porcelain", "--untracked-files=no"]);
 		// The launcher is what actually runs: it must be a regular file (not a symlink to code elsewhere) that git
@@ -251,13 +257,14 @@ export async function readPrimeRuntimeIdentityV0(
 				?.split("\0")
 				.filter((entry) => entry.length > 0)
 				.every((entry) => entry.startsWith("H ")) === true;
-		return { head, status, launcher, launcherTracked, indexPlain, artifactsHash };
+		return { root, head, status, launcher, launcherTracked, indexPlain, artifactsHash };
 	};
 	for (let attempt = 0; attempt < IDENTITY_ATTEMPTS; attempt++) {
 		const before = await snapshot();
 		const version = await readVersion();
 		const after = await snapshot();
 		if (
+			before.root !== after.root ||
 			before.head !== after.head ||
 			before.status !== after.status ||
 			before.launcher !== after.launcher ||
@@ -274,6 +281,7 @@ export async function readPrimeRuntimeIdentityV0(
 		// And only when the launcher that ran is a tracked regular file: untracked or symlinked launcher code is not
 		// described by the commit, so the provenance is unknown.
 		const launcherVerified =
+			before.root &&
 			before.indexPlain &&
 			before.launcherTracked &&
 			before.launcher !== undefined &&
@@ -360,7 +368,8 @@ async function hashBuildOutput(checkout: string, deadline: number): Promise<stri
 				found.push(entry);
 			}
 		} finally {
-			await directory.close().catch(() => {});
+			// Not awaited: closing a handle on a stalled filesystem could itself hang past the deadline.
+			void directory.close().catch(() => {});
 		}
 		return found.sort((a, b) => byCodeUnit(a.name, b.name));
 	};
@@ -389,10 +398,16 @@ async function hashBuildOutput(checkout: string, deadline: number): Promise<stri
 	};
 	// Every path component the launcher resolves through is checked without following links: a symlinked packages/,
 	// packages/<name> or dist would load code reached relative to its target, which this hash does not describe.
+	// Only a path that does not exist is "missing"; any other failure (permissions, I/O) would hide a subtree from the
+	// hash, so it makes the build output unverifiable.
 	const kind = (path: string) =>
 		bounded(lstat(path)).then(
 			(entry) => (entry.isSymbolicLink() ? "link" : entry.isDirectory() ? "directory" : "other"),
-			() => "missing" as const,
+			(error: unknown) => {
+				const code = (error as NodeJS.ErrnoException | undefined)?.code;
+				if (code === "ENOENT" || code === "ENOTDIR") return "missing" as const;
+				throw new Unverifiable();
+			},
 		);
 	try {
 		const packages = join(checkout, "packages");

@@ -22,7 +22,14 @@ process.stdin.on(mode === "stall" ? "end" : "data", (chunk = "") => {
 		newline = buffer.indexOf("\n");
 	}
 });
-const lingers = ["ignore-stdin-end", "ignore-sigterm", "close-stdin", "descendant-ignores-sigterm", "stall"].includes(
+const lingers = [
+	"ignore-stdin-end",
+	"ignore-sigterm",
+	"close-stdin",
+	"close-stdin-late-response",
+	"descendant-ignores-sigterm",
+	"stall",
+].includes(
 	mode,
 );
 if (mode === "stall") process.stdin.pause();
@@ -170,6 +177,14 @@ function handle(command) {
 		case "ignore-stdin-end":
 		case "ignore-sigterm":
 			write(respond(command));
+			return;
+		case "close-stdin-late-response":
+			// Like close-stdin, then later answers endophasia-2, an ID whose request could not be written.
+			write(respond(command), () => {
+				process.stdin.destroy();
+				closeSync(0);
+				setTimeout(() => write({ type: "response", id: "endophasia-2", command: "get_state", success: true }), 300);
+			});
 			return;
 		case "close-stdin":
 			// Answer, then close its input while staying alive: later writes to it fail with EPIPE.

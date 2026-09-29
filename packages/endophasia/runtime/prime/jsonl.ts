@@ -40,7 +40,12 @@ export class PrimeJsonlDecoderV0 {
 	#discarding = false;
 
 	constructor(options: { readonly maxRecordBytes?: number } = {}) {
-		this.#maxRecordBytes = options.maxRecordBytes ?? PRIME_JSONL_DEFAULT_MAX_RECORD_BYTES;
+		const maxRecordBytes = options.maxRecordBytes ?? PRIME_JSONL_DEFAULT_MAX_RECORD_BYTES;
+		// NaN would break buffering and Infinity would lift the memory bound: only a positive safe integer is a limit.
+		if (!Number.isSafeInteger(maxRecordBytes) || maxRecordBytes < 1) {
+			throw new RangeError("maxRecordBytes must be a positive safe integer");
+		}
+		this.#maxRecordBytes = maxRecordBytes;
 	}
 
 	/** Buffer one chunk and return every record it completed, in order. */

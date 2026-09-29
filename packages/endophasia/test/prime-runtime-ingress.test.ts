@@ -826,6 +826,41 @@ describe("Prime RPC connection: lifecycle", () => {
 		expect((await connection.close()).exit.signal).toBe("SIGTERM");
 	});
 
+	it("treats the ID of a request whose write failed as never issued", async () => {
+		const { connection, diagnostics } = connect("close-stdin-late-response", { closeTimeoutMs: 200 });
+		await connection.request({ type: "get_state" });
+		await new Promise((done) => setTimeout(done, 100));
+		// endophasia-2 passes the checks, is written, and fails with EPIPE: Prime never received it.
+		await expect(connection.request({ type: "get_state" })).rejects.toThrow("Prime RPC input failed");
+		// Prime later emits a response carrying that ID anyway: unknown, not stale.
+		const deadline = Date.now() + 5_000;
+		while (!faults(diagnostics).some((fault) => fault.endsWith("-response-id")) && Date.now() < deadline) {
+			await new Promise((done) => setTimeout(done, 20));
+		}
+		expect(faults(diagnostics)).toEqual(["unknown-response-id"]);
+	});
+
+	it("refuses numeric options that would disable a bound", () => {
+		for (const maxRecordBytes of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1, 1.5]) {
+			expect(() => new PrimeJsonlDecoderV0({ maxRecordBytes })).toThrow(RangeError);
+		}
+		const base = {
+			installation: { mode: "binary", command: process.execPath, leadingArgs: [FAKE] } as PrimeInstallationV0,
+			env: { PATH: process.env.PATH ?? "" },
+			cwd: tmpdir(),
+		};
+		for (const options of [
+			{ maxRecordBytes: Number.NaN },
+			{ maxInputBacklogBytes: Number.POSITIVE_INFINITY },
+			{ requestTimeoutMs: Number.NaN },
+			{ drainGraceMs: -1 },
+			{ closeTimeoutMs: Number.POSITIVE_INFINITY },
+		]) {
+			// Refused before anything is spawned.
+			expect(() => new PrimeRpcConnectionV0({ ...base, ...options })).toThrow(RangeError);
+		}
+	});
+
 	it("rejects an extension UI answer whose write fails after the checks passed", async () => {
 		const { connection } = connect("close-stdin", { closeTimeoutMs: 200 });
 		await connection.request({ type: "get_state" });
@@ -1677,6 +1712,39 @@ describe("Prime runtime identity", () => {
 			tree: "clean",
 		});
 		expect(existsSync(marker)).toBe(false);
+	});
+
+	it.runIf(POSIX)("revalidates the checkout root in every snapshot", async () => {
+		const root = temporaryDirectory("prime-root-moves-");
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(root, "prime-agent.sh"), 0o755);
+		// A stand-in git whose top level is the root only on the first read, as if the checkout's .git were removed and an
+		// enclosing repository took over; that repository would track the launcher and report a clean commit.
+		const bin = temporaryDirectory("prime-fake-git-");
+		const counter = join(bin, "toplevel-reads");
+		writeFileSync(
+			join(bin, "git"),
+			[
+				"#!/bin/sh",
+				'root="$2"; shift 2; if [ "$1" = -c ]; then shift 2; fi',
+				'if [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then',
+				`  n=$(cat ${JSON.stringify(counter)} 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > ${JSON.stringify(counter)}`,
+				'  if [ "$n" = 1 ]; then echo "$root"; else dirname "$root"; fi; exit 0',
+				"fi",
+				`if [ "$1" = rev-parse ]; then echo ${"e".repeat(40)}; exit 0; fi`,
+				'if [ "$1" = ls-files ] && [ "$2" = -v ]; then printf "H prime-agent.sh\\000"; exit 0; fi',
+				`if [ "$1" = ls-files ]; then printf "100755 %s 0\\t%s\\n" ${"c".repeat(40)} "$4"; exit 0; fi`,
+				"exit 0",
+			].join("\n"),
+		);
+		chmodSync(join(bin, "git"), 0o755);
+		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
+		const identity = await readPrimeRuntimeIdentityV0(installation, {
+			env: { PATH: process.env.PATH ?? "" },
+			cwd: tmpdir(),
+			gitCommand: join(bin, "git"),
+		});
+		expect(identity.source).toEqual({ tree: "unknown" });
 	});
 
 	it.runIf(POSIX)("never runs a git found on the PATH given to Prime", async () => {

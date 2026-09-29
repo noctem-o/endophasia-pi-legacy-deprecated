@@ -183,6 +183,17 @@ export class PrimeRpcConnectionV0 {
 	#resolveTerminated!: (termination: PrimeRpcTerminationV0) => void;
 
 	constructor(options: PrimeRpcConnectionOptionsV0) {
+		// Validated before anything starts: NaN or Infinity would silently disable a bound or fire a timer at once.
+		for (const [name, value, minimum] of [
+			["maxInputBacklogBytes", options.maxInputBacklogBytes, 1],
+			["requestTimeoutMs", options.requestTimeoutMs, 0],
+			["drainGraceMs", options.drainGraceMs, 0],
+			["closeTimeoutMs", options.closeTimeoutMs, 0],
+		] as const) {
+			if (value !== undefined && (!Number.isSafeInteger(value) || value < minimum)) {
+				throw new RangeError(`${name} must be a safe integer of at least ${minimum}`);
+			}
+		}
 		this.#options = options;
 		this.#decoder = new PrimeJsonlDecoderV0(
 			options.maxRecordBytes === undefined ? {} : { maxRecordBytes: options.maxRecordBytes },
@@ -318,7 +329,11 @@ export class PrimeRpcConnectionV0 {
 			}, timeoutMs);
 			this.#pending.set(id, { command: type, resolve, reject, timer });
 		});
-		this.#write(id, type, record);
+		this.#write(id, type, record, (error) => {
+			// A write that failed (e.g. EPIPE) never reached Prime: its ID is not issued, so a response carrying it is
+			// unknown, not stale.
+			if (error !== undefined) this.#markUnsent(sequence);
+		});
 		return response;
 	}
 
@@ -577,14 +592,18 @@ export class PrimeRpcConnectionV0 {
 	 * That set only grows through re-entrant failures and is capped: past the cap the oldest entries are dropped, and a
 	 * forged response for one of those IDs would be reported as stale instead of unknown.
 	 */
+	#markUnsent(sequence: number): void {
+		this.#unsent.add(sequence);
+		if (this.#unsent.size > MAX_UNSENT_IDS) this.#unsent.delete(this.#unsent.values().next().value as number);
+	}
+
 	#release(sequence: number): void {
 		if (sequence === this.#nextId) {
 			this.#nextId--;
 			while (this.#unsent.delete(this.#nextId)) this.#nextId--;
 			return;
 		}
-		this.#unsent.add(sequence);
-		if (this.#unsent.size > MAX_UNSENT_IDS) this.#unsent.delete(this.#unsent.values().next().value as number);
+		this.#markUnsent(sequence);
 	}
 
 	#diagnose(diagnostic: PrimeRpcDiagnosticV0): void {
