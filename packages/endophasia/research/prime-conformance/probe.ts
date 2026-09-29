@@ -566,6 +566,8 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			const path = writeChildUsageSession(environment);
 			const session = open();
 			requirePrimeNotCancelledV0(await session.command({ type: "switch_session", sessionPath: path }));
+			// switch_session can succeed while leaving another session active: the stats must belong to the crafted file.
+			run.observations.reopenedIntendedSession = sameFile(await session.sessionFile(), path);
 			await session.stats("after-open");
 			await session.close();
 			run.sessionEntries = readPrimeSessionFileV0(path, environment.sessionDir);

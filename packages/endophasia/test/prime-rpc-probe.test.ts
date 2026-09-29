@@ -382,6 +382,10 @@ describe("strict Prime decoders", () => {
 
 	it("decodes usage strictly, keeping unknown usage keys by name", () => {
 		expect(decodePrimeUsageV0({ ...usage, reasoning: 5 }, "u").extraKeys).toEqual(["reasoning"]);
+		// A new cost component is an unknown accounting dimension too, not silently dropped.
+		expect(decodePrimeUsageV0({ ...usage, cost: { ...usage.cost, surcharge: 1 } }, "u").extraKeys).toEqual([
+			"cost.surcharge",
+		]);
 		expectDecodeError(() => decodePrimeUsageV0(undefined, "u"));
 		expectDecodeError(() => decodePrimeUsageV0(mutate(usage, ["cost"], undefined), "u"));
 	});
@@ -589,6 +593,27 @@ describe("strict command-response decoding", () => {
 
 describe("fake provider expectations", () => {
 	const user = (content: string) => ({ role: "user", content });
+
+	it("records a request body with malformed UTF-8 as malformed, never normalizing it", async () => {
+		const fake = await startFakeProviderV0({ markers: ["simple"], model: "probe-model" });
+		try {
+			const body = Buffer.concat([
+				Buffer.from('{"model":"probe-model","messages":[{"role":"user","content":"SCENARIO:simple '),
+				Buffer.from([0xff]),
+				Buffer.from('"}]}'),
+			]);
+			const reply = await fetch(`${fake.baseUrl}/chat/completions`, {
+				method: "POST",
+				body,
+				headers: { "content-type": "application/json" },
+			});
+			await reply.text();
+			expect(reply.status).toBe(400);
+			expect(fake.requests).toEqual<FakeProviderRequestV0[]>([{ kind: "malformed" }]);
+		} finally {
+			await fake.close();
+		}
+	});
 
 	it("serves the step after a tool call only once the tool result is sent", async () => {
 		const fake = await startFakeProviderV0({ markers: ["tool-run"], model: "probe-model" });

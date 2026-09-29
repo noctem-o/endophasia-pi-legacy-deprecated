@@ -314,7 +314,8 @@ export async function startFakeProviderV0(expectations: FakeProviderExpectations
 			}
 			let body: { messages?: unknown; model?: unknown } | undefined;
 			try {
-				body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+				// Fatal UTF-8: malformed bytes make the request malformed rather than silently becoming U+FFFD.
+				body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)));
 			} catch {}
 			const refuse = (message: string) => {
 				response.writeHead(400, { "content-type": "application/json" });

@@ -67,6 +67,7 @@ function count(value: unknown, path: string): number {
 }
 
 const USAGE_KEYS = new Set(["input", "output", "cacheRead", "cacheWrite", "totalTokens", "cost"]);
+const COST_KEYS = new Set(["input", "output", "cacheRead", "cacheWrite", "total"]);
 
 /** Prime's `Usage`: every count and every cost component is required. */
 export function decodePrimeUsageV0(value: unknown, path: string): PrimeUsageEvidenceV0 {
@@ -85,9 +86,13 @@ export function decodePrimeUsageV0(value: unknown, path: string): PrimeUsageEvid
 			cacheWrite: count(cost.cacheWrite, `${path}.cost.cacheWrite`),
 			total: count(cost.total, `${path}.cost.total`),
 		},
-		extraKeys: Object.keys(usage)
-			.filter((key) => !USAGE_KEYS.has(key))
-			.sort(),
+		// Unknown fields at either level are accounting dimensions the projections would drop; cost ones are prefixed.
+		extraKeys: [
+			...Object.keys(usage).filter((key) => !USAGE_KEYS.has(key)),
+			...Object.keys(cost)
+				.filter((key) => !COST_KEYS.has(key))
+				.map((key) => `cost.${key}`),
+		].sort(),
 	};
 }
 

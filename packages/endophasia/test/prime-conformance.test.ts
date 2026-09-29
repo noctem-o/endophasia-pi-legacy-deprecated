@@ -654,6 +654,34 @@ const INVARIANT_MUTATIONS: readonly Mutation[] = [
 	],
 	["simple", "an abort marker outside an abort scenario", (r) => ({ ...r, abortRequestedAfter: [0] })],
 	[
+		"abort-stream",
+		"the resuming follow-up not admitted",
+		(r) => ({ ...r, observations: { ...r.observations, followUpAfterAbortAdmitted: false } }),
+	],
+	[
+		"compaction",
+		"the resuming follow-up not admitted",
+		(r) => ({ ...r, observations: { ...r.observations, followUpAfterCompactionAdmitted: false } }),
+	],
+	[
+		"compaction",
+		"a second, failed compaction_end",
+		(r) => {
+			const end = r.events.find((event) => event.type === "compaction_end")!;
+			return { ...r, events: [...r.events, { ...end, succeeded: false } as typeof end] };
+		},
+	],
+	[
+		"simple",
+		"an extra successful state-changing command",
+		(r) => ({ ...r, commands: [...r.commands, { command: "switch_session", success: true, dataKeys: [] }] }),
+	],
+	[
+		"child-usage-replay",
+		"another session left active after switch_session",
+		(r) => ({ ...r, observations: { ...r.observations, reopenedIntendedSession: false } }),
+	],
+	[
 		"provider-failure",
 		"the provider rejection never requested",
 		(r) => ({ ...r, observations: { ...r.observations, providerRequests: 0 } }),

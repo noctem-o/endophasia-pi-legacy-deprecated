@@ -7,7 +7,7 @@
 		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.12.0",
+		"probeVersion": "0.13.0",
 		"platform": "linux-x64",
 		"node": "v22.22.2",
 		"scenario": "tool-error"
@@ -259,7 +259,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0ea9b-2910-77aa-a008-8b6be0a5ef7f",
+			"id": "01a0eaad-c2cc-7309-98a9-de7e2d06778a",
 			"keys": [
 				"cwd",
 				"id",
@@ -271,7 +271,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "ab55855f",
+			"id": "4dd8e054",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -284,8 +284,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "d774bbc3",
-			"parentId": "ab55855f",
+			"id": "e499f40d",
+			"parentId": "4dd8e054",
 			"keys": [
 				"id",
 				"parentId",
@@ -296,8 +296,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "2ac68cba",
-			"parentId": "d774bbc3",
+			"id": "dadec569",
+			"parentId": "e499f40d",
 			"keys": [
 				"id",
 				"parentId",
@@ -308,8 +308,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "ccdd28d3",
-			"parentId": "2ac68cba",
+			"id": "1d93db3a",
+			"parentId": "dadec569",
 			"keys": [
 				"id",
 				"parentId",
@@ -320,8 +320,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "6c1a7e37",
-			"parentId": "ccdd28d3",
+			"id": "ab397941",
+			"parentId": "1d93db3a",
 			"keys": [
 				"content",
 				"customType",
@@ -335,8 +335,8 @@
 		},
 		{
 			"type": "message",
-			"id": "006167ce",
-			"parentId": "6c1a7e37",
+			"id": "b8f9bf97",
+			"parentId": "ab397941",
 			"keys": [
 				"id",
 				"message",
@@ -348,8 +348,8 @@
 		},
 		{
 			"type": "message",
-			"id": "9ac89a5e",
-			"parentId": "006167ce",
+			"id": "1a886421",
+			"parentId": "b8f9bf97",
 			"keys": [
 				"id",
 				"message",
@@ -377,8 +377,8 @@
 		},
 		{
 			"type": "message",
-			"id": "f2b8a64c",
-			"parentId": "9ac89a5e",
+			"id": "8119e8b4",
+			"parentId": "1a886421",
 			"keys": [
 				"id",
 				"message",
@@ -390,8 +390,8 @@
 		},
 		{
 			"type": "message",
-			"id": "68c0947e",
-			"parentId": "f2b8a64c",
+			"id": "04c5aa54",
+			"parentId": "8119e8b4",
 			"keys": [
 				"id",
 				"message",

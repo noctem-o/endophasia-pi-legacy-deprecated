@@ -126,7 +126,13 @@ function compactionSnapshots(): Invariant {
 			(entry, index) => JSON.stringify(after.entries[index]) === JSON.stringify(entry),
 		);
 		const added = after.entries.slice(before.entries.length);
-		const end = run.events.find((event) => event.type === "compaction_end");
+		// Exactly one compaction lifecycle: a second terminal (e.g. a later failed compaction_end) would be hidden behind
+		// the first.
+		const starts = run.events.filter((event) => event.type === "compaction_start");
+		const ends = run.events.filter((event) => event.type === "compaction_end");
+		const end = ends[0];
+		const lifecycle =
+			starts.length === 1 && ends.length === 1 && run.events.indexOf(starts[0]!) < run.events.indexOf(ends[0]!);
 		const response = run.observations.compactFirstKeptEntryId;
 		return [
 			...(prefixKept ? [] : ["pre-compaction entries changed across compaction"]),
@@ -135,6 +141,9 @@ function compactionSnapshots(): Invariant {
 				: [
 						`expected exactly one new entry, a compaction, observed ${added.map((entry) => entry.type).join(", ") || "none"}`,
 					]),
+			...(lifecycle
+				? []
+				: [`expected one compaction_start then one compaction_end, observed ${starts.length} and ${ends.length}`]),
 			...(end?.type === "compaction_end" && end.succeeded && !end.aborted
 				? []
 				: ["no successful compaction_end was observed"]),
@@ -187,6 +196,26 @@ function probeModel(): Invariant {
 			: [];
 }
 
+/**
+ * The exact command sequence the scenario issues; a refused command is written `name!`. Any other command (e.g. an
+ * extra state-changing switch_session) would be an operation the report never shows.
+ */
+function commands(...expected: string[]): Invariant {
+	return (run) => {
+		const observed = run.commands.map((item) => `${item.command}${item.success === true ? "" : "!"}`);
+		return JSON.stringify(observed) === JSON.stringify(expected)
+			? []
+			: [`commands ${observed.join(",") || "none"}, expected ${expected.join(",")}`];
+	};
+}
+
+/** An observation the scenario requires to be exactly true (e.g. the follow-up prompt that resumes the queue). */
+function holds(
+	key: "followUpAfterAbortAdmitted" | "followUpAfterCompactionAdmitted" | "reopenedIntendedSession",
+): Invariant {
+	return (run) => (run.observations[key] === true ? [] : [`${key} is not true`]);
+}
+
 /** Only the abort scenarios request an abort; a marker anywhere else would silently change the mapped terminal. */
 function noAbortRequested(): Invariant {
 	return (run) =>
@@ -203,8 +232,16 @@ const COMMON: Invariant[] = [
 ];
 
 const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
-	simple: [persistedMessages("user", "assistant"), runs(1), stats("after"), noAbortRequested(), refusals(0)],
+	simple: [
+		commands("prompt", "get_session_stats"),
+		persistedMessages("user", "assistant"),
+		runs(1),
+		stats("after"),
+		noAbortRequested(),
+		refusals(0),
+	],
 	"tool-run": [
+		commands("prompt", "get_session_stats"),
 		persistedMessages("user", "assistant", "toolResult", "assistant"),
 		runs(1),
 		stats("after"),
@@ -213,6 +250,7 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		refusals(0),
 	],
 	"tool-error": [
+		commands("prompt", "get_session_stats"),
 		persistedMessages("user", "assistant", "toolResult", "assistant"),
 		runs(1),
 		stats("after"),
@@ -221,6 +259,7 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		refusals(0),
 	],
 	"provider-failure": [
+		commands("set_auto_retry", "prompt", "get_session_stats"),
 		persistedMessages("user", "assistant"),
 		runs(1),
 		stats("after"),
@@ -229,15 +268,18 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		refusals(0),
 	],
 	"abort-stream": [
+		commands("prompt", "abort", "get_session_stats", "prompt!", "prompt", "get_session_stats"),
 		persistedMessages("user", "assistant", "user", "assistant"),
 		runs(2),
 		stats("after", "after-resume"),
 		abortRequested("assistant-start"),
 		succeeded("abort"),
-		observed("plainPromptAfterAbortAdmitted", "followUpAfterAbortAdmitted"),
+		observed("plainPromptAfterAbortAdmitted"),
+		holds("followUpAfterAbortAdmitted"),
 		refusals(1),
 	],
 	"abort-tool": [
+		commands("prompt", "abort", "get_session_stats"),
 		persistedMessages("user", "assistant", "toolResult"),
 		runs(1),
 		stats("after"),
@@ -246,8 +288,16 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		succeeded("abort"),
 		refusals(0),
 	],
-	"length-stop": [persistedMessages("user", "assistant"), runs(1), stats("after"), noAbortRequested(), refusals(0)],
+	"length-stop": [
+		commands("prompt", "get_session_stats"),
+		persistedMessages("user", "assistant"),
+		runs(1),
+		stats("after"),
+		noAbortRequested(),
+		refusals(0),
+	],
 	"reasoning-usage": [
+		commands("prompt", "get_session_stats"),
 		persistedMessages("user", "assistant"),
 		runs(1),
 		stats("after"),
@@ -255,6 +305,17 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		refusals(0),
 	],
 	"multi-turn-reopen": [
+		commands(
+			"prompt",
+			"get_session_stats",
+			"prompt",
+			"get_session_stats",
+			"prompt",
+			"get_session_stats",
+			"switch_session",
+			"get_session_stats",
+			"get_messages",
+		),
 		persistedMessages("user", "assistant", "user", "assistant", "user", "assistant"),
 		runs(3),
 		stats("after-multi-a", "after-multi-b", "after-multi-c", "after-reopen"),
@@ -270,22 +331,34 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 				? []
 				: [`reopen restored ${restored ?? "no"} of ${recorded ?? "an unknown number of"} messages`];
 		},
-		(run) => (run.observations.reopenedIntendedSession === true ? [] : ["the intended session was not reopened"]),
+		holds("reopenedIntendedSession"),
 		noAbortRequested(),
 		refusals(0),
 	],
 	compaction: [
+		commands(
+			"prompt",
+			"prompt",
+			"get_session_stats",
+			"compact",
+			"get_session_stats",
+			"prompt!",
+			"prompt",
+			"get_session_stats",
+		),
 		persistedMessages("user", "assistant", "user", "assistant", "user", "assistant"),
 		runs(3),
 		stats("before-compaction", "after-compaction", "after-next-prompt"),
 		succeeded("compact"),
 		compactionSnapshots(),
 		(run) => ((run.observations.summaryRequests ?? 0) >= 1 ? [] : ["the compaction made no summary request"]),
-		observed("plainPromptAfterCompactionAdmitted", "followUpAfterCompactionAdmitted"),
+		observed("plainPromptAfterCompactionAdmitted"),
+		holds("followUpAfterCompactionAdmitted"),
 		noAbortRequested(),
 		refusals(1),
 	],
 	fork: [
+		commands("prompt", "prompt", "get_session_stats", "fork", "get_session_stats", "prompt", "get_session_stats"),
 		persistedMessages("user", "assistant", "user", "assistant"),
 		runs(3),
 		stats("before-fork", "after-fork", "after-fork-prompt"),
@@ -301,6 +374,7 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		refusals(0),
 	],
 	"child-usage-replay": [
+		commands("switch_session", "get_session_stats"),
 		persistedMessages("user", "assistant"),
 		runs(0),
 		stats("after-open"),
@@ -310,6 +384,7 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 				? []
 				: ["no child_usage_attributed entry was read"],
 		noAbortRequested(),
+		holds("reopenedIntendedSession"),
 		refusals(0),
 	],
 };
