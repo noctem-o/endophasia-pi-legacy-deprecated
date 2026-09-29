@@ -7,6 +7,11 @@
 // stays alive until it is told to end the group, which it does by SIGKILLing its own group, itself included, in one
 // kill(2). While the keeper lives the group ID cannot be reused, so every signal sent to it reaches only this group.
 // If this process dies, the keeper sees its control socket close and ends the group the same way.
+//
+// The boundary is the process group. A descendant that deliberately leaves it (setsid(2), or a Node child spawned with
+// `detached: true`) is outside what a process group can contain: once its parent exits it is reparented to init, and
+// nothing links it back. Containing such processes needs OS facilities Node does not expose (Linux cgroups or a child
+// subreaper, Windows job objects); this module does not claim to.
 import { type ChildProcess, spawn } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import type { Readable, Writable } from "node:stream";

@@ -1280,6 +1280,8 @@ describe("Prime runtime identity", () => {
 				"#!/bin/sh",
 				'root="$2"; shift 2',
 				'if [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then echo "$root"; exit 0; fi',
+				// The launcher is reported as a tracked regular file, as in a real checkout.
+				`if [ "$1" = ls-files ]; then printf "100755 %s 0\\t%s\\n" ${"c".repeat(40)} "$4"; exit 0; fi`,
 				'if [ "$1" = rev-parse ]; then',
 				'  n=$(cat "$PRIME_TEST_COUNTER" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$PRIME_TEST_COUNTER"',
 				'  if [ "$PRIME_TEST_MODE" = always ]; then [ $((n % 2)) = 1 ] && moved=no || moved=yes; else [ "$n" = 1 ] && moved=no || moved=yes; fi',
@@ -1407,6 +1409,48 @@ describe("Prime runtime identity", () => {
 		rmSync(join(root, "packages/extra-dist"));
 		symlinkSync(elsewhere, join(root, "packages/linked-package"));
 		expect((await read())?.artifactsHash).toBeUndefined();
+		rmSync(join(root, "packages/linked-package"));
+		expect((await read())?.artifactsHash).toMatch(/^[0-9a-f]{64}$/);
+		// A NUL byte in a file would let two different trees frame to the same digest input: unverified.
+		writeFileSync(join(root, "packages/agent/dist/blob.bin"), Uint8Array.of(0x61, 0x00, 0x62));
+		expect((await read())?.artifactsHash).toBeUndefined();
+	});
+
+	it.runIf(POSIX)("reports no provenance when the launcher is untracked or a symlink", async () => {
+		const root = temporaryDirectory("prime-launcher-");
+		const home = temporaryDirectory("prime-git-home-");
+		const env = { PATH: process.env.PATH ?? "", HOME: home, GIT_CONFIG_NOSYSTEM: "1" };
+		const git = (...args: string[]) =>
+			execFileSync("git", ["-C", root, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+				env,
+				encoding: "utf8",
+			});
+		writeFileSync(join(root, "README"), "checkout\n");
+		git("init", "-q");
+		git("add", "README");
+		git("commit", "-q", "-m", "init");
+		// An untracked launcher: the commit and a clean tracked tree say nothing about the code that ran.
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(root, "prime-agent.sh"), 0o755);
+		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
+		const read = async () => (await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source;
+		expect(await read()).toEqual({ tree: "unknown" });
+		// A tracked symlink to a launcher outside the checkout: the code it runs is not the checkout's.
+		const outside = join(temporaryDirectory("prime-outside-launcher-"), "prime-agent.sh");
+		writeFileSync(outside, '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(outside, 0o755);
+		rmSync(join(root, "prime-agent.sh"));
+		symlinkSync(outside, join(root, "prime-agent.sh"));
+		git("add", "prime-agent.sh");
+		git("commit", "-q", "-m", "link");
+		expect(await read()).toEqual({ tree: "unknown" });
+		// A tracked regular launcher: the provenance is reported.
+		rmSync(join(root, "prime-agent.sh"));
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(root, "prime-agent.sh"), 0o755);
+		git("add", "prime-agent.sh");
+		git("commit", "-q", "-m", "regular");
+		expect(await read()).toEqual({ commit: git("rev-parse", "HEAD").trim(), tree: "clean" });
 	});
 
 	it.runIf(POSIX)("reports no commit when the tree status cannot be read", async () => {
@@ -1420,6 +1464,8 @@ describe("Prime runtime identity", () => {
 				"#!/bin/sh",
 				'root="$2"; shift 2',
 				'if [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then echo "$root"; exit 0; fi',
+				// The launcher is reported as a tracked regular file, as in a real checkout.
+				`if [ "$1" = ls-files ]; then printf "100755 %s 0\\t%s\\n" ${"c".repeat(40)} "$4"; exit 0; fi`,
 				`if [ "$1" = rev-parse ]; then echo ${"a".repeat(40)}; exit 0; fi`,
 				"exit 1",
 			].join("\n"),

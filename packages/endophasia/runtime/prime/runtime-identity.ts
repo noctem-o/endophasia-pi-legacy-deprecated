@@ -2,7 +2,7 @@
 // records what can be known (the reported version, how Prime is installed, a source checkout's commit and tree state)
 // and claims nothing more. A Prime semantic adapter decides whether an identity belongs to a profile it supports.
 import { createHash } from "node:crypto";
-import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, win32 } from "node:path";
 import type { Readable } from "node:stream";
 import { PrimeProcessGroupV0 } from "./process-group.ts";
@@ -196,12 +196,19 @@ export async function readPrimeRuntimeIdentityV0(
 	const snapshot = async () => {
 		const head = (await git(["rev-parse", "HEAD"]))?.trim();
 		const status = await git(["status", "--porcelain", "--untracked-files=no"]);
-		const launcher = await stat(installation.command).then(
-			(file) => `${file.dev}:${file.ino}:${file.size}:${file.mtimeMs}:${file.ctimeMs}`,
+		// The launcher is what actually runs: it must be a regular file (not a symlink to code elsewhere) that git
+		// tracks, so the commit and the tracked-file status describe it. Its stat also shows a replacement mid-read.
+		const launcher = await lstat(installation.command).then(
+			(file) =>
+				file.isFile()
+					? `${file.dev}:${file.ino}:${file.size}:${file.mtimeMs}:${file.ctimeMs}`
+					: "not-a-regular-file",
 			() => undefined,
 		);
+		const launcherEntry = await git(["ls-files", "--stage", "--", relative(installation.root, installation.command)]);
+		const launcherTracked = launcherEntry !== undefined && /^100(?:644|755) [0-9a-f]+ 0\t/.test(launcherEntry);
 		const artifactsHash = await hashBuildOutput(installation.root);
-		return { head, status, launcher, artifactsHash };
+		return { head, status, launcher, launcherTracked, artifactsHash };
 	};
 	for (let attempt = 0; attempt < IDENTITY_ATTEMPTS; attempt++) {
 		const before = await snapshot();
@@ -211,6 +218,7 @@ export async function readPrimeRuntimeIdentityV0(
 			before.head !== after.head ||
 			before.status !== after.status ||
 			before.launcher !== after.launcher ||
+			before.launcherTracked !== after.launcherTracked ||
 			before.artifactsHash !== after.artifactsHash
 		) {
 			continue;
@@ -219,6 +227,11 @@ export async function readPrimeRuntimeIdentityV0(
 		const head = before.head;
 		const status = before.status;
 		// A commit is reported only with a readable tree state: a HEAD without its status says nothing about what ran.
+		// And only when the launcher that ran is a tracked regular file: untracked or symlinked launcher code is not
+		// described by the commit, so the provenance is unknown.
+		const launcherVerified =
+			before.launcherTracked && before.launcher !== undefined && before.launcher !== "not-a-regular-file";
+		if (!launcherVerified) return { version, installation, source: { tree: "unknown" } };
 		const commit =
 			status !== undefined && head !== undefined && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head) ? head : undefined;
 		const tree =
@@ -246,6 +259,7 @@ async function hashBuildOutput(checkout: string): Promise<string | undefined> {
 	const hash = createHash("sha256");
 	let files = 0;
 	let symlinks = 0;
+	let nulBytes = false;
 	const walk = async (directory: string): Promise<void> => {
 		const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
 		for (const entry of entries) {
@@ -253,11 +267,12 @@ async function hashBuildOutput(checkout: string): Promise<string | undefined> {
 			if (entry.isSymbolicLink()) symlinks++;
 			else if (entry.isDirectory()) await walk(path);
 			else if (entry.isFile()) {
-				hash
-					.update(relative(checkout, path))
-					.update("\0")
-					.update(await readFile(path))
-					.update("\0");
+				const content = await readFile(path);
+				// The digest frames each entry as path NUL content NUL. Paths never contain NUL, so the stream splits back
+				// into exactly one sequence of entries only when no content does either: a file with a NUL byte could make
+				// two different trees hash alike, so such output is unverified.
+				if (content.includes(0)) nulBytes = true;
+				hash.update(relative(checkout, path)).update("\0").update(content).update("\0");
 				files++;
 			}
 		}
@@ -286,7 +301,7 @@ async function hashBuildOutput(checkout: string): Promise<string | undefined> {
 	} catch {
 		return undefined;
 	}
-	return files === 0 || symlinks > 0 ? undefined : hash.digest("hex");
+	return files === 0 || symlinks > 0 || nulBytes ? undefined : hash.digest("hex");
 }
 
 async function sameDirectory(a: string, b: string): Promise<boolean> {
