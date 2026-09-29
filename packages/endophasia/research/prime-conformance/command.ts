@@ -9,7 +9,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { PrimeBinaryV0 } from "./environment.ts";
 import type { PrimeProvenanceV0, PrimeScenarioEvidenceV0 } from "./evidence.ts";
 import type { PrimeProbeOptionsV0 } from "./probe.ts";
-import { assessPrimeEvidenceV0, isPublishableV0 } from "./publication.ts";
+import { assessPrimeEvidenceV0 } from "./publication.ts";
 import { buildPrimeConformanceReportV0, readPrimeFixturesV0, writePrimeFixturesV0 } from "./report.ts";
 
 /** The Prime version the committed reference fixtures were generated from. */
@@ -152,6 +152,26 @@ export async function runPrimeConformanceCommandV0(
 		}
 	}
 	const assessment = assessPrimeEvidenceV0({ report, requestedScenarios, retainedFixtures });
+	// A partial refresh must leave a committed set that passes the gate as a whole (e.g. no fact left unresolved on
+	// what is then a full set), not only two halves that each pass on their own.
+	const combined =
+		writeFixtures && only.length > 0
+			? (() => {
+					try {
+						return assessPrimeEvidenceV0({
+							report: buildPrimeConformanceReportV0([...evidence, ...retainedFixtures]),
+							requestedScenarios: [
+								...new Set([...only, ...retainedFixtures.map((run) => run.provenance.scenario)]),
+							],
+						});
+					} catch (error) {
+						return {
+							invalid: [`the refreshed fixture set is not one evidence set: ${String(error)}`],
+							unpublishable: [],
+						};
+					}
+				})()
+			: undefined;
 
 	for (const finding of report.findings) {
 		deps.stdout(
@@ -165,9 +185,14 @@ export async function runPrimeConformanceCommandV0(
 	deps.stdout(`report: ${reportPath}\n`);
 
 	if (writeFixtures) {
-		if (!isPublishableV0(assessment)) {
-			return fail(`refusing to write fixtures:\n${[...assessment.invalid, ...assessment.unpublishable].join("\n")}`);
-		}
+		const problems = [
+			...assessment.invalid,
+			...assessment.unpublishable,
+			...(combined === undefined
+				? []
+				: [...combined.invalid, ...combined.unpublishable].map((item) => `combined set: ${item}`)),
+		];
+		if (problems.length > 0) return fail(`refusing to write fixtures:\n${problems.join("\n")}`);
 		// A full run replaces the directory's contents; a --scenario run refreshes only its own fixtures.
 		writePrimeFixturesV0(fixtureDir, evidence, { prune: only.length === 0 });
 		deps.stdout(`fixtures written to ${fixtureDir}\n`);

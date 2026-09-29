@@ -595,6 +595,12 @@ const INVARIANT_MUTATIONS: readonly Mutation[] = [
 	["compaction", "no snapshots", (r) => ({ ...r, entrySnapshots: [] })],
 	[
 		"compaction",
+		"compact response disagrees with the durable entry",
+		(r) => ({ ...r, observations: { ...r.observations, compactFirstKeptEntryId: "ffffffff" } }),
+	],
+	["simple", "an abort marker outside an abort scenario", (r) => ({ ...r, abortRequestedAfter: [0] })],
+	[
+		"compaction",
 		"no compaction entry",
 		(r) => ({
 			...r,
@@ -790,6 +796,24 @@ describe("publication gate", () => {
 				const [moved] = events.splice(end, 1);
 				events.splice(turnEnd, 0, moved!);
 				return withScenario({ ...run, events });
+			},
+			"invalid",
+		],
+		[
+			"a tool call id executed twice in one turn",
+			() => {
+				const run = fixture("tool-run");
+				const start = run.events.find((event) => event.type === "tool_execution_start")!;
+				const end = run.events.find((event) => event.type === "tool_execution_end")!;
+				const endIndex = run.events.indexOf(end);
+				const events = [...run.events];
+				events.splice(endIndex + 1, 0, start, end);
+				const withRepeatedResult = events.map((event) =>
+					event.type === "turn_end" && event.toolResults.length > 0
+						? { ...event, toolResults: [...event.toolResults, ...event.toolResults] }
+						: event,
+				);
+				return withScenario({ ...run, events: withRepeatedResult });
 			},
 			"invalid",
 		],
@@ -1132,6 +1156,22 @@ describe("command ordering", () => {
 		expect(describe).toHaveBeenCalledTimes(2);
 		expect(run.fixtureState()).toEqual(before);
 		expect(run.stderr.join("")).toContain("the Prime build changed while the probe ran");
+	});
+
+	it("assesses a partial refresh together with the fixtures it keeps", async () => {
+		const odd = withStats(fixture("compaction"), "after-compaction", (stats) => ({ ...stats, cost: stats.cost + 1 }));
+		const partial = harness([odd]);
+		const before = partial.fixtureState();
+		// Alone, a partial run's unresolved fact is only "not run"; the committed set it would produce is a full set.
+		expect(await runPrimeConformanceCommandV0(["--scenario", "compaction", "--write-fixtures"], partial.deps)).toBe(
+			1,
+		);
+		expect(partial.fixtureState()).toEqual(before);
+		expect(partial.stderr.join("")).toContain("combined set:");
+		const consistent = harness([fixture("compaction")]);
+		expect(
+			await runPrimeConformanceCommandV0(["--scenario", "compaction", "--write-fixtures"], consistent.deps),
+		).toBe(0);
 	});
 
 	it("refuses a reported version that is not a safe fixture directory name", async () => {

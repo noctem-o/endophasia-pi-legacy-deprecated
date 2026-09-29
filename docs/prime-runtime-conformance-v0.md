@@ -11,7 +11,7 @@ The code under `packages/endophasia/research/prime-conformance/` is experimental
 | Endophasia base | `main` at `f82e0020740d6b78621244703ee0ddb659c0877a` |
 | Prime Agent | `PrimeIntellect-ai/prime-agent` `main` at `2d24ad4e6b2d1ee8e6919af6f108e980a14d550e`, version 0.9.6 |
 | Boundary | `prime-agent --mode rpc`, JSONL over stdio |
-| Probe | `prime-conformance-v0`, probe version 0.9.0 |
+| Probe | `prime-conformance-v0`, probe version 0.10.0 |
 | Platform of the committed evidence | linux-x64, Node v22.22.2 |
 
 Citations use two forms:
@@ -55,12 +55,12 @@ Citations use two forms:
 3. **Scenario invariants** (`invariants.ts`). Completing without an exception is not enough: each scenario must show that its operation actually happened.
    - fork: a named target was offered, `fork` succeeded and a new session file appeared.
    - reopen: `get_state` names the reopened file, and `get_messages` and the reopened stats both restore exactly the message count recorded before the first process closed.
-   - compaction: `compact` succeeded, a successful `compaction_end` was seen, and the snapshot shows the unchanged pre-compaction rows plus one compaction entry.
-   - aborts: the abort was requested at the intended moment and acknowledged.
+   - compaction: `compact` succeeded, a successful `compaction_end` was seen, the snapshot shows the unchanged pre-compaction rows plus one compaction entry, and that entry names the same first kept entry as the `compact` response.
+   - aborts: the abort was requested at the intended moment and acknowledged; no other scenario may carry an abort marker, since one would change the mapped terminal.
    - refusals: only the two expected refusals, and only with the queued-input category.
    - every scenario: every assistant message comes from the probe's provider and model.
    - every scenario: each Prime process exits 0 once its RPC input ends, and its stdout closes. A crash, a timeout kill, a signal, or a stdout a descendant still holds open 2 s after exit fails the scenario, since records could still arrive.
-   - every scenario: a known event outside its lifecycle is invalid: a `tool_execution_end` after its `turn_end` or without its `tool_execution_start`, a repeated start for an active tool call, a `tool_execution_update` for a call not active in the current turn, a `turn_end` with a tool call still active (tool calls belong to their turn), a `turn_start` inside an active turn, or an `agent_end` inside an active turn. Unknown event types remain forward-compatible evidence.
+   - every scenario: a known event outside its lifecycle is invalid: a `tool_execution_end` after its `turn_end` or without its `tool_execution_start`, a start reusing a tool call id already executed in the same turn, a `tool_execution_update` for a call not active in the current turn, a `turn_end` with a tool call still active (tool calls belong to their turn), a `turn_start` inside an active turn, or an `agent_end` inside an active turn. Unknown event types remain forward-compatible evidence.
    - fork: the fork targets the latest user message found in the session file, not a position in Prime's list; the original file is snapshotted before and after and must be unchanged; the fork copies exactly the entries before the target.
 
    Invariants check that an operation occurred, not what Prime answered. A valid observation of unexpected Prime behavior is conformance evidence.
@@ -99,7 +99,7 @@ The fake provider plants these sentinels in every payload class: `PROMPT_SENTINE
 **Running it.**
 
 - Live: `PRIME_AGENT_BIN=/path/to/prime-agent npm run check:prime-conformance` or `PRIME_AGENT_ROOT=/path/to/prime-agent npm run check:prime-conformance`. It writes `.artifacts/prime-conformance/report.json`, which is ignored by git.
-- Refresh fixtures: add `--write-fixtures`. This passes through the publication gate, so it needs a fully valid run from a clean `PRIME_AGENT_ROOT` checkout at a known commit. A `PRIME_AGENT_BIN` run can inspect but not refresh. A full refresh replaces the whole set, including fixtures of scenarios that no longer exist. A `--scenario` refresh is refused if it would mix provenance with the fixtures it keeps.
+- Refresh fixtures: add `--write-fixtures`. This passes through the publication gate, so it needs a fully valid run from a clean `PRIME_AGENT_ROOT` checkout at a known commit. A `PRIME_AGENT_BIN` run can inspect but not refresh. A full refresh replaces the whole set, including fixtures of scenarios that no longer exist. A `--scenario` refresh is refused if it would mix provenance with the fixtures it keeps, or if the refreshed evidence together with the kept fixtures would not pass the gate as one set.
 - Drift is reported on three independent axes: `runtime` (`same`, `different`, or `unverifiable` when the build cannot be matched to the reference commit, as with a binary or a dirty checkout), `probe` (a different probe version is stale evidence even when Prime is unchanged) and `environment` (platform and Node). `provenanceVerified` says whether this run's build is a clean checkout at a known commit with a build output hash. A different build output hash at the same commit is runtime drift `different`.
 - Arguments are parsed strictly. A `--scenario` without a name, an unknown scenario or an unknown flag fails before anything runs.
 - Provenance: the probe runs `git rev-parse HEAD` and `git status --porcelain --untracked-files=no` in the checkout. Modified tracked files mark the build `dirty-checkout`. Untracked build output is expected in a built checkout and is not counted by `git status`; instead `artifactsHash` is a SHA-256 over the files in `packages/*/dist`, which `prime-agent.sh` loads. A symlink there leaves the hash undefined (unverified provenance), since the code it points to is not hashed. It detects rebuilt or edited output, not whether that output matches the source; that would need a reproducible build. Provenance is described again after the scenarios; a change in commit, build state or hash during the run invalidates every scenario.

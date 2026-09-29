@@ -442,7 +442,9 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
 			// Summarization requests are expected only while the compaction runs.
 			fake.allowSummaries(true);
 			try {
-				decodePrimeCompactionResultV0(await session.command({ type: "compact" }));
+				run.observations.compactFirstKeptEntryId = decodePrimeCompactionResultV0(
+					await session.command({ type: "compact" }),
+				).firstKeptEntryId;
 			} finally {
 				fake.allowSummaries(false);
 			}

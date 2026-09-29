@@ -5,7 +5,7 @@
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.9.0";
+export const PROBE_VERSION = "0.10.0";
 
 /**
  * How the Prime that ran is known:
@@ -113,6 +113,8 @@ export interface PrimeObservationsV0 {
 	readonly providerRequests?: number;
 	/** Summarization requests the fake served (all during compaction); what a compaction entry's usage must sum. */
 	readonly summaryRequests?: number;
+	/** The first kept entry id the `compact` response named; the durable compaction entry must name the same. */
+	readonly compactFirstKeptEntryId?: string;
 }
 
 /** The session file at a named moment, e.g. immediately before and after compaction, before later prompts add rows. */

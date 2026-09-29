@@ -85,6 +85,7 @@ function compactionSnapshots(): Invariant {
 		);
 		const added = after.entries.slice(before.entries.length);
 		const end = run.events.find((event) => event.type === "compaction_end");
+		const response = run.observations.compactFirstKeptEntryId;
 		return [
 			...(prefixKept ? [] : ["pre-compaction entries changed across compaction"]),
 			...(added.length === 1 && added[0]?.type === "compaction"
@@ -95,6 +96,10 @@ function compactionSnapshots(): Invariant {
 			...(end?.type === "compaction_end" && end.succeeded && !end.aborted
 				? []
 				: ["no successful compaction_end was observed"]),
+			// The compact response and the durable entry describe one compaction: they must agree on what was kept.
+			...(response !== undefined && added[0]?.firstKeptEntryId === response
+				? []
+				: ["the compact response and the compaction entry disagree on the first kept entry"]),
 		];
 	};
 }
@@ -140,13 +145,21 @@ function probeModel(): Invariant {
 			: [];
 }
 
+/** Only the abort scenarios request an abort; a marker anywhere else would silently change the mapped terminal. */
+function noAbortRequested(): Invariant {
+	return (run) =>
+		run.abortRequestedAfter.length === 0
+			? []
+			: [`unexpected abort request(s) at ${run.abortRequestedAfter.join(", ")}`];
+}
+
 const COMMON: Invariant[] = [sessionFileRead(), observed("providerRequests", "summaryRequests"), probeModel()];
 
 const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
-	simple: [runs(1), stats("after"), refusals(0)],
-	"tool-run": [runs(1), stats("after"), toolExecuted(), refusals(0)],
-	"tool-error": [runs(1), stats("after"), toolExecuted(), refusals(0)],
-	"provider-failure": [runs(1), stats("after"), succeeded("set_auto_retry"), refusals(0)],
+	simple: [runs(1), stats("after"), noAbortRequested(), refusals(0)],
+	"tool-run": [runs(1), stats("after"), toolExecuted(), noAbortRequested(), refusals(0)],
+	"tool-error": [runs(1), stats("after"), toolExecuted(), noAbortRequested(), refusals(0)],
+	"provider-failure": [runs(1), stats("after"), succeeded("set_auto_retry"), noAbortRequested(), refusals(0)],
 	"abort-stream": [
 		runs(2),
 		stats("after", "after-resume"),
@@ -163,8 +176,8 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		succeeded("abort"),
 		refusals(0),
 	],
-	"length-stop": [runs(1), stats("after"), refusals(0)],
-	"reasoning-usage": [runs(1), stats("after"), refusals(0)],
+	"length-stop": [runs(1), stats("after"), noAbortRequested(), refusals(0)],
+	"reasoning-usage": [runs(1), stats("after"), noAbortRequested(), refusals(0)],
 	"multi-turn-reopen": [
 		runs(3),
 		stats("after-multi-a", "after-multi-b", "after-multi-c", "after-reopen"),
@@ -181,6 +194,7 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 				: [`reopen restored ${restored ?? "no"} of ${recorded ?? "an unknown number of"} messages`];
 		},
 		(run) => (run.observations.reopenedIntendedSession === true ? [] : ["the intended session was not reopened"]),
+		noAbortRequested(),
 		refusals(0),
 	],
 	compaction: [
@@ -190,6 +204,7 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		compactionSnapshots(),
 		(run) => ((run.observations.summaryRequests ?? 0) >= 1 ? [] : ["the compaction made no summary request"]),
 		observed("plainPromptAfterCompactionAdmitted", "followUpAfterCompactionAdmitted"),
+		noAbortRequested(),
 		refusals(1),
 	],
 	fork: [
@@ -200,6 +215,7 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 		observed("originalEntriesAfterFork", "forkSharedEntryIds"),
 		(run) => ((run.observations.forkTargets ?? 0) >= 1 ? [] : ["no fork target was offered"]),
 		(run) => (run.observations.forkCreatedNewFile === true ? [] : ["the fork produced no new session file"]),
+		noAbortRequested(),
 		refusals(0),
 	],
 	"child-usage-replay": [
@@ -210,6 +226,7 @@ const INVARIANTS: Readonly<Record<string, readonly Invariant[]>> = {
 			run.sessionEntries.some((entry) => entry.type === "child_usage_attributed")
 				? []
 				: ["no child_usage_attributed entry was read"],
+		noAbortRequested(),
 		refusals(0),
 	],
 };

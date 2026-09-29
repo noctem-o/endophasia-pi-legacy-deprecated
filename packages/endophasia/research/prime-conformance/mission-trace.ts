@@ -73,7 +73,14 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 	let sequence = 0;
 	let runCount = 0;
 	let run:
-		| { id: string; turns: number; turnId: string | undefined; abortRequested: boolean; tools: Set<string> }
+		| {
+				id: string;
+				turns: number;
+				turnId: string | undefined;
+				abortRequested: boolean;
+				tools: Set<string>;
+				turnToolIds: Set<string>;
+		  }
 		| undefined;
 	const lane = PRIME_ROOT_LANE_LABEL;
 	const push = (event: TraceInputV0): void => {
@@ -93,6 +100,7 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 					turnId: undefined,
 					abortRequested: false,
 					tools: new Set(),
+					turnToolIds: new Set(),
 				};
 				// Abort requests before this run belong to earlier runs.
 				for (let i = abortAfter.length - 1; i >= 0; i--) if (abortAfter[i]! < index) abortAfter.splice(i, 1);
@@ -129,11 +137,13 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 					continue;
 				}
 				const { toolCallId, toolName } = item;
-				if (run.tools.has(toolCallId)) {
-					misplace(`tool_execution_start repeated for an active tool call at ${index}`);
+				// One assistant-declared call executes once per turn: a reused id could hide a double execution.
+				if (run.turnToolIds.has(toolCallId)) {
+					misplace(`tool_execution_start repeated for a tool call id already used in this turn at ${index}`);
 					continue;
 				}
 				run.tools.add(toolCallId);
+				run.turnToolIds.add(toolCallId);
 				push({ kind: "tool.started", lane, runId: run.id, turnId: run.turnId, toolCallId, toolName });
 				continue;
 			}
@@ -159,6 +169,7 @@ export function mapPrimeMissionTraceV0(input: MissionTraceMappingInputV0): Missi
 				// Tool calls belong to their turn: one still open at turn_end could otherwise finish in a later turn.
 				if (run.tools.size > 0) misplace(`turn_end with ${run.tools.size} tool call(s) still active at ${index}`);
 				run.tools.clear();
+				run.turnToolIds.clear();
 				push({ kind: "turn.finished", lane, runId: run.id, turnId: run.turnId });
 				// A finished turn accepts no more events: anything before the next turn_start is unmapped.
 				run.turnId = undefined;
