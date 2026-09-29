@@ -2,7 +2,7 @@
 // records what can be known (the reported version, how Prime is installed, a source checkout's commit and tree state)
 // and claims nothing more. A Prime semantic adapter decides whether an identity belongs to a profile it supports.
 import { createHash } from "node:crypto";
-import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, win32 } from "node:path";
 import type { Readable } from "node:stream";
 import { PrimeProcessGroupV0 } from "./process-group.ts";
@@ -217,8 +217,10 @@ export async function readPrimeRuntimeIdentityV0(
 		}
 		// A SHA-1 or SHA-256 object ID: git supports both object formats.
 		const head = before.head;
-		const commit = head !== undefined && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head) ? head : undefined;
 		const status = before.status;
+		// A commit is reported only with a readable tree state: a HEAD without its status says nothing about what ran.
+		const commit =
+			status !== undefined && head !== undefined && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head) ? head : undefined;
 		const tree =
 			commit === undefined || status === undefined ? "unknown" : status.trim().length === 0 ? "clean" : "dirty";
 		const artifactsHash = before.artifactsHash;
@@ -260,19 +262,26 @@ async function hashBuildOutput(checkout: string): Promise<string | undefined> {
 			}
 		}
 	};
+	// Every path component the launcher resolves through is checked without following links: a symlinked packages/,
+	// packages/<name> or dist would load code reached relative to its target, which this hash does not describe.
+	const kind = (path: string) =>
+		lstat(path).then(
+			(entry) => (entry.isSymbolicLink() ? "link" : entry.isDirectory() ? "directory" : "other"),
+			() => "missing" as const,
+		);
 	try {
 		const packages = join(checkout, "packages");
-		const names = await readdir(packages).then(
-			(found) => found.sort(),
-			() => [] as string[],
-		);
+		const packagesKind = await kind(packages);
+		if (packagesKind === "link") return undefined;
+		const names = packagesKind === "directory" ? (await readdir(packages)).sort() : [];
 		for (const name of names) {
+			const packageKind = await kind(join(packages, name));
+			if (packageKind === "link") return undefined;
+			if (packageKind !== "directory") continue;
 			const dist = join(packages, name, "dist");
-			const found = await stat(dist).then(
-				() => true,
-				() => false,
-			);
-			if (found) await walk(dist);
+			const distKind = await kind(dist);
+			if (distKind === "link") return undefined;
+			if (distKind === "directory") await walk(dist);
 		}
 	} catch {
 		return undefined;

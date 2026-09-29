@@ -422,7 +422,8 @@ export class PrimeRpcConnectionV0 {
 					escalation = setTimeout(() => {
 						if (this.#exit !== undefined) return;
 						this.#diagnose({ kind: "forced-termination", signal: "SIGKILL" });
-						this.#group.killCommand();
+						// Directly on the owned group, not through the keeper, which may itself be stuck.
+						this.#group.killGroup();
 					}, TERMINATE_GRACE_MS);
 				}, timeoutMs);
 			}

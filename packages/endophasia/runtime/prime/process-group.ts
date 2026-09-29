@@ -22,8 +22,8 @@ export interface PrimeProcessExitV0 {
  * The keeper. It reads one JSON line (command, arguments, environment) from its control socket (fd 3), so none of
  * them appear on a command line, starts the command with the keeper's stdin, stdout and stderr, then points its own
  * copies at /dev/null so the pipes close when the command and its descendants close them. It ignores SIGTERM, SIGINT
- * and SIGHUP, which are meant for the command. Control lines: "kill" SIGKILLs the command (still the keeper's
- * unreaped child, so its PID is valid); "release", or the socket closing, SIGKILLs the whole group.
+ * and SIGHUP, which are meant for the command. The control line "release", or the socket closing, SIGKILLs the whole
+ * group.
  */
 const KEEPER = `"use strict";
 const { spawn } = require("node:child_process");
@@ -57,7 +57,6 @@ control.on("data", (chunk) => {
 		const line = buffer.slice(0, newline);
 		buffer = buffer.slice(newline + 1);
 		if (!started) { started = true; start(JSON.parse(line)); }
-		else if (line === "kill") { if (child !== undefined && !exited) child.kill("SIGKILL"); }
 		else if (line === "release") end();
 		newline = buffer.indexOf("\\n");
 	}
@@ -84,6 +83,8 @@ export class PrimeProcessGroupV0 {
 	readonly #process: ChildProcess;
 	readonly #keeper: boolean;
 	#alive = true;
+	/** Set once this side ends the group (release or killGroup); a keeper exit without it was unexpected. */
+	#ending = false;
 	#commandPid: number | undefined;
 	#released: Promise<void> | undefined;
 	#resolveExited!: (exit: PrimeProcessExitV0) => void;
@@ -143,6 +144,10 @@ export class PrimeProcessGroupV0 {
 		this.stderr = this.#process.stderr;
 		this.#gone = new Promise((resolve) => {
 			this.#process.on("exit", () => {
+				// The keeper died without being told to (it crashed, or something else killed it): the command and its
+				// descendants may still run. Handled here, in the callback that observed the exit, while any live member
+				// still holds the group ID.
+				if (this.#keeper && !this.#ending) this.#killOrphans();
 				this.#alive = false;
 				// A keeper that ended before reporting (it crashed, or was killed) leaves no exit report.
 				this.#settle({ code: null, signal: this.#process.signalCode, spawnFailed: false });
@@ -178,11 +183,23 @@ export class PrimeProcessGroupV0 {
 		}
 	}
 
-	/** SIGKILL the command itself (not its descendants). */
-	killCommand(): void {
-		if (!this.#alive || this.#exit !== undefined) return;
-		if (this.#keeper) this.#control()?.write("kill\n");
-		else this.#process.kill("SIGKILL");
+	/**
+	 * SIGKILL the whole group at once, the keeper included, without relying on the keeper to act (it may be stopped or
+	 * stuck). Safe while the keeper lives: it is this process's unreaped child, so the group ID is still this group's.
+	 * The command's exit is then reported with signal SIGKILL.
+	 */
+	killGroup(): void {
+		if (!this.#alive) return;
+		this.#ending = true;
+		if (!this.#keeper || this.#process.pid === undefined) {
+			this.#process.kill("SIGKILL");
+			return;
+		}
+		try {
+			process.kill(-this.#process.pid, "SIGKILL");
+		} catch {
+			this.#process.kill("SIGKILL");
+		}
 	}
 
 	/**
@@ -194,25 +211,20 @@ export class PrimeProcessGroupV0 {
 		const group = this.groupId;
 		if (!this.#alive) return false;
 		if (group === undefined) return undefined;
-		let entries: string[];
+		return liveGroupMembers(group);
+	}
+
+	/** After an unexpected keeper exit: SIGKILL whatever of the group still runs. */
+	#killOrphans(): void {
+		const group = this.#process.pid;
+		if (group === undefined) return;
+		// With /proc, only when a live member is seen: such a member holds the group ID, so it is still this group's.
+		if (liveGroupMembers(group) === false) return;
 		try {
-			entries = readdirSync("/proc");
+			process.kill(-group, "SIGKILL");
 		} catch {
-			return undefined;
+			// Nothing left.
 		}
-		for (const entry of entries) {
-			if (!/^[0-9]+$/.test(entry) || Number(entry) === group) continue;
-			let stat: string;
-			try {
-				stat = readFileSync(`/proc/${entry}/stat`, "utf8");
-			} catch {
-				continue; // The process ended while the directory was read.
-			}
-			// "pid (comm) state ppid pgrp ...": comm may contain spaces and parentheses, so fields follow the last ")".
-			const [state, , pgrp] = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-			if (Number(pgrp) === group && state !== "Z" && state !== "X") return true;
-		}
-		return false;
 	}
 
 	/**
@@ -222,8 +234,18 @@ export class PrimeProcessGroupV0 {
 	release(): Promise<void> {
 		this.#released ??= (async () => {
 			if (!this.#alive) return;
+			this.#ending = true;
 			if (!this.#keeper) {
+				// Windows: no group. The command is killed and its exit awaited (bounded), so nothing outlives the release.
 				if (this.#exit === undefined) this.#process.kill("SIGKILL");
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				await Promise.race([
+					this.#gone,
+					new Promise<void>((resolve) => {
+						timer = setTimeout(resolve, RELEASE_TIMEOUT_MS);
+					}),
+				]);
+				clearTimeout(timer);
 				return;
 			}
 			this.#control()?.write("release\n");
@@ -279,4 +301,30 @@ export class PrimeProcessGroupV0 {
 		this.#exit = exit;
 		this.#resolveExited(exit);
 	}
+}
+
+/**
+ * Whether process group `group` has a running member other than its leader (the keeper), from /proc. Zombies do not
+ * count. Undefined when /proc cannot be read.
+ */
+function liveGroupMembers(group: number): boolean | undefined {
+	let entries: string[];
+	try {
+		entries = readdirSync("/proc");
+	} catch {
+		return undefined;
+	}
+	for (const entry of entries) {
+		if (!/^[0-9]+$/.test(entry) || Number(entry) === group) continue;
+		let stat: string;
+		try {
+			stat = readFileSync(`/proc/${entry}/stat`, "utf8");
+		} catch {
+			continue; // The process ended while the directory was read.
+		}
+		// "pid (comm) state ppid pgrp ...": comm may contain spaces and parentheses, so fields follow the last ")".
+		const [state, , pgrp] = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+		if (Number(pgrp) === group && state !== "Z" && state !== "X") return true;
+	}
+	return false;
 }

@@ -929,6 +929,35 @@ describe.runIf(POSIX && existsSync("/proc/self/stat"))("Prime RPC connection: ow
 		expect(await gone({ group: group.groupId as number })).toBe(true);
 	});
 
+	it("still ends a Prime that ignores every signal when the keeper is stuck", async () => {
+		const { connection, diagnostics } = connect("ignore-sigterm", { closeTimeoutMs: 200 });
+		await connection.request({ type: "get_state" });
+		const prime = connection.pid as number;
+		// A stopped keeper can act on nothing: the SIGKILL stage must not depend on it.
+		process.kill(connection.processGroupId as number, "SIGSTOP");
+		const started = Date.now();
+		const termination = await connection.close();
+		expect(Date.now() - started).toBeLessThan(8_000);
+		expect(termination.exit.signal).toBe("SIGKILL");
+		expect(diagnostics).toEqual([
+			{ kind: "forced-termination", signal: "SIGTERM" },
+			{ kind: "forced-termination", signal: "SIGKILL" },
+		]);
+		expect(await gone({ pid: prime })).toBe(true);
+	});
+
+	it("ends Prime and its descendants when the keeper dies unexpectedly", async () => {
+		const { connection } = connect("descendant-ignores-sigterm");
+		const response = await connection.request({ type: "get_state" });
+		const descendant = (response.data as { descendant: number }).descendant;
+		const prime = connection.pid as number;
+		// Something other than this connection kills the keeper alone.
+		process.kill(connection.processGroupId as number, "SIGKILL");
+		expect(await gone({ pid: prime })).toBe(true);
+		expect(await gone({ pid: descendant })).toBe(true);
+		await connection.close();
+	});
+
 	it("keeps the command, arguments and environment off the keeper's command line and environment", async () => {
 		const { connection } = connect("echo", {
 			args: ["echo", "--secret", "TOOL_ARGS_SENTINEL"],
@@ -1343,6 +1372,44 @@ describe("Prime runtime identity", () => {
 		symlinkSync(join(root, "prime-agent.sh"), join(root, "packages/agent/dist/link.js"));
 		expect((await read())?.artifactsHash).toBeUndefined();
 		expect(hashBuildOutputV0(root)).toBeUndefined();
+		rmSync(join(root, "packages/agent/dist/link.js"));
+		expect((await read())?.artifactsHash).toMatch(/^[0-9a-f]{64}$/);
+		// So does a symlinked dist or package directory, whose own children would otherwise be hashed as if local.
+		const elsewhere = temporaryDirectory("prime-linked-build-");
+		mkdirSync(join(elsewhere, "dist"), { recursive: true });
+		writeFileSync(join(elsewhere, "dist", "index.js"), "export const linked = 1;\n");
+		symlinkSync(join(elsewhere, "dist"), join(root, "packages/extra-dist"));
+		mkdirSync(join(root, "packages/linked-dist"), { recursive: true });
+		symlinkSync(join(elsewhere, "dist"), join(root, "packages/linked-dist/dist"));
+		expect((await read())?.artifactsHash).toBeUndefined();
+		rmSync(join(root, "packages/linked-dist/dist"));
+		expect((await read())?.artifactsHash).toBeUndefined();
+		rmSync(join(root, "packages/extra-dist"));
+		symlinkSync(elsewhere, join(root, "packages/linked-package"));
+		expect((await read())?.artifactsHash).toBeUndefined();
+	});
+
+	it.runIf(POSIX)("reports no commit when the tree status cannot be read", async () => {
+		const root = temporaryDirectory("prime-no-status-");
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(root, "prime-agent.sh"), 0o755);
+		const bin = temporaryDirectory("prime-fake-git-");
+		writeFileSync(
+			join(bin, "git"),
+			[
+				"#!/bin/sh",
+				'root="$2"; shift 2',
+				'if [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then echo "$root"; exit 0; fi',
+				`if [ "$1" = rev-parse ]; then echo ${"a".repeat(40)}; exit 0; fi`,
+				"exit 1",
+			].join("\n"),
+		);
+		chmodSync(join(bin, "git"), 0o755);
+		const env = { PATH: `${bin}:${process.env.PATH ?? ""}` };
+		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
+		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
+			tree: "unknown",
+		});
 	});
 
 	it.runIf(POSIX)("reports an unknown tree when the checkout is not a git repository", async () => {
