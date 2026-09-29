@@ -85,7 +85,7 @@ ACP is excluded for the reason in section 2.
 
 **Correlation** (`PrimeRpcConnectionV0.request`):
 - The connection assigns unique IDs (`endophasia-N`). A command that carries its own `id` is rejected.
-- A command is read and serialized before anything is registered. One that cannot be read or encoded (a cycle, a `BigInt`, a throwing getter or Proxy trap, including on `type`) is rejected, never thrown, with no pending entry or timer left behind. `type` is read once and the checked value is what is sent.
+- A command is read and serialized before anything is registered. One that cannot be read or encoded (a cycle, a `BigInt`, a throwing getter or Proxy trap, including on `type`) is rejected, never thrown, with no pending entry or timer left behind. `type` is read once and the checked value is what is sent. A command with its own `toJSON` is refused unsent, since `JSON.stringify` would let it replace the envelope's `type` and `id`.
 - Commands buffered for a slow reader are bounded by `maxInputBacklogBytes` (default 16 MiB): a request that would exceed it is rejected unsent.
 - A response settles its request at most once:
   - a response for an ID this connection issued whose request already settled (answered, rejected or timed out) is a `stale-response-id` fault. IDs are sequential, so this needs no per-request history;
@@ -103,7 +103,7 @@ ACP is excluded for the reason in section 2.
 **Events** (`subscribe`):
 - Every non-response record with a string `type` is delivered to every listener in arrival order.
 - Nothing is retained, so history is not unbounded.
-- A throwing listener is reported as `listener-failure` with only a standard error name (`TypeError`, `RangeError` and so on), `other-error` or `non-error`. An `Error`'s `name` is mutable, so a custom name is never forwarded. Other listeners, later records and pending requests are unaffected. A throwing `onDiagnostic` sink is also contained.
+- A throwing listener is reported as `listener-failure` with only a standard error name (`TypeError`, `RangeError` and so on), `other-error` or `non-error`. Classifying the thrown value is itself guarded, so a Proxy whose traps throw cannot escape listener isolation. An `Error`'s `name` is mutable, so a custom name is never forwarded. Other listeners, later records and pending requests are unaffected. A throwing `onDiagnostic` sink is also contained.
 
 **Commands** (`observeCommands`):
 - The connection is the sole stdin writer. Each command is announced synchronously as it is written, before any response or later event can arrive.

@@ -342,6 +342,15 @@ describe("Prime RPC connection: correlation", () => {
 			},
 		};
 		expect(await connection.request(shifting)).toMatchObject({ command: "get_state", data: { echoed: "get_state" } });
+		// A root toJSON could replace the checked type and assigned ID in what is written: it is refused unsent.
+		const observed: string[] = [];
+		connection.observeCommands((command) => observed.push(command.type));
+		const hijack = { type: "get_state", toJSON: () => ({ type: "shutdown", id: "foreign" }) };
+		await expect(connection.request(hijack)).rejects.toThrow("A Prime RPC command must not define toJSON");
+		expect(observed).toEqual([]);
+		// A toJSON on a nested value only shapes that value, so it is allowed.
+		const nested = { type: "get_state", payload: { toJSON: () => "flat" } };
+		expect(await connection.request(nested)).toMatchObject({ command: "get_state" });
 	});
 
 	it("treats an error on a successful response as malformed, never delivering its text", async () => {
@@ -467,11 +476,22 @@ describe("Prime RPC connection: listeners", () => {
 			});
 			throw error;
 		});
+		connection.subscribe(() => {
+			throw new Proxy(new Error("failed"), {
+				getPrototypeOf() {
+					throw new Error("ASSISTANT_SENTINEL");
+				},
+			});
+		});
+		const after: string[] = [];
+		connection.subscribe((event) => after.push(event.type));
 		await connection.request({ type: "get_state" });
 		expect(diagnostics).toEqual([
 			{ kind: "listener-failure", listener: "event", errorName: "other-error" },
 			{ kind: "listener-failure", listener: "event", errorName: "other-error" },
+			{ kind: "listener-failure", listener: "event", errorName: "other-error" },
 		]);
+		expect(after).toEqual(["message_update"]);
 		expect(JSON.stringify(diagnostics)).not.toMatch(SENTINEL);
 	});
 

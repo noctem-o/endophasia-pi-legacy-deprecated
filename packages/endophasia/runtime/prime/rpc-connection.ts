@@ -251,7 +251,13 @@ export class PrimeRpcConnectionV0 {
 			type = declared;
 			// Serialized before anything is registered, so a command that cannot be encoded (a cycle, a BigInt, a
 			// throwing getter) leaves no pending entry or timer behind. `type` is pinned to the value that was checked.
-			record = encodePrimeJsonlRecordV0({ ...command, type, id });
+			// A null-prototype envelope, and no own `toJSON`: JSON.stringify would call a root `toJSON` for the whole
+			// envelope, letting it replace the checked `type` and the assigned `id` with a command nobody is waiting for.
+			const envelope: Record<string, unknown> = Object.assign(Object.create(null), command, { type, id });
+			if (Object.hasOwn(envelope, "toJSON")) {
+				return Promise.reject(new PrimeRpcErrorV0("A Prime RPC command must not define toJSON"));
+			}
+			record = encodePrimeJsonlRecordV0(envelope);
 		} catch {
 			return Promise.reject(new PrimeRpcErrorV0("A Prime RPC command could not be serialized"));
 		}
@@ -496,9 +502,10 @@ const STANDARD_ERROR_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 function listenerErrorName(error: unknown): PrimeRpcListenerErrorNameV0 {
-	if (!(error instanceof Error)) return "non-error";
 	try {
-		// `name` is mutable, and may be a throwing getter: only a standard name is passed through.
+		// `instanceof` can throw too (a Proxy's getPrototypeOf trap), and `name` is mutable or a throwing getter: every
+		// read is guarded, and only a standard name is passed through.
+		if (!(error instanceof Error)) return "non-error";
 		const name: unknown = error.name;
 		return typeof name === "string" && STANDARD_ERROR_NAMES.has(name)
 			? (name as PrimeRpcListenerErrorNameV0)
