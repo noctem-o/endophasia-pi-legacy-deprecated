@@ -1,0 +1,393 @@
+// Prime RPC Runtime Ingress v0: owns one `prime-agent --mode rpc` child process and its JSONL protocol. It correlates
+// command responses, delivers native events in order, and shuts the process down within a bounded time. It interprets
+// no event: Prime's vocabulary stays raw here, for a Prime-specific semantic adapter above it to validate and map.
+// Node-side and Prime-specific; never part of the browser-facing contract surface.
+import { type ChildProcess, spawn } from "node:child_process";
+import { encodePrimeJsonlRecordV0, PrimeJsonlDecoderV0, type PrimeJsonlFaultV0 } from "./jsonl.ts";
+import type { PrimeInstallationV0 } from "./runtime-identity.ts";
+
+/** One command response, correlated to the request that caused it. `success: false` is a refusal, not an error. */
+export interface PrimeRpcResponseV0 {
+	readonly id: string;
+	readonly command: string;
+	readonly success: boolean;
+	readonly data?: unknown;
+	/** Prime's refusal text, present only when success is false. It may quote user content: never persist it raw. */
+	readonly error?: string;
+}
+
+/** One native Prime event, uninterpreted. Its fields may carry prompts, output and tool payloads. */
+export interface PrimeRpcEventV0 {
+	readonly type: string;
+	readonly record: Readonly<Record<string, unknown>>;
+}
+
+/** A command this connection wrote to Prime's stdin, observed synchronously as it is written. */
+export interface PrimeRpcSentCommandV0 {
+	readonly id: string;
+	readonly type: string;
+}
+
+export type PrimeRpcProtocolFaultV0 =
+	| PrimeJsonlFaultV0
+	| "missing-type"
+	| "malformed-response"
+	| "response-without-id"
+	| "unknown-response-id"
+	| "duplicate-response-id"
+	| "command-mismatch";
+
+/**
+ * What the connection reports besides responses and events. Structural categories only: a diagnostic never carries a
+ * record's content, a thrown value, or Prime's text.
+ */
+export type PrimeRpcDiagnosticV0 =
+	| { readonly kind: "protocol-fault"; readonly fault: PrimeRpcProtocolFaultV0; readonly byteLength?: number }
+	| { readonly kind: "listener-failure"; readonly listener: "event" | "command"; readonly errorName: string }
+	| { readonly kind: "stdout-drain-timeout" }
+	| { readonly kind: "forced-termination"; readonly signal: "SIGTERM" | "SIGKILL" };
+
+export interface PrimeRpcExitV0 {
+	readonly code: number | null;
+	readonly signal: NodeJS.Signals | null;
+	/** True when the process could not be started at all. */
+	readonly spawnFailed: boolean;
+}
+
+/** How the connection ended: the exit, and whether stdout was completely drained (every record was decoded). */
+export interface PrimeRpcTerminationV0 {
+	readonly exit: PrimeRpcExitV0;
+	readonly stdoutDrained: boolean;
+}
+
+export interface PrimeRpcConnectionOptionsV0 {
+	readonly installation: PrimeInstallationV0;
+	/** Arguments after `--mode rpc` (provider, model, session directory...). */
+	readonly args?: readonly string[];
+	/** The child's complete environment: nothing is inherited from this process, so no ambient credential leaks in. */
+	readonly env: Readonly<Record<string, string>>;
+	readonly cwd: string;
+	/** Default time a request waits for its response. Default 60 s. */
+	readonly requestTimeoutMs?: number;
+	/** How long stdout may stay open after the process exited (e.g. held by a descendant). Default 2 s. */
+	readonly drainGraceMs?: number;
+	/** How long close() waits for a voluntary exit after ending stdin, before SIGTERM and then SIGKILL. Default 10 s. */
+	readonly closeTimeoutMs?: number;
+	readonly onDiagnostic?: (diagnostic: PrimeRpcDiagnosticV0) => void;
+}
+
+/** A failure the connection itself describes: it names commands, IDs and categories, never Prime's text. */
+export class PrimeRpcErrorV0 extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "PrimeRpcErrorV0";
+	}
+}
+
+export class PrimeRpcExitErrorV0 extends PrimeRpcErrorV0 {
+	readonly exit: PrimeRpcExitV0;
+	constructor(command: string, exit: PrimeRpcExitV0) {
+		super(
+			`Prime RPC process ${exit.spawnFailed ? "could not start" : "exited"} before responding to ${command} (code ${exit.code}, signal ${exit.signal})`,
+		);
+		this.name = "PrimeRpcExitErrorV0";
+		this.exit = exit;
+	}
+}
+
+interface Pending {
+	readonly command: string;
+	readonly resolve: (response: PrimeRpcResponseV0) => void;
+	readonly reject: (error: Error) => void;
+	readonly timer: ReturnType<typeof setTimeout>;
+}
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+const DEFAULT_DRAIN_GRACE_MS = 2_000;
+const DEFAULT_CLOSE_TIMEOUT_MS = 10_000;
+/** After SIGTERM, how long before SIGKILL. */
+const TERMINATE_GRACE_MS = 2_000;
+
+/**
+ * One Prime RPC process. The connection is the only writer to its stdin: every command goes through request(), so a
+ * semantic adapter can observe the commands it sent (e.g. its own abort) in order with the events that follow.
+ */
+export class PrimeRpcConnectionV0 {
+	/** Settles when the process exits (or fails to start), possibly before stdout is drained. */
+	readonly exited: Promise<PrimeRpcExitV0>;
+	/** Settles when the process exited and stdout is closed, or the bounded drain grace expired. */
+	readonly terminated: Promise<PrimeRpcTerminationV0>;
+
+	readonly #child: ChildProcess;
+	readonly #decoder = new PrimeJsonlDecoderV0();
+	readonly #pending = new Map<string, Pending>();
+	readonly #settledIds = new Set<string>();
+	readonly #events = new Set<(event: PrimeRpcEventV0) => void>();
+	readonly #commands = new Set<(command: PrimeRpcSentCommandV0) => void>();
+	readonly #options: PrimeRpcConnectionOptionsV0;
+	#nextId = 0;
+	#exit: PrimeRpcExitV0 | undefined;
+	#stdoutOpen = true;
+	#closing: Promise<PrimeRpcTerminationV0> | undefined;
+	#resolveExited!: (exit: PrimeRpcExitV0) => void;
+	#resolveTerminated!: (termination: PrimeRpcTerminationV0) => void;
+
+	constructor(options: PrimeRpcConnectionOptionsV0) {
+		this.#options = options;
+		this.exited = new Promise((resolve) => {
+			this.#resolveExited = resolve;
+		});
+		this.terminated = new Promise((resolve) => {
+			this.#resolveTerminated = resolve;
+		});
+		const { installation } = options;
+		this.#child = spawn(
+			installation.command,
+			[...installation.leadingArgs, "--mode", "rpc", ...(options.args ?? [])],
+			{
+				cwd: options.cwd,
+				// Exactly the given environment: never process.env, which may hold provider keys.
+				env: { ...options.env },
+				// stderr is not read: it may quote payloads, and an unread pipe could block Prime, so it is discarded.
+				stdio: ["pipe", "pipe", "ignore"],
+				// Its own process group on POSIX, so a bounded shutdown can also reach descendants holding stdout.
+				detached: process.platform !== "win32",
+			},
+		);
+		const { stdout, stdin } = this.#child;
+		stdout?.on("data", (chunk: Buffer) => this.#receive(this.#decoder.push(chunk)));
+		stdout?.on("end", () => this.#receive(this.#decoder.end()));
+		stdout?.on("close", () => {
+			this.#stdoutOpen = false;
+			this.#maybeTerminated();
+		});
+		// Writes after the process exited fail with EPIPE; pending requests are already rejected by the exit.
+		stdin?.on("error", () => {});
+		this.#child.on("exit", (code, signal) => this.#onExit({ code, signal, spawnFailed: false }));
+		this.#child.on("error", () => {
+			// A spawn failure emits no exit and no stdout close.
+			this.#stdoutOpen = false;
+			this.#onExit({ code: null, signal: null, spawnFailed: true });
+		});
+	}
+
+	get pid(): number | undefined {
+		return this.#child.pid;
+	}
+
+	/** Receive every native event, in arrival order. A throwing listener is reported and does not affect others. */
+	subscribe(listener: (event: PrimeRpcEventV0) => void): () => void {
+		this.#events.add(listener);
+		return () => {
+			this.#events.delete(listener);
+		};
+	}
+
+	/** Observe each command synchronously as it is written, before any response or later event can arrive. */
+	observeCommands(listener: (command: PrimeRpcSentCommandV0) => void): () => void {
+		this.#commands.add(listener);
+		return () => {
+			this.#commands.delete(listener);
+		};
+	}
+
+	/**
+	 * Send one command and resolve with its correlated response, including a refusal (`success: false`). Rejects when
+	 * the process exits first, the response echoes another command, or the timeout expires. IDs belong to the
+	 * connection: a command must not carry its own.
+	 */
+	request(
+		command: { readonly type: string } & Record<string, unknown>,
+		options: { readonly timeoutMs?: number } = {},
+	): Promise<PrimeRpcResponseV0> {
+		if (typeof command.type !== "string" || command.type.length === 0) {
+			return Promise.reject(new PrimeRpcErrorV0("A Prime RPC command needs a type"));
+		}
+		if ("id" in command)
+			return Promise.reject(new PrimeRpcErrorV0("Prime RPC request IDs are assigned by the connection"));
+		if (this.#exit !== undefined || this.#closing !== undefined) {
+			return Promise.reject(
+				this.#exit === undefined
+					? new PrimeRpcErrorV0(`Prime RPC connection is closing; ${command.type} was not sent`)
+					: new PrimeRpcExitErrorV0(command.type, this.#exit),
+			);
+		}
+		const id = `endophasia-${++this.#nextId}`;
+		const timeoutMs = options.timeoutMs ?? this.#options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+		const response = new Promise<PrimeRpcResponseV0>((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.#pending.delete(id);
+				// A late response for this ID is then reported as unknown, never delivered to anyone.
+				reject(new PrimeRpcErrorV0(`Prime RPC ${command.type} (${id}) timed out after ${timeoutMs} ms`));
+			}, timeoutMs);
+			this.#pending.set(id, { command: command.type, resolve, reject, timer });
+		});
+		this.#child.stdin?.write(encodePrimeJsonlRecordV0({ ...command, id }));
+		this.#notify(this.#commands, { id, type: command.type }, "command");
+		return response;
+	}
+
+	/**
+	 * End Prime's input and wait until it exited and stdout drained. Bounded: after closeTimeoutMs the process group is
+	 * sent SIGTERM, then SIGKILL; a stdout held open after exit is abandoned after the drain grace. Idempotent: every
+	 * call returns the same termination. Safe after the process already exited: it still waits for the drain.
+	 */
+	close(): Promise<PrimeRpcTerminationV0> {
+		this.#closing ??= (async () => {
+			this.#child.stdin?.end();
+			const timeoutMs = this.#options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS;
+			let escalation: ReturnType<typeof setTimeout> | undefined;
+			if (this.#exit === undefined) {
+				escalation = setTimeout(() => {
+					this.#signal("SIGTERM");
+					escalation = setTimeout(() => this.#signal("SIGKILL"), TERMINATE_GRACE_MS);
+				}, timeoutMs);
+			}
+			try {
+				return await this.terminated;
+			} finally {
+				clearTimeout(escalation);
+			}
+		})();
+		return this.#closing;
+	}
+
+	#signal(signal: "SIGTERM" | "SIGKILL"): void {
+		if (this.#exit !== undefined) return;
+		this.#diagnose({ kind: "forced-termination", signal });
+		this.#killGroup(signal);
+	}
+
+	#killGroup(signal: "SIGTERM" | "SIGKILL"): void {
+		const pid = this.#child.pid;
+		if (pid === undefined) return;
+		try {
+			if (process.platform === "win32") this.#child.kill(signal);
+			else process.kill(-pid, signal);
+		} catch {
+			// The group is already gone.
+		}
+	}
+
+	#onExit(exit: PrimeRpcExitV0): void {
+		if (this.#exit !== undefined) return;
+		this.#exit = exit;
+		// Pending requests fail as soon as the process is gone; stdout may still deliver trailing records.
+		for (const [id, pending] of this.#pending) {
+			clearTimeout(pending.timer);
+			this.#pending.delete(id);
+			pending.reject(new PrimeRpcExitErrorV0(pending.command, exit));
+		}
+		this.#resolveExited(exit);
+		if (this.#stdoutOpen) {
+			// A descendant that inherited stdout could hold it open forever: the drain is bounded, then abandoned.
+			setTimeout(() => {
+				if (!this.#stdoutOpen) return;
+				this.#diagnose({ kind: "stdout-drain-timeout" });
+				this.#killGroup("SIGKILL");
+				this.#child.stdout?.removeAllListeners("data");
+				this.#child.stdout?.destroy();
+				this.#resolveTerminated({ exit, stdoutDrained: false });
+			}, this.#options.drainGraceMs ?? DEFAULT_DRAIN_GRACE_MS).unref();
+		}
+		this.#maybeTerminated();
+	}
+
+	#maybeTerminated(): void {
+		if (this.#exit !== undefined && !this.#stdoutOpen)
+			this.#resolveTerminated({ exit: this.#exit, stdoutDrained: true });
+	}
+
+	#receive(records: readonly ReturnType<PrimeJsonlDecoderV0["push"]>[number][]): void {
+		for (const record of records) {
+			if (record.kind === "fault") {
+				this.#fault(record.fault, record.byteLength);
+				continue;
+			}
+			const { value } = record;
+			if (typeof value.type !== "string" || value.type.length === 0) {
+				this.#fault("missing-type");
+				continue;
+			}
+			if (value.type === "response") {
+				this.#response(value);
+				continue;
+			}
+			this.#notify(this.#events, { type: value.type, record: value }, "event");
+		}
+	}
+
+	#response(value: Record<string, unknown>): void {
+		const { id, command, success, data, error } = value;
+		if (
+			typeof command !== "string" ||
+			command.length === 0 ||
+			typeof success !== "boolean" ||
+			(id !== undefined && (typeof id !== "string" || id.length === 0)) ||
+			(error !== undefined && typeof error !== "string") ||
+			(success === false && error === undefined)
+		) {
+			this.#fault("malformed-response");
+			return;
+		}
+		// Prime answers a command it could not parse without an ID: nothing is waiting for it by ID.
+		if (id === undefined) {
+			this.#fault("response-without-id");
+			return;
+		}
+		const pending = this.#pending.get(id);
+		if (pending === undefined) {
+			this.#fault(this.#settledIds.has(id) ? "duplicate-response-id" : "unknown-response-id");
+			return;
+		}
+		clearTimeout(pending.timer);
+		this.#pending.delete(id);
+		this.#settledIds.add(id);
+		// The right ID with another command's response would hand the caller a different data shape.
+		if (command !== pending.command) {
+			this.#fault("command-mismatch");
+			pending.reject(new PrimeRpcErrorV0(`Prime RPC response ${id} does not echo ${pending.command}`));
+			return;
+		}
+		pending.resolve({
+			id,
+			command,
+			success,
+			...(data === undefined ? {} : { data }),
+			...(typeof error === "string" ? { error } : {}),
+		});
+	}
+
+	#diagnose(diagnostic: PrimeRpcDiagnosticV0): void {
+		try {
+			this.#options.onDiagnostic?.(diagnostic);
+		} catch {
+			// A failing diagnostic sink must not break record processing; there is nowhere further to report it.
+		}
+	}
+
+	#fault(fault: PrimeRpcProtocolFaultV0, byteLength?: number): void {
+		this.#diagnose({
+			kind: "protocol-fault",
+			fault,
+			...(byteLength === undefined ? {} : { byteLength }),
+		});
+	}
+
+	#notify<T>(listeners: ReadonlySet<(value: T) => void>, value: T, listener: "event" | "command"): void {
+		for (const deliver of [...listeners]) {
+			// A listener removed while this value is being delivered does not receive it.
+			if (!listeners.has(deliver)) continue;
+			try {
+				deliver(value);
+			} catch (error) {
+				// Isolation: later listeners and later records are unaffected. Only the error's name is reported.
+				this.#diagnose({
+					kind: "listener-failure",
+					listener,
+					errorName: error instanceof Error ? error.name : typeof error,
+				});
+			}
+		}
+	}
+}

@@ -186,6 +186,8 @@ try {
 				normalized.includes("node_modules/ws/") ||
 				normalized.includes("node_modules/esbuild/") ||
 				normalized.includes("packages/endophasia/runtime/") ||
+				// Prime RPC Runtime Ingress is Node-only (child processes, stdio); named so a move cannot drop it.
+				normalized.includes("packages/endophasia/runtime/prime/") ||
 				normalized.includes("packages/agent/src/") ||
 				// The Usage contract is bundled; the durable ledger, feed and host facet stay on the host.
 				normalized.endsWith("packages/endophasia/src/usage-facet.ts") ||
