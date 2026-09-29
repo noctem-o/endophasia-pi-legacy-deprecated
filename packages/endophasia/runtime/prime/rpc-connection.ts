@@ -590,7 +590,15 @@ export class PrimeRpcConnectionV0 {
 
 	#diagnose(diagnostic: PrimeRpcDiagnosticV0): void {
 		try {
-			this.#options.onDiagnostic?.(diagnostic);
+			// An async sink's rejection is absorbed too, instead of becoming an unhandled rejection.
+			const result: unknown = this.#options.onDiagnostic?.(diagnostic);
+			if (
+				result !== null &&
+				typeof result === "object" &&
+				typeof (result as PromiseLike<unknown>).then === "function"
+			) {
+				(result as PromiseLike<unknown>).then(undefined, () => {});
+			}
 		} catch {
 			// A failing diagnostic sink must not break record processing; there is nowhere further to report it.
 		}

@@ -2,8 +2,9 @@
 // records what can be known (the reported version, how Prime is installed, a source checkout's commit and tree state)
 // and claims nothing more. A Prime semantic adapter decides whether an identity belongs to a profile it supports.
 import { createHash } from "node:crypto";
+import type { Dirent } from "node:fs";
 import { createReadStream } from "node:fs";
-import { lstat, readdir, realpath } from "node:fs/promises";
+import { lstat, opendir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import type { Readable } from "node:stream";
 import { PrimeProcessGroupV0 } from "./process-group.ts";
@@ -77,6 +78,8 @@ const VERSION = new RegExp(
 );
 /** Output beyond this is not a version report; the command is stopped and nothing is read from it. */
 const MAX_OUTPUT_BYTES = 64 * 1024;
+/** The index listing of a source checkout (Prime 0.9.6: 1,264 entries, about 68 KB). */
+const MAX_INDEX_LISTING_BYTES = 16 * 1024 * 1024;
 
 /**
  * Run a short command with exactly the given environment and return its output on exit code 0. It runs in a process
@@ -93,6 +96,8 @@ function run(
 		readonly timeoutMs: number;
 		/** Include stderr: Prime prints its version there in some modes. */
 		readonly withStderr?: boolean;
+		/** Output bound for this command; MAX_OUTPUT_BYTES by default. */
+		readonly maxOutputBytes?: number;
 	},
 ): Promise<string | undefined> {
 	return new Promise((done) => {
@@ -126,7 +131,7 @@ function run(
 		const timer = setTimeout(stop, options.timeoutMs);
 		const collect = (into: Buffer[]) => (chunk: Buffer) => {
 			length += chunk.length;
-			if (length > MAX_OUTPUT_BYTES) stop();
+			if (length > (options.maxOutputBytes ?? MAX_OUTPUT_BYTES)) stop();
 			else into.push(chunk);
 		};
 		group.stdout?.on("data", collect(streams[0]));
@@ -141,7 +146,9 @@ function run(
 				const decoder = new TextDecoder("utf-8", { fatal: true });
 				output =
 					exit.code === 0 && !exit.spawnFailed
-						? streams.map((chunks) => decoder.decode(Buffer.concat(chunks))).join("\n")
+						? (options.withStderr === true ? streams : streams.slice(0, 1))
+								.map((chunks) => decoder.decode(Buffer.concat(chunks)))
+								.join("\n")
 						: undefined;
 			} catch {
 				output = undefined;
@@ -209,7 +216,20 @@ export async function readPrimeRuntimeIdentityV0(
 		const launcherEntry = await git(["ls-files", "--stage", "--", relative(installation.root, installation.command)]);
 		const launcherTracked = launcherEntry !== undefined && /^100(?:644|755) [0-9a-f]+ 0\t/.test(launcherEntry);
 		const artifactsHash = await hashBuildOutput(installation.root, Date.now() + timeoutMs);
-		return { head, status, launcher, launcherTracked, artifactsHash };
+		// `git status` does not see modifications to entries flagged assume-unchanged or skip-worktree (or unmerged
+		// ones): every index entry must carry the plain "H" tag, or the tracked-file status proves nothing.
+		const index = await run("git", ["-C", installation.root, "ls-files", "-v", "-z"], {
+			env: gitEnv,
+			cwd: options.cwd,
+			timeoutMs,
+			maxOutputBytes: MAX_INDEX_LISTING_BYTES,
+		});
+		const indexPlain =
+			index
+				?.split("\0")
+				.filter((entry) => entry.length > 0)
+				.every((entry) => entry.startsWith("H ")) === true;
+		return { head, status, launcher, launcherTracked, indexPlain, artifactsHash };
 	};
 	for (let attempt = 0; attempt < IDENTITY_ATTEMPTS; attempt++) {
 		const before = await snapshot();
@@ -220,6 +240,7 @@ export async function readPrimeRuntimeIdentityV0(
 			before.status !== after.status ||
 			before.launcher !== after.launcher ||
 			before.launcherTracked !== after.launcherTracked ||
+			before.indexPlain !== after.indexPlain ||
 			before.artifactsHash !== after.artifactsHash
 		) {
 			continue;
@@ -231,7 +252,10 @@ export async function readPrimeRuntimeIdentityV0(
 		// And only when the launcher that ran is a tracked regular file: untracked or symlinked launcher code is not
 		// described by the commit, so the provenance is unknown.
 		const launcherVerified =
-			before.launcherTracked && before.launcher !== undefined && before.launcher !== "not-a-regular-file";
+			before.indexPlain &&
+			before.launcherTracked &&
+			before.launcher !== undefined &&
+			before.launcher !== "not-a-regular-file";
 		if (!launcherVerified) return { version, installation, source: { tree: "unknown" } };
 		const commit =
 			status !== undefined && head !== undefined && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head) ? head : undefined;
@@ -291,6 +315,23 @@ async function hashBuildOutput(checkout: string, deadline: number): Promise<stri
 		if (files > MAX_BUILD_OUTPUT_FILES) throw new Unverifiable();
 	};
 	let entries = 0;
+	/**
+	 * A directory's entries in code-unit order, read as a stream so that a huge directory counts against the entry bound
+	 * (and the deadline) entry by entry, before its names are ever held or sorted.
+	 */
+	const list = async (path: string): Promise<Dirent[]> => {
+		const found: Dirent[] = [];
+		const directory = await opendir(path);
+		try {
+			for await (const entry of directory) {
+				if (Date.now() > deadline || ++entries > MAX_BUILD_OUTPUT_ENTRIES) throw new Unverifiable();
+				found.push(entry);
+			}
+		} finally {
+			await directory.close().catch(() => {});
+		}
+		return found.sort((a, b) => byCodeUnit(a.name, b.name));
+	};
 	// Depth-first in code-unit order, with an explicit stack (no recursion to overflow), checking the deadline and the
 	// entry and depth bounds at every step, so a wide or deep tree of empty directories is bounded too.
 	const walk = async (root: string): Promise<void> => {
@@ -298,15 +339,13 @@ async function hashBuildOutput(checkout: string, deadline: number): Promise<stri
 			{ path: root, directory: true, depth: 0 },
 		];
 		for (let next = stack.pop(); next !== undefined; next = stack.pop()) {
-			if (Date.now() > deadline || ++entries > MAX_BUILD_OUTPUT_ENTRIES) throw new Unverifiable();
+			if (Date.now() > deadline) throw new Unverifiable();
 			if (!next.directory) {
 				await hashFile(next.path);
 				continue;
 			}
 			if (next.depth > MAX_BUILD_OUTPUT_DEPTH) throw new Unverifiable();
-			const children = (await readdir(next.path, { withFileTypes: true })).sort((a, b) =>
-				byCodeUnit(a.name, b.name),
-			);
+			const children = await list(next.path);
 			for (let index = children.length - 1; index >= 0; index--) {
 				const entry = children[index];
 				if (entry.isSymbolicLink()) throw new Unverifiable();
@@ -327,8 +366,10 @@ async function hashBuildOutput(checkout: string, deadline: number): Promise<stri
 		const packages = join(checkout, "packages");
 		const packagesKind = await kind(packages);
 		if (packagesKind === "link") return undefined;
-		const names = packagesKind === "directory" ? (await readdir(packages)).sort(byCodeUnit) : [];
+		// The package level is bounded like the rest: every name counts against the entry bound and the deadline.
+		const names = packagesKind === "directory" ? (await list(packages)).map((entry) => entry.name) : [];
 		for (const name of names) {
+			if (Date.now() > deadline) throw new Unverifiable();
 			const packageKind = await kind(join(packages, name));
 			if (packageKind === "link") return undefined;
 			if (packageKind !== "directory") continue;

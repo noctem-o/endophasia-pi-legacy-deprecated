@@ -336,6 +336,8 @@ describe("Prime RPC connection: correlation", () => {
 		const { connection, diagnostics } = connect("duplicate");
 		expect(await connection.request({ type: "get_state" })).toMatchObject({ success: true });
 		await connection.request({ type: "get_state" });
+		// The second copy of the last response may still be in flight when its request resolves: drain stdout first.
+		await connection.close();
 		expect(faults(diagnostics)).toEqual(["stale-response-id", "stale-response-id"]);
 	});
 
@@ -659,6 +661,17 @@ describe("Prime RPC connection: listeners", () => {
 		expect(JSON.stringify(diagnostics)).not.toMatch(SENTINEL);
 	});
 
+	it("absorbs a rejecting async diagnostic sink", async () => {
+		const { connection } = connect("hostile-records", {
+			onDiagnostic: async () => {
+				throw new Error("sink failed");
+			},
+		});
+		expect(await connection.request({ type: "get_state" })).toMatchObject({ success: true });
+		// Any unhandled rejection from the sink would fail the run.
+		await new Promise((done) => setTimeout(done, 20));
+	});
+
 	it("survives a throwing diagnostic sink", async () => {
 		const { connection } = connect("hostile-records", {
 			onDiagnostic: () => {
@@ -948,7 +961,10 @@ describe.runIf(POSIX && existsSync("/proc/self/stat"))("Prime RPC connection: ow
 		const command = Number(readFileSync(pidFile, "utf8"));
 		// A stopped keeper never reads the release message; the fallback must still reach the command.
 		process.kill(group.groupId as number, "SIGSTOP");
+		const started = Date.now();
 		await group.release();
+		// The group is killed directly, not by asking the keeper: no wait for a keeper that cannot act.
+		expect(Date.now() - started).toBeLessThan(1_500);
 		expect(await gone({ pid: command })).toBe(true);
 		expect(await gone({ group: group.groupId as number })).toBe(true);
 	});
@@ -1297,6 +1313,7 @@ describe("Prime runtime identity", () => {
 				'root="$2"; shift 2',
 				'if [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then echo "$root"; exit 0; fi',
 				// The launcher is reported as a tracked regular file, as in a real checkout.
+				'if [ "$1" = ls-files ] && [ "$2" = -v ]; then printf "H prime-agent.sh\\000"; exit 0; fi',
 				`if [ "$1" = ls-files ]; then printf "100755 %s 0\\t%s\\n" ${"c".repeat(40)} "$4"; exit 0; fi`,
 				'if [ "$1" = rev-parse ]; then',
 				'  n=$(cat "$PRIME_TEST_COUNTER" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$PRIME_TEST_COUNTER"',
@@ -1490,6 +1507,39 @@ describe("Prime runtime identity", () => {
 		expect(source?.artifactsHash).not.toBe(hashBuildOutputV0(root));
 	});
 
+	it.runIf(POSIX)("reports no provenance when index flags hide modifications from git status", async () => {
+		const root = temporaryDirectory("prime-index-flags-");
+		const home = temporaryDirectory("prime-git-home-");
+		const env = { PATH: process.env.PATH ?? "", HOME: home, GIT_CONFIG_NOSYSTEM: "1" };
+		const git = (...args: string[]) =>
+			execFileSync("git", ["-C", root, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+				env,
+				encoding: "utf8",
+			});
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(root, "prime-agent.sh"), 0o755);
+		writeFileSync(join(root, "agent.js"), "export {};\n");
+		git("init", "-q");
+		git("add", "prime-agent.sh", "agent.js");
+		git("commit", "-q", "-m", "init");
+		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
+		const read = async () => (await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source;
+		const commit = git("rev-parse", "HEAD").trim();
+		expect(await read()).toEqual({ commit, tree: "clean" });
+		// A launcher marked assume-unchanged and then edited: git status stays empty, but the provenance is not trusted.
+		git("update-index", "--assume-unchanged", "prime-agent.sh");
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n# edited\n');
+		expect(git("status", "--porcelain", "--untracked-files=no")).toBe("");
+		expect(await read()).toEqual({ tree: "unknown" });
+		git("update-index", "--no-assume-unchanged", "prime-agent.sh");
+		git("checkout", "--", "prime-agent.sh");
+		expect(await read()).toEqual({ commit, tree: "clean" });
+		// Any other tracked file hidden by skip-worktree likewise.
+		git("update-index", "--skip-worktree", "agent.js");
+		writeFileSync(join(root, "agent.js"), "export const hidden = 1;\n");
+		expect(await read()).toEqual({ tree: "unknown" });
+	});
+
 	it.runIf(POSIX)("reports no provenance when the launcher is untracked or a symlink", async () => {
 		const root = temporaryDirectory("prime-launcher-");
 		const home = temporaryDirectory("prime-git-home-");
@@ -1539,6 +1589,7 @@ describe("Prime runtime identity", () => {
 				'root="$2"; shift 2',
 				'if [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then echo "$root"; exit 0; fi',
 				// The launcher is reported as a tracked regular file, as in a real checkout.
+				'if [ "$1" = ls-files ] && [ "$2" = -v ]; then printf "H prime-agent.sh\\000"; exit 0; fi',
 				`if [ "$1" = ls-files ]; then printf "100755 %s 0\\t%s\\n" ${"c".repeat(40)} "$4"; exit 0; fi`,
 				`if [ "$1" = rev-parse ]; then echo ${"a".repeat(40)}; exit 0; fi`,
 				"exit 1",

@@ -27,8 +27,8 @@ export interface PrimeProcessExitV0 {
  * The keeper. It reads one JSON line (command, arguments, environment) from its control socket (fd 3), so none of
  * them appear on a command line, starts the command with the keeper's stdin, stdout and stderr, then points its own
  * copies at /dev/null so the pipes close when the command and its descendants close them. It ignores SIGTERM, SIGINT
- * and SIGHUP, which are meant for the command. The control line "release", or the socket closing, SIGKILLs the whole
- * group.
+ * and SIGHUP, which are meant for the command. If the control socket closes (the owner died), it SIGKILLs the whole
+ * group. The owner itself ends the group by SIGKILLing it directly.
  */
 const KEEPER = `"use strict";
 const { spawn } = require("node:child_process");
@@ -64,7 +64,6 @@ control.on("data", (chunk) => {
 		const line = buffer.slice(0, newline);
 		buffer = buffer.slice(newline + 1);
 		if (!started) { started = true; start(JSON.parse(line)); }
-		else if (line === "release") end();
 		newline = buffer.indexOf("\\n");
 	}
 });
@@ -257,33 +256,20 @@ export class PrimeProcessGroupV0 {
 				clearTimeout(timer);
 				return;
 			}
-			this.#control()?.write("release\n");
+			// The whole group, keeper included, is SIGKILLed directly rather than by asking the keeper: the keeper could die
+			// or stall between being asked and acting. It is this process's unreaped child until #gone settles, so the
+			// group ID is still this group's at this kill.
+			this.killGroup();
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			await Promise.race([
 				this.#gone,
 				new Promise<void>((resolve) => {
-					timer = setTimeout(() => {
-						// The keeper did not act (stopped, or stuck). It is this process's unreaped child, so its PID, and with it
-						// the group ID, is still this group's: the whole group, keeper included, is SIGKILLed directly.
-						if (this.#alive && this.#process.pid !== undefined) {
-							try {
-								process.kill(-this.#process.pid, "SIGKILL");
-							} catch {
-								this.#process.kill("SIGKILL");
-							}
-						}
-						resolve();
-					}, RELEASE_TIMEOUT_MS);
+					timer = setTimeout(resolve, RELEASE_TIMEOUT_MS);
 				}),
 			]);
 			clearTimeout(timer);
-			await this.#gone;
 		})();
 		return this.#released;
-	}
-
-	#control(): Writable | undefined {
-		return (this.#process.stdio[3] as Writable | null | undefined) ?? undefined;
 	}
 
 	#onKeeperMessage(line: string): void {
