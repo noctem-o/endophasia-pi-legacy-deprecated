@@ -193,7 +193,16 @@ export class PrimeRpcConnectionV0 {
 		this.terminated = new Promise((resolve) => {
 			this.#resolveTerminated = resolve;
 		});
-		this.#reaped = this.terminated.then(() => this.#reapGroup());
+		// Once stdout is drained (or abandoned), every response that will ever arrive has been decoded: requests still
+		// waiting then fail with the exit.
+		this.#reaped = this.terminated.then(({ exit }) => {
+			for (const [id, pending] of this.#pending) {
+				clearTimeout(pending.timer);
+				this.#pending.delete(id);
+				pending.reject(new PrimeRpcExitErrorV0(pending.command, exit));
+			}
+			return this.#reapGroup();
+		});
 		const { installation } = options;
 		// Prime runs in a process group this connection owns (see process-group.ts), so a bounded shutdown also reaches
 		// its descendants and never signals a recycled group ID. Exactly the given environment: never process.env,
@@ -473,12 +482,8 @@ export class PrimeRpcConnectionV0 {
 	#onExit(exit: PrimeRpcExitV0): void {
 		if (this.#exit !== undefined) return;
 		this.#exit = exit;
-		// Pending requests fail as soon as the process is gone; stdout may still deliver trailing records.
-		for (const [id, pending] of this.#pending) {
-			clearTimeout(pending.timer);
-			this.#pending.delete(id);
-			pending.reject(new PrimeRpcExitErrorV0(pending.command, exit));
-		}
+		// Pending requests are not failed yet: the exit report can arrive before stdout is drained, and a response Prime
+		// wrote just before exiting (e.g. to shutdown) must still settle its request. They fail at termination.
 		this.#resolveExited(exit);
 		if (this.#stdoutOpen) {
 			// A descendant that inherited stdout could hold it open forever: the drain is bounded, then abandoned.

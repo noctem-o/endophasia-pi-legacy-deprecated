@@ -722,6 +722,14 @@ describe("Prime RPC connection: lifecycle", () => {
 		expect((await connection.terminated).stdoutDrained).toBe(true);
 	});
 
+	it("settles a request whose response arrives after Prime's exit was reported", async () => {
+		const { connection } = connect("late-response-after-exit");
+		const response = connection.request({ type: "shutdown" });
+		expect((await connection.exited).code).toBe(0);
+		expect(await response).toMatchObject({ command: "shutdown", success: true, data: { late: true } });
+		expect((await connection.terminated).stdoutDrained).toBe(true);
+	});
+
 	it("decodes every record written before exit, including a final record without LF", async () => {
 		const { connection, events, diagnostics } = connect("trailing-exit");
 		await connection.request({ type: "get_state" });
@@ -999,6 +1007,18 @@ describe.runIf(POSIX && existsSync("/proc/self/stat"))("Prime RPC connection: ow
 });
 
 describe("Prime RPC connection: hermetic environment", () => {
+	it("passes a large non-ASCII environment through the keeper unchanged", async () => {
+		// About 100 KB each of multi-byte text: the control socket delivers it over several reads, splitting characters.
+		const values = {
+			PRIME_TEST_A: "界".repeat(33_333),
+			PRIME_TEST_B: `x${"é🙂".repeat(16_000)}`,
+			PRIME_TEST_C: `xy${"界é".repeat(19_000)}`,
+		};
+		const { connection } = connect("env-values", { env: { PATH: process.env.PATH ?? "", ...values } });
+		const response = await connection.request({ type: "get_state" });
+		expect(response.data).toEqual(values);
+	});
+
 	it("passes exactly the given environment, never this process's credentials", async () => {
 		const saved = process.env.OPENAI_API_KEY;
 		process.env.OPENAI_API_KEY = "sk-must-not-leak";

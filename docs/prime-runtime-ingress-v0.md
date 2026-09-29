@@ -27,7 +27,7 @@ Prime runs as a separate child process. Endophasia owns the process and is the o
 - **Environment.** The child receives exactly the environment the caller passes. Nothing is inherited from `process.env`, so an ambient `OPENAI_API_KEY` or similar credential cannot leak in. A test sets `OPENAI_API_KEY` in the parent and checks that the child sees only `PATH`.
 - **stderr.** stderr is discarded. It may quote payloads, and an unread pipe could block Prime.
 - **Process group.** On POSIX, Prime runs in a process group the connection owns (`runtime/prime/process-group.ts`). The group is led by a small keeper process (a `node -e` script):
-  - it receives the command, arguments and environment over a control socket, so none of them appear on a command line, and it runs with an empty environment itself;
+  - it receives the command, arguments and environment over a control socket, decoded as one UTF-8 stream, so none of them appear on a command line, and it runs with an empty environment itself;
   - it starts Prime inside its group and reports Prime's exit;
   - it stays alive until the connection releases the group, which it does by SIGKILLing its own group, itself included, in one `kill(2)`. If the keeper cannot act on the release (stopped or stuck), the owner SIGKILLs the group directly after two seconds; the keeper is still its unreaped child then, so the group ID is still owned.
 
@@ -116,7 +116,7 @@ ACP is excluded for the reason in section 2.
 - This lets a future adapter know, in order, which aborts it sent itself.
 
 **Lifecycle**:
-- `exited` settles when the process exits or cannot start. Pending requests reject at that moment with `PrimeRpcExitErrorV0`, and later requests reject immediately.
+- `exited` settles when the process exits or cannot start, and later requests reject immediately. Requests already waiting are not failed yet: the exit can be known before stdout is drained, and a response Prime wrote just before exiting (e.g. to `shutdown`) still settles its request. Whatever is still waiting when stdout is drained, or abandoned after the drain grace, rejects with `PrimeRpcExitErrorV0`.
 - `terminated` settles only when the process has exited and stdout has closed. Records written just before exit are still decoded, including a final record without an LF.
 - If Prime's stdin fails while it still runs (EPIPE), waiting requests reject at once and later requests are refused, with a `stdin-failure` diagnostic, instead of each waiting for its timeout.
 - If a descendant holds stdout open after exit, the drain is bounded by `drainGraceMs`. The process group is then killed, stdout is destroyed, and `terminated` reports `stdoutDrained: false`.

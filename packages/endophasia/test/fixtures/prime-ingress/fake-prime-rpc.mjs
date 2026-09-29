@@ -97,6 +97,25 @@ function handle(command) {
 			if (command.type === "forge") write({ type: "response", id: command.target, command: "get_state", success: true });
 			write(respond(command));
 			return;
+		case "late-response-after-exit": {
+			// Prime exits at once; its response reaches stdout 150 ms later (written by a descendant holding stdout), so
+			// the exit is known before the response is read.
+			const response = JSON.stringify(respond(command, { data: { late: true } }));
+			const child = spawn(
+				process.execPath,
+				["-e", `setTimeout(() => process.stdout.write(${JSON.stringify(`${response}\n`)}), 150)`],
+				{ stdio: ["ignore", "inherit", "ignore"] },
+			);
+			child.on("spawn", () => process.exit(0));
+			return;
+		}
+		case "env-values":
+			write(
+				respond(command, {
+					data: Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith("PRIME_TEST_"))),
+				}),
+			);
+			return;
 		case "success-with-error":
 			write({ type: "response", id: command.id, command: command.type, success: true, error: SENTINEL.prompt });
 			write(respond(command));

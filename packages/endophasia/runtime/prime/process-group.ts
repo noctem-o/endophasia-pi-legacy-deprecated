@@ -50,6 +50,8 @@ const start = (config) => {
 };
 let buffer = "";
 let started = false;
+// Decoded as one UTF-8 stream: a character split between two reads must not become U+FFFD.
+control.setEncoding("utf8");
 control.on("data", (chunk) => {
 	buffer += chunk;
 	let newline = buffer.indexOf("\\n");
