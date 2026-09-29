@@ -2,6 +2,8 @@
 // never part of the browser-facing @endophasia/core surface. It keeps the framing guarantees the Prime Runtime
 // Conformance v0 probe established (research/prime-conformance/jsonl.ts), which differential tests hold it to.
 
+import { checkSize } from "./limits.ts";
+
 /** Why a record was not a single JSON object. Categories only: the record's content is never quoted. */
 export type PrimeJsonlFaultV0 =
 	| "empty-record"
@@ -42,9 +44,7 @@ export class PrimeJsonlDecoderV0 {
 	constructor(options: { readonly maxRecordBytes?: number } = {}) {
 		const maxRecordBytes = options.maxRecordBytes ?? PRIME_JSONL_DEFAULT_MAX_RECORD_BYTES;
 		// NaN would break buffering and Infinity would lift the memory bound: only a positive safe integer is a limit.
-		if (!Number.isSafeInteger(maxRecordBytes) || maxRecordBytes < 1) {
-			throw new RangeError("maxRecordBytes must be a positive safe integer");
-		}
+		checkSize("maxRecordBytes", maxRecordBytes);
 		this.#maxRecordBytes = maxRecordBytes;
 	}
 
@@ -60,6 +60,13 @@ export class PrimeJsonlDecoderV0 {
 		}
 		this.#hold(chunk.subarray(start));
 		return records;
+	}
+
+	/** Drop any incomplete record without decoding it, e.g. when its stream is abandoned. */
+	reset(): void {
+		this.#buffer = new Uint8Array(0);
+		this.#pendingLength = 0;
+		this.#discarding = false;
 	}
 
 	/** At end of stream: a final record without a trailing LF is still decoded; an empty remainder is nothing. */

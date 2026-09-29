@@ -8,6 +8,7 @@ import { access, constants, lstat, opendir, realpath } from "node:fs/promises";
 import { devNull } from "node:os";
 import { delimiter, isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import type { Readable } from "node:stream";
+import { checkTimeout } from "./limits.ts";
 import { PrimeProcessGroupV0 } from "./process-group.ts";
 
 /** How Prime is started: a standalone executable, or a source checkout's documented launcher. */
@@ -181,6 +182,12 @@ export async function readPrimeRuntimeIdentityV0(
 	},
 ): Promise<PrimeRuntimeIdentityV0> {
 	const timeoutMs = options.timeoutMs ?? 60_000;
+	// Validated before anything runs: Node coerces NaN, Infinity or an oversized delay to a 1 ms timer.
+	checkTimeout("timeoutMs", timeoutMs);
+	// A source checkout starts through prime-agent.sh, which needs a POSIX shell: Windows cannot spawn it directly.
+	if (installation.mode === "source-checkout" && process.platform === "win32") {
+		throw new Error("A Prime source checkout cannot be started on Windows; use PRIME_AGENT_BIN");
+	}
 	const readVersion = async () => {
 		const output = await run(installation.command, [...installation.leadingArgs, "--version"], {
 			...options,

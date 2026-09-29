@@ -3,6 +3,7 @@
 // no event: Prime's vocabulary stays raw here, for a Prime-specific semantic adapter above it to validate and map.
 // Node-side and Prime-specific; never part of the browser-facing contract surface.
 import { encodePrimeJsonlRecordV0, PrimeJsonlDecoderV0, type PrimeJsonlFaultV0 } from "./jsonl.ts";
+import { checkSize, checkTimeout } from "./limits.ts";
 import { PrimeProcessGroupV0 } from "./process-group.ts";
 import type { PrimeInstallationV0 } from "./runtime-identity.ts";
 
@@ -164,7 +165,12 @@ export class PrimeRpcConnectionV0 {
 	/** Command notices not yet delivered to every observer, in write order (see #announce). */
 	readonly #notices: PrimeRpcSentCommandV0[] = [];
 	#announcing = false;
-	readonly #options: PrimeRpcConnectionOptionsV0;
+	// Validated copies of the options: the caller's object could be changed after construction, past validation.
+	readonly #requestTimeoutMs: number;
+	readonly #drainGraceMs: number;
+	readonly #closeTimeoutMs: number;
+	readonly #maxInputBacklogBytes: number;
+	readonly #onDiagnostic: ((diagnostic: PrimeRpcDiagnosticV0) => void) | undefined;
 	#nextId = 0;
 	/**
 	 * Reserved IDs that were never sent and could not be handed back because a re-entrant request reserved a later one
@@ -183,18 +189,21 @@ export class PrimeRpcConnectionV0 {
 	#resolveTerminated!: (termination: PrimeRpcTerminationV0) => void;
 
 	constructor(options: PrimeRpcConnectionOptionsV0) {
-		// Validated before anything starts: NaN or Infinity would silently disable a bound or fire a timer at once.
-		for (const [name, value, minimum] of [
-			["maxInputBacklogBytes", options.maxInputBacklogBytes, 1],
-			["requestTimeoutMs", options.requestTimeoutMs, 0],
-			["drainGraceMs", options.drainGraceMs, 0],
-			["closeTimeoutMs", options.closeTimeoutMs, 0],
-		] as const) {
-			if (value !== undefined && (!Number.isSafeInteger(value) || value < minimum)) {
-				throw new RangeError(`${name} must be a safe integer of at least ${minimum}`);
-			}
+		// Validated and copied before anything starts (see limits.ts): a later change to the caller's object is ignored.
+		this.#requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+		this.#drainGraceMs = options.drainGraceMs ?? DEFAULT_DRAIN_GRACE_MS;
+		this.#closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS;
+		this.#maxInputBacklogBytes = options.maxInputBacklogBytes ?? DEFAULT_MAX_INPUT_BACKLOG_BYTES;
+		checkTimeout("requestTimeoutMs", this.#requestTimeoutMs);
+		checkTimeout("drainGraceMs", this.#drainGraceMs);
+		checkTimeout("closeTimeoutMs", this.#closeTimeoutMs);
+		checkSize("maxInputBacklogBytes", this.#maxInputBacklogBytes);
+		this.#onDiagnostic = options.onDiagnostic;
+		const { installation } = options;
+		// A source checkout starts through prime-agent.sh, which needs a POSIX shell: Windows cannot spawn it directly.
+		if (installation.mode === "source-checkout" && process.platform === "win32") {
+			throw new PrimeRpcErrorV0("A Prime source checkout cannot be started on Windows; use PRIME_AGENT_BIN");
 		}
-		this.#options = options;
 		this.#decoder = new PrimeJsonlDecoderV0(
 			options.maxRecordBytes === undefined ? {} : { maxRecordBytes: options.maxRecordBytes },
 		);
@@ -214,7 +223,6 @@ export class PrimeRpcConnectionV0 {
 			}
 			return this.#reapGroup();
 		});
-		const { installation } = options;
 		// Prime runs in a process group this connection owns (see process-group.ts), so a bounded shutdown also reaches
 		// its descendants and never signals a recycled group ID. Exactly the given environment: never process.env,
 		// which may hold provider keys. stderr is not read: it may quote payloads, and an unread pipe could block Prime.
@@ -279,6 +287,14 @@ export class PrimeRpcConnectionV0 {
 		command: { readonly type: string } & Record<string, unknown>,
 		options: { readonly timeoutMs?: number } = {},
 	): Promise<PrimeRpcResponseV0> {
+		// The per-request timeout is validated like the constructor's, before an ID is reserved or anything is sent.
+		let requestTimeoutMs: number;
+		try {
+			requestTimeoutMs = options.timeoutMs ?? this.#requestTimeoutMs;
+			checkTimeout("timeoutMs", requestTimeoutMs);
+		} catch (error) {
+			return Promise.reject(error instanceof RangeError ? error : new RangeError("timeoutMs could not be read"));
+		}
 		// Every read of the caller's object happens inside this guard: a throwing getter or Proxy trap (on `type`, on
 		// `id`, or while serializing) rejects instead of throwing. The thrown message is never quoted.
 		let type: string;
@@ -320,7 +336,7 @@ export class PrimeRpcConnectionV0 {
 		}
 		const refusal = this.#refuseWrite(type, record);
 		if (refusal !== undefined) return refuse(refusal);
-		const timeoutMs = options.timeoutMs ?? this.#options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+		const timeoutMs = requestTimeoutMs;
 		const response = new Promise<PrimeRpcResponseV0>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.#pending.delete(id);
@@ -387,7 +403,7 @@ export class PrimeRpcConnectionV0 {
 		if (this.#stdinFailed) return new PrimeRpcErrorV0(`Prime RPC input failed; ${type} was not sent`);
 		// Every record is written as a Buffer, so writableLength is a byte count.
 		const backlog = this.#group.stdin?.writableLength ?? 0;
-		const maxBacklog = this.#options.maxInputBacklogBytes ?? DEFAULT_MAX_INPUT_BACKLOG_BYTES;
+		const maxBacklog = this.#maxInputBacklogBytes;
 		if (backlog + record.length > maxBacklog) {
 			return new PrimeRpcErrorV0(`Prime RPC input backlog is full; ${type} was not sent`);
 		}
@@ -434,7 +450,7 @@ export class PrimeRpcConnectionV0 {
 	close(): Promise<PrimeRpcTerminationV0> {
 		this.#closing ??= (async () => {
 			this.#group.stdin?.end();
-			const timeoutMs = this.#options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS;
+			const timeoutMs = this.#closeTimeoutMs;
 			let escalation: ReturnType<typeof setTimeout> | undefined;
 			if (this.#exit === undefined) {
 				escalation = setTimeout(() => {
@@ -507,8 +523,11 @@ export class PrimeRpcConnectionV0 {
 				void this.#group.release();
 				this.#group.stdout?.removeAllListeners("data");
 				this.#group.stdout?.destroy();
+				// An incomplete record held from the abandoned stream is dropped, never decoded, so it does not stay in memory
+				// for as long as the connection is referenced.
+				this.#decoder.reset();
 				this.#resolveTerminated({ exit, stdoutDrained: false });
-			}, this.#options.drainGraceMs ?? DEFAULT_DRAIN_GRACE_MS).unref();
+			}, this.#drainGraceMs).unref();
 		}
 		this.#maybeTerminated();
 	}
@@ -609,7 +628,7 @@ export class PrimeRpcConnectionV0 {
 	#diagnose(diagnostic: PrimeRpcDiagnosticV0): void {
 		try {
 			// An async sink's rejection is absorbed too, instead of becoming an unhandled rejection.
-			const result: unknown = this.#options.onDiagnostic?.(diagnostic);
+			const result: unknown = this.#onDiagnostic?.(diagnostic);
 			if (
 				result !== null &&
 				typeof result === "object" &&

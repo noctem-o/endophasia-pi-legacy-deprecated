@@ -18,7 +18,7 @@ The first production code that talks to Prime. It starts `prime-agent --mode rpc
 
 Prime runs as a separate child process. Endophasia owns the process and is the only writer to its stdin.
 
-- **Location.** `packages/endophasia/runtime/prime/`. It is Node-only: it uses `node:child_process` and stdio. It is not exported from `@endophasia/core`.
+- **Location.** `packages/endophasia/runtime/prime/`. A source checkout (`PRIME_AGENT_ROOT`) starts through `prime-agent.sh`, which needs a POSIX shell, so it is refused on Windows; use `PRIME_AGENT_BIN` there. It is Node-only: it uses `node:child_process` and stdio. It is not exported from `@endophasia/core`.
 - **Browser exclusion.** `scripts/check-browser-smoke.mjs` already forbids `packages/endophasia/runtime/` in the Presentation and Cockpit bundles, and now names `packages/endophasia/runtime/prime/` explicitly.
 - **Import guards.** Offline tests (`test/prime-runtime-ingress.test.ts`) check that:
   - `runtime/prime` imports only `node:` builtins and its own modules, and never `research/`;
@@ -84,7 +84,7 @@ ACP is excluded for the reason in section 2.
 - Bytes are split on LF only; readline is never used. U+2028 and U+2029 inside JSON strings stay part of the record.
 - One trailing CR is stripped. A lone CR is not a separator.
 - UTF-8 split across chunks, including inside a code point, is reassembled. An incomplete record is kept in one buffer that grows by doubling, so a record split over many chunks, even one byte per chunk, costs amortized linear copying and one allocation, not an object per chunk.
-- A record longer than `maxRecordBytes` (default 64 MiB) is discarded up to its LF and reported as `oversized-record`; decoding continues with the next record. Numeric options (`maxRecordBytes`, `maxInputBacklogBytes` and the timeouts) must be safe integers in range; NaN, Infinity or a negative value is refused before anything starts.
+- A record longer than `maxRecordBytes` (default 64 MiB) is discarded up to its LF and reported as `oversized-record`; decoding continues with the next record. Numeric options (`maxRecordBytes`, `maxInputBacklogBytes`, the connection timeouts, a request's `timeoutMs` and the identity read's `timeoutMs`) must be safe integers in range, timeouts at most 2,147,483,647 ms (Node coerces a longer delay to 1 ms); anything else is refused with a `RangeError` before an ID is reserved or anything is spawned or written. The connection keeps validated copies, so changing the caller's options object later has no effect. When a drain is abandoned, any incomplete record held for it is dropped.
 - Each record is decoded with a fatal UTF-8 decoder. Malformed bytes, overlong encodings, lone surrogates and a truncated final code point are faults. They are never turned into U+FFFD.
 - A record must be exactly one JSON object. A blank line, malformed JSON, an array, `null` or a scalar is a fault.
 - A final record without an LF is still decoded at end of stream.

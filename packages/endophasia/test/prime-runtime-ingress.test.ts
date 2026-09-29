@@ -207,6 +207,14 @@ describe("Prime JSONL framing: large and oversized records", () => {
 		expect(decodeAll(chunks)).toEqual([{ kind: "object", value: { type: "big", text } }]);
 	});
 
+	it("drops an incomplete record on reset without decoding it", () => {
+		const decoder = new PrimeJsonlDecoderV0();
+		expect(decoder.push(bytes('{"type":"partial","text":"'))).toEqual([]);
+		decoder.reset();
+		expect(decoder.end()).toEqual([]);
+		expect(decoder.push(bytes('{"type":"next"}\n'))).toEqual([{ kind: "object", value: { type: "next" } }]);
+	});
+
 	it("skips a record over the bound up to its LF and keeps decoding", () => {
 		const oversized = bytes('{"type":"aaaaaaaaaaaaaaaaaaaaaaaa"}\n{"type":"b"}\n');
 		const expected = [
@@ -840,6 +848,61 @@ describe("Prime RPC connection: lifecycle", () => {
 		expect(faults(diagnostics)).toEqual(["unknown-response-id"]);
 	});
 
+	it("refuses an invalid per-request timeout before reserving an ID or writing anything", async () => {
+		const { connection } = connect("echo");
+		const written: string[] = [];
+		connection.observeCommands((command) => written.push(command.id));
+		for (const timeoutMs of [Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5, 2_147_483_648]) {
+			await expect(connection.request({ type: "get_state" }, { timeoutMs })).rejects.toThrow(RangeError);
+		}
+		expect(written).toEqual([]);
+		expect(await connection.request({ type: "get_state" })).toMatchObject({ id: "endophasia-1" });
+	});
+
+	it("keeps the validated options, whatever the caller's object becomes", async () => {
+		const options: { maxInputBacklogBytes: number; closeTimeoutMs: number } = {
+			maxInputBacklogBytes: 256 * 1024,
+			closeTimeoutMs: 200,
+		};
+		const { connection } = connect("stall", options);
+		// Changed after construction: the connection must not reread it.
+		options.maxInputBacklogBytes = Number.POSITIVE_INFINITY;
+		const sent: Promise<unknown>[] = [];
+		let refused = false;
+		for (let attempt = 0; attempt < 50 && !refused; attempt++) {
+			sent.push(
+				connection.request({ type: "prompt", message: "x".repeat(100 * 1024) }).catch((error: Error) => {
+					if (error.message.includes("backlog")) refused = true;
+				}),
+			);
+			await new Promise((done) => setImmediate(done));
+		}
+		expect(refused).toBe(true);
+		await connection.close();
+		await Promise.all(sent);
+	});
+
+	it("refuses a source checkout on Windows, where prime-agent.sh cannot be spawned", async () => {
+		const platform = Object.getOwnPropertyDescriptor(process, "platform") as PropertyDescriptor;
+		Object.defineProperty(process, "platform", { value: "win32" });
+		try {
+			const installation: PrimeInstallationV0 = {
+				mode: "source-checkout",
+				root: tmpdir(),
+				command: join(tmpdir(), "prime-agent.sh"),
+				leadingArgs: [],
+			};
+			expect(
+				() => new PrimeRpcConnectionV0({ installation, env: { PATH: process.env.PATH ?? "" }, cwd: tmpdir() }),
+			).toThrow("A Prime source checkout cannot be started on Windows; use PRIME_AGENT_BIN");
+			await expect(
+				readPrimeRuntimeIdentityV0(installation, { env: { PATH: process.env.PATH ?? "" }, cwd: tmpdir() }),
+			).rejects.toThrow("A Prime source checkout cannot be started on Windows; use PRIME_AGENT_BIN");
+		} finally {
+			Object.defineProperty(process, "platform", platform);
+		}
+	});
+
 	it("refuses numeric options that would disable a bound", () => {
 		for (const maxRecordBytes of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1, 1.5]) {
 			expect(() => new PrimeJsonlDecoderV0({ maxRecordBytes })).toThrow(RangeError);
@@ -855,6 +918,9 @@ describe("Prime RPC connection: lifecycle", () => {
 			{ requestTimeoutMs: Number.NaN },
 			{ drainGraceMs: -1 },
 			{ closeTimeoutMs: Number.POSITIVE_INFINITY },
+			// Past Node's largest timer delay, which it would coerce to 1 ms.
+			{ requestTimeoutMs: 2_147_483_648 },
+			{ drainGraceMs: 2_147_483_648 },
 		]) {
 			// Refused before anything is spawned.
 			expect(() => new PrimeRpcConnectionV0({ ...base, ...options })).toThrow(RangeError);
@@ -1242,6 +1308,17 @@ describe("Prime runtime identity", () => {
 				"Could not read a Prime version from --version",
 			);
 		}
+	});
+
+	it("validates the identity timeout before running anything", async () => {
+		const marker = join(temporaryDirectory("prime-identity-timeout-"), "ran");
+		const installation = scriptInstallation(
+			`require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran");\nprocess.stdout.write("0.9.6\\n");\n`,
+		);
+		for (const timeoutMs of [Number.NaN, Number.POSITIVE_INFINITY, -1, 2_147_483_648]) {
+			await expect(readPrimeRuntimeIdentityV0(installation, { ...options, timeoutMs })).rejects.toThrow(RangeError);
+		}
+		expect(existsSync(marker)).toBe(false);
 	});
 
 	it("rejects when no version can be read", async () => {
@@ -1809,7 +1886,7 @@ describe("Prime runtime ingress import boundaries", () => {
 
 	it("runtime/prime imports only node: builtins and its own modules, never research", () => {
 		const files = tsFiles(join(PACKAGE, "runtime/prime"));
-		expect(files.length).toBe(4);
+		expect(files.length).toBe(5);
 		for (const file of files) {
 			for (const specifier of specifiers(file)) expect(specifier).toMatch(/^(node:[a-z_/]+|\.\/[a-z-]+\.ts)$/);
 		}
