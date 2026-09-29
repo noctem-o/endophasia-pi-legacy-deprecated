@@ -375,6 +375,13 @@ describe("Endophasia browser server", () => {
 		const errors: Error[] = [];
 		const browser = await openPresentation(server.serverId, browserTransport(server.browser.url), errors);
 		await browser.attach("browser", BACKGROUND_CONTEXT);
+		// The Runtime Profile crosses the WebSocket as the worker's composition stated it.
+		expect(browser.runtimeProfile.value).toMatchObject({
+			schemaVersion: "runtime-profile.v0",
+			runtimeFamily: "pi",
+			adapterProfileId: "endophasia.pi-standard.v0",
+		});
+		expect(browser.runtimeProfile.value?.capabilities).toHaveLength(6);
 		const empty = await browser.continuitySnapshot(BACKGROUND_CONTEXT);
 		expect(empty).toMatchObject({ schemaVersion: "continuity.v0", lane: "main", tipId: null, activePath: [] });
 

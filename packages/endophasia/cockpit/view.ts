@@ -17,6 +17,7 @@ import {
 	projectOperation,
 	projectQueues,
 	projectRuntimeMetrics,
+	projectRuntimeProfile,
 	projectSessionOverview,
 	projectSessions,
 	projectUsage,
@@ -167,6 +168,8 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 	// Inspector sections.
 	const connectionSection = el("section", "inspector-section");
 	const attachmentSection = el("section", "inspector-section");
+	const profileSection = el("section", "inspector-section runtime-profile");
+	profileSection.setAttribute("aria-label", "Runtime Profile");
 	const modelSection = el("section", "inspector-section");
 	const laneSection = el("section", "inspector-section");
 	const traceSection = el("section", "inspector-section trace");
@@ -198,6 +201,7 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 	inspectorPanel.append(
 		connectionSection,
 		attachmentSection,
+		profileSection,
 		modelSection,
 		laneSection,
 		traceSection,
@@ -593,6 +597,92 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 		continuitySection.replaceChildren(...body);
 	};
 
+	const renderProfile = (controller: CockpitController): void => {
+		const visibility = controller.runtimeProfile;
+		const header = el("div", "section-header");
+		const scopeChip = el("span", "chip", "Live");
+		header.append(el("h3", "section-title", "Runtime Profile"), scopeChip);
+		if (visibility.status === "hidden") {
+			const message = {
+				detached: "Attach a Session to see its worker's Runtime Profile.",
+				switching: "Hidden while the observed Session changes.",
+				attaching: "Hidden until the Session is attached.",
+				unhydrated: "No Runtime Profile hydrated for this attachment.",
+			}[visibility.reason];
+			profileSection.replaceChildren(header, el("p", "muted", message));
+			return;
+		}
+		const view = projectRuntimeProfile(visibility.profile);
+		// The lifetime is claimed only when the profile states the exact v0 scope.
+		scopeChip.textContent = view.workerLifetime ? "Live · worker lifetime" : "Live · unrecognized scope";
+		const fields = el("dl", "fields");
+		fields.append(
+			field("Runtime family", view.runtimeFamily, "mono"),
+			field("Adapter profile", view.adapterProfileId, "mono"),
+			field("Scope", view.scope),
+			field("Capabilities", view.advertised),
+		);
+		const body: HTMLElement[] = [header];
+		if (visibility.attachment === "degraded") {
+			body.push(
+				el(
+					"p",
+					"block-error",
+					"△ Attachment degraded · this profile is the worker's claim, not evidence that its services hydrated",
+				),
+			);
+		}
+		if (view.schemaNote !== undefined) body.push(el("p", "block-error", view.schemaNote));
+		body.push(
+			fields,
+			el(
+				"p",
+				"trace-note",
+				"Advertised by the worker's Endophasia composition · not a runtime feature list or a conformance result",
+			),
+		);
+		for (const group of view.groups) {
+			const section = el("div", "capability-group");
+			section.append(el("div", "capability-group-title", group.title), el("p", "trace-note", group.note));
+			const list = el("ul", "capability-list");
+			for (const row of group.rows) {
+				const item = el("li", `capability-row ${row.status === "advertised" ? "advertised" : "not-advertised"}`);
+				item.title = row.id;
+				item.append(
+					el("span", "capability-glyph", row.status === "advertised" ? "●" : "○"),
+					el("span", "capability-label", row.label),
+					el("span", "capability-status", row.status),
+				);
+				list.append(item);
+			}
+			section.append(list);
+			body.push(section);
+		}
+		if (view.unrecognized.length > 0) {
+			const section = el("div", "capability-group");
+			section.append(
+				el(
+					"div",
+					"capability-group-title",
+					view.interpreted ? "Other advertised identifiers" : "Listed identifiers",
+				),
+				el(
+					"p",
+					"trace-note",
+					view.interpreted
+						? "Not part of the Endophasia v0 catalogue · shown as sent, with no meaning assigned"
+						: "Schema version not recognized · shown as sent, with no meaning assigned",
+				),
+			);
+			const list = el("ul", "capability-list");
+			for (const id of view.unrecognized) list.append(el("li", "capability-row unrecognized mono", id));
+			section.append(list);
+			if (view.unrecognizedWindow !== undefined) section.append(el("p", "trace-window", view.unrecognizedWindow));
+			body.push(section);
+		}
+		profileSection.replaceChildren(...body);
+	};
+
 	const renderTrace = (controller: CockpitController): void => {
 		const trace = controller.missionTrace;
 		if (trace.status === "hidden") {
@@ -695,6 +785,7 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 		render(regions) {
 			const controller = getController();
 			if (regions.has("status")) renderStatus(controller);
+			if (regions.has("profile")) renderProfile(controller);
 			if (regions.has("sessions")) renderSessions(controller);
 			if (regions.has("transcript")) renderTranscript(controller);
 			if (regions.has("inspector")) renderInspector(controller);

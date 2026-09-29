@@ -13,6 +13,7 @@ import { createEndophasiaInspectorFacetV0 } from "../../src/inspector-service.ts
 import { createEndophasiaMissionTraceFacetV0 } from "../../src/mission-trace-service.ts";
 import { createPiRuntimeObservationSourcesV0 } from "../../src/pi-runtime-observation.ts";
 import { createEndophasiaRuntimeFactsFacetV0 } from "../../src/runtime-facts-service.ts";
+import { createEndophasiaRuntimeProfileFacetV0 } from "../../src/runtime-profile-facet.ts";
 import { createEndophasiaUsageFacetV0 } from "../../src/usage-facet.ts";
 import { largestSyntheticCountWithinLimit, syntheticContinuityLane } from "../continuity-synthetic.ts";
 
@@ -27,6 +28,20 @@ if (isDirectInternalProcessEntry(import.meta.url)) {
 			const pi = createPiRuntimeObservationSourcesV0({ harness, lane: main, usageReader });
 			const { count } = await largestSyntheticCountWithinLimit(main, BACKGROUND_CONTEXT);
 			return [
+				createEndophasiaRuntimeProfileFacetV0({
+					schemaVersion: "runtime-profile.v0",
+					scope: "session-worker-lifetime",
+					runtimeFamily: "pi",
+					adapterProfileId: "endophasia.test.large-continuity.v0",
+					capabilities: [
+						"endophasia.session-overview.v0",
+						"endophasia.mission-trace.v0",
+						"endophasia.runtime-metrics.v0",
+						"endophasia.operation-outcome.v0",
+						"endophasia.usage.v0",
+						"endophasia.continuity.v0",
+					],
+				}),
 				createEndophasiaInspectorFacetV0(harness),
 				createEndophasiaMissionTraceFacetV0(pi.missionTrace),
 				createEndophasiaRuntimeFactsFacetV0({

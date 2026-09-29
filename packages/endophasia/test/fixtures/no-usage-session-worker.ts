@@ -1,5 +1,6 @@
 // Test-only Session worker: every Endophasia service except Usage, to prove Presentation Client v0 requires Usage
-// itself. Launched through startServer's sessionWorkerEntryUrl, like runtime/session-worker.ts.
+// itself. Its Runtime Profile truthfully advertises what it installs, without Usage. Launched through startServer's
+// sessionWorkerEntryUrl, like runtime/session-worker.ts.
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
 	consumeInternalProcessRole,
@@ -15,6 +16,7 @@ import {
 	createPiRuntimeMetricsSourceV0,
 } from "../../src/pi-runtime-observation.ts";
 import { createEndophasiaRuntimeFactsFacetV0 } from "../../src/runtime-facts-service.ts";
+import { createEndophasiaRuntimeProfileFacetV0 } from "../../src/runtime-profile-facet.ts";
 
 if (isDirectInternalProcessEntry(import.meta.url)) {
 	const role = consumeInternalProcessRole();
@@ -23,6 +25,19 @@ if (isDirectInternalProcessEntry(import.meta.url)) {
 		createHostFacets: async ({ harness }) => {
 			const main = await harness.lane("main", BACKGROUND_CONTEXT);
 			return [
+				createEndophasiaRuntimeProfileFacetV0({
+					schemaVersion: "runtime-profile.v0",
+					scope: "session-worker-lifetime",
+					runtimeFamily: "pi",
+					adapterProfileId: "endophasia.test.no-usage.v0",
+					capabilities: [
+						"endophasia.session-overview.v0",
+						"endophasia.mission-trace.v0",
+						"endophasia.runtime-metrics.v0",
+						"endophasia.operation-outcome.v0",
+						"endophasia.continuity.v0",
+					],
+				}),
 				createEndophasiaInspectorFacetV0(harness),
 				createEndophasiaMissionTraceFacetV0(createPiMissionTraceSourceV0(harness)),
 				createEndophasiaRuntimeFactsFacetV0({

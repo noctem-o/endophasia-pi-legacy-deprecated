@@ -645,6 +645,53 @@ pre {
 	overflow-wrap: anywhere;
 }
 
+/* Runtime Profile: the worker composition's advertised Endophasia capabilities. Absence reads "not advertised". */
+
+.capability-group {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.capability-group-title {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--text-soft);
+}
+
+.capability-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.capability-row {
+	display: grid;
+	grid-template-columns: 14px 1fr auto;
+	align-items: center;
+	column-gap: 6px;
+	font-size: 12px;
+}
+
+.capability-row.unrecognized {
+	display: block;
+	overflow-wrap: anywhere;
+	color: var(--text-soft);
+}
+
+.capability-status {
+	font-size: 11px;
+	color: var(--text-faint);
+}
+
+.capability-row.not-advertised .capability-label,
+.capability-row.not-advertised .capability-glyph {
+	color: var(--text-faint);
+}
+
 /* Continuity: one explicit capture of main-lane structure. Entries are ordered by Pi's sequence; no payloads. */
 
 .continuity-entries > summary {

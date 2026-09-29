@@ -16,6 +16,7 @@ import {
 	type ContinuitySnapshotV0,
 	type OperationOutcomeV0,
 	type RuntimeMetricsV0,
+	type RuntimeProfileV0,
 	type UsageLedgerPageV0,
 	type UsageLedgerQueryV0,
 } from "../src/index.ts";
@@ -24,6 +25,20 @@ const directories: string[] = [];
 const servers: RunningServer[] = [];
 const presentations: EndophasiaPresentationClientV0[] = [];
 const workerModel = { provider: "anthropic", model: "claude-sonnet-4-5" } as const;
+const PI_STANDARD_PROFILE: RuntimeProfileV0 = {
+	schemaVersion: "runtime-profile.v0",
+	scope: "session-worker-lifetime",
+	runtimeFamily: "pi",
+	adapterProfileId: "endophasia.pi-standard.v0",
+	capabilities: [
+		"endophasia.session-overview.v0",
+		"endophasia.mission-trace.v0",
+		"endophasia.runtime-metrics.v0",
+		"endophasia.operation-outcome.v0",
+		"endophasia.usage.v0",
+		"endophasia.continuity.v0",
+	],
+};
 
 beforeEach(async () => {
 	// The standard worker resolves its configured model offline from a local API-key credential.
@@ -93,6 +108,8 @@ describe("Endophasia Presentation Client v0", () => {
 		const observe = async (sessionId: string): Promise<void> => {
 			await presentation.attach(sessionId, BACKGROUND_CONTEXT);
 			expect(presentation.attachment.value).toEqual({ status: "attached", sessionId });
+			// The worker's composition claim, hydrated with the attachment.
+			expect(presentation.runtimeProfile.value).toEqual(PI_STANDARD_PROFILE);
 			expect(presentation.transcript.value?.snapshot).toMatchObject({
 				lane: "main",
 				operation: null,
@@ -160,6 +177,8 @@ describe("Endophasia Presentation Client v0", () => {
 
 		await presentation.detach(BACKGROUND_CONTEXT);
 		expect(presentation.attachment.value).toEqual({ status: "detached" });
+		// Detached, no worker is attached, so no profile is kept or synthesized.
+		expect(presentation.runtimeProfile.value).toBeUndefined();
 		await expect(Promise.resolve().then(() => presentation.sessionOverview(BACKGROUND_CONTEXT))).rejects.toThrow();
 		// Detached, there is no Session to read: no zero metrics or null outcome is fabricated.
 		await expect(Promise.resolve().then(() => presentation.runtimeMetrics(BACKGROUND_CONTEXT))).rejects.toThrow();
@@ -174,6 +193,21 @@ describe("Endophasia Presentation Client v0", () => {
 
 		// Later attachment generations rebind every Session service, including the Inspector.
 		await observe("other");
+		// Switch straight from "other" to "observed" once the latter's idle worker has stopped. Pi publishes "attaching"
+		// and then, in the same turn, clears every Session binding before rebinding: past that notification, "other"'s
+		// profile is gone, and whatever hydrates next belongs to "observed".
+		await expect.poll(() => server.workerPids.has("observed"), { timeout: 10_000 }).toBe(false);
+		const duringAttach: (RuntimeProfileV0 | undefined)[] = [];
+		const stopRecording = presentation.attachment.subscribe(async (state) => {
+			if (state.status !== "attaching") return;
+			await Promise.resolve();
+			duringAttach.push(presentation.runtimeProfile.value);
+		});
+		expect(presentation.runtimeProfile.value).toEqual(PI_STANDARD_PROFILE);
+		await presentation.attach("observed", BACKGROUND_CONTEXT);
+		stopRecording();
+		expect(duringAttach).toEqual([undefined]);
+		expect(presentation.runtimeProfile.value).toEqual(PI_STANDARD_PROFILE);
 		await presentation.detach(BACKGROUND_CONTEXT);
 		// Re-attach "observed" once its idle worker has stopped: a re-attach that races Pi's idle-worker shutdown
 		// currently fails with an internal server error, independent of this client.
@@ -186,6 +220,8 @@ describe("Endophasia Presentation Client v0", () => {
 		expect(presentation.dispose()).toBe(disposal);
 		await disposal;
 		expect(presentation.dispose()).toBe(disposal);
+		// Disposal releases the profile binding with the others: it can no longer be read.
+		expect(() => presentation.runtimeProfile.value).toThrow("Remote service binding is disposed");
 		await expect(Promise.resolve().then(() => presentation.sessionOverview(BACKGROUND_CONTEXT))).rejects.toThrow();
 		await expect(Promise.resolve().then(() => presentation.continuitySnapshot(BACKGROUND_CONTEXT))).rejects.toThrow();
 		// The server releases the disposed client's attachment, so the idle worker stops.
@@ -201,6 +237,7 @@ describe("Endophasia Presentation Client v0", () => {
 			| "models"
 			| "missionTrace"
 			| "usage"
+			| "runtimeProfile"
 			| "attach"
 			| "detach"
 			| "sessionOverview"
@@ -229,6 +266,11 @@ describe("Endophasia Presentation Client v0", () => {
 		expectTypeOf<keyof EndophasiaPresentationClientV0["models"]>().toEqualTypeOf<"value" | "subscribe">();
 		expectTypeOf<keyof EndophasiaPresentationClientV0["transcript"]>().toEqualTypeOf<"value" | "subscribe">();
 		expectTypeOf<keyof EndophasiaPresentationClientV0["sessions"]>().toEqualTypeOf<"value" | "subscribe">();
+		// The Runtime Profile is read-only replicated state, not the service object or its host facet.
+		expectTypeOf<keyof EndophasiaPresentationClientV0["runtimeProfile"]>().toEqualTypeOf<"value" | "subscribe">();
+		expectTypeOf<EndophasiaPresentationClientV0["runtimeProfile"]["value"]>().toEqualTypeOf<
+			RuntimeProfileV0 | undefined
+		>();
 		// Mission Trace is read-only replicated state: no mutation, attachment or harness access.
 		expectTypeOf<keyof EndophasiaPresentationClientV0["missionTrace"]>().toEqualTypeOf<"value" | "subscribe">();
 	});
@@ -240,10 +282,13 @@ describe("Endophasia Presentation Client v0", () => {
 		expect(presentation.connection.value).toMatchObject({ status: "connected" });
 		expect(presentation.sessions.value?.sessions.map((session) => session.sessionId)).toContain("observed");
 
+		// The Inspector and the Runtime Profile bindings fail independently; either may report first.
 		await expect(presentation.attach("observed", BACKGROUND_CONTEXT)).rejects.toThrow(
-			"Remote service endophasia.inspector.v0 is not allowlisted",
+			/Remote service endophasia\.(inspector|runtime-profile)\.v0 is not allowlisted/,
 		);
 		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
+		// A plain Pi worker is never assigned a synthetic "pi" profile.
+		expect(presentation.runtimeProfile.value).toBeUndefined();
 	});
 
 	it("requires Mission Trace: an Inspector-only worker degrades instead of showing an empty trace", async () => {
@@ -254,9 +299,10 @@ describe("Endophasia Presentation Client v0", () => {
 		});
 		servers.push(server);
 		const presentation = await open(server);
-		// The worker lacks Mission Trace, Runtime Facts, Usage and Continuity; any missing service degrades the attachment.
+		// The worker lacks the Runtime Profile, Mission Trace, Runtime Facts, Usage and Continuity; any missing service
+		// degrades the attachment.
 		await expect(presentation.attach("observed", BACKGROUND_CONTEXT)).rejects.toThrow(
-			/Remote service endophasia\.(mission-trace|runtime-facts|usage|continuity)\.v0 is not allowlisted/,
+			/Remote service endophasia\.(mission-trace|runtime-facts|usage|continuity|runtime-profile)\.v0 is not allowlisted/,
 		);
 		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
 		// A missing capability is not reported as a real trace with zero events.
@@ -271,9 +317,10 @@ describe("Endophasia Presentation Client v0", () => {
 		});
 		servers.push(server);
 		const presentation = await open(server);
-		// The worker lacks Runtime Facts, Usage and Continuity; any missing service degrades the attachment.
+		// The worker lacks the Runtime Profile, Runtime Facts, Usage and Continuity; any missing service degrades the
+		// attachment.
 		await expect(presentation.attach("observed", BACKGROUND_CONTEXT)).rejects.toThrow(
-			/Remote service endophasia\.(runtime-facts|usage|continuity)\.v0 is not allowlisted/,
+			/Remote service endophasia\.(runtime-facts|usage|continuity|runtime-profile)\.v0 is not allowlisted/,
 		);
 		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
 		// A missing capability is never reported as zero accounting or as "no durable result".
@@ -316,6 +363,33 @@ describe("Endophasia Presentation Client v0", () => {
 		);
 		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
 		await expect(Promise.resolve().then(() => presentation.continuitySnapshot(BACKGROUND_CONTEXT))).rejects.toThrow();
+		// Its own binding hydrated: the worker's truthful profile stays readable as a diagnostic, advertising no
+		// Continuity, while the attachment stays degraded.
+		await expect.poll(() => presentation.runtimeProfile.value, { timeout: 10_000 }).toBeDefined();
+		expect(presentation.runtimeProfile.value).toEqual({
+			...PI_STANDARD_PROFILE,
+			adapterProfileId: "endophasia.test.no-continuity.v0",
+			capabilities: PI_STANDARD_PROFILE.capabilities.filter((id) => id !== "endophasia.continuity.v0"),
+		});
+		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
+	});
+
+	it("requires the Runtime Profile: a worker without one degrades and is never assigned a guessed profile", async () => {
+		const server = await startServer({
+			...workerModel,
+			directory: await temporaryDirectory("endophasia-no-profile-"),
+			sessionWorkerEntryUrl: new URL("./fixtures/no-runtime-profile-session-worker.ts", import.meta.url),
+		});
+		servers.push(server);
+		const presentation = await open(server);
+		// Every other Endophasia service is present and hydrates; the profile is not inferred from them.
+		await expect(presentation.attach("observed", BACKGROUND_CONTEXT)).rejects.toThrow(
+			"Remote service endophasia.runtime-profile.v0 is not allowlisted",
+		);
+		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
+		expect(presentation.runtimeProfile.value).toBeUndefined();
+		expect(await presentation.runtimeMetrics(BACKGROUND_CONTEXT)).toMatchObject({ scope: "session" });
+		expect(presentation.runtimeProfile.value).toBeUndefined();
 	});
 
 	it("carries a Continuity snapshot at the remote byte limit whole, and fails a larger one without disconnecting", async () => {
@@ -373,9 +447,10 @@ describe("Endophasia Presentation Client v0", () => {
 		});
 		presentations.push(presentation);
 
-		// The missing Inspector fails the Session rebind, a real service-source error routed to the observer.
+		// The missing Inspector and Runtime Profile fail the Session rebind, a real service-source error routed to the
+		// observer.
 		await expect(presentation.attach("observed", BACKGROUND_CONTEXT)).rejects.toThrow(
-			"Remote service endophasia.inspector.v0 is not allowlisted",
+			/Remote service endophasia\.(inspector|runtime-profile)\.v0 is not allowlisted/,
 		);
 		await expect(firstError).resolves.toBeInstanceOf(Error);
 		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });

@@ -19,16 +19,19 @@ import {
 	projectOperation,
 	projectQueues,
 	projectRuntimeMetrics,
+	projectRuntimeProfile,
 	projectSessionOverview,
 	projectSessions,
 	projectTranscriptEntry,
 	projectUsage,
 	projectUsageRow,
 	projectVisibleTranscript,
+	UNRECOGNIZED_CAPABILITY_ROW_LIMIT,
 	USAGE_ROW_LIMIT,
 } from "../cockpit/view-model.ts";
 import type { ContinuityEntryV0, ContinuitySnapshotV0 } from "../src/continuity-service.ts";
 import type { RuntimeMetricsV0 } from "../src/runtime-facts-service.ts";
+import type { RuntimeProfileV0 } from "../src/runtime-profile-service.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 import type { UsageLedgerRowV0 } from "../src/usage-service.ts";
 
@@ -960,5 +963,242 @@ describe("Continuity projection", () => {
 			payload: "PAYLOAD_SENTINEL",
 		} as unknown as ContinuityEntryV0;
 		expect(projectContinuityEntry(unknown)).toEqual({ sequence: "#1", id: "q", label: "Unknown entry", meta: [] });
+	});
+});
+
+describe("Runtime Profile projection", () => {
+	const ALL: RuntimeProfileV0["capabilities"] = [
+		"endophasia.session-overview.v0",
+		"endophasia.mission-trace.v0",
+		"endophasia.runtime-metrics.v0",
+		"endophasia.operation-outcome.v0",
+		"endophasia.usage.v0",
+		"endophasia.continuity.v0",
+	];
+
+	function profile(overrides: Partial<RuntimeProfileV0> = {}): RuntimeProfileV0 {
+		return {
+			schemaVersion: "runtime-profile.v0",
+			scope: "session-worker-lifetime",
+			runtimeFamily: "pi",
+			adapterProfileId: "endophasia.pi-standard.v0",
+			capabilities: ALL,
+			...overrides,
+		};
+	}
+
+	/** Each group's rows as [label, status] pairs. */
+	function statuses(view: ReturnType<typeof projectRuntimeProfile>) {
+		return view.groups.map((group) => [group.title, group.rows.map((row) => [row.label, row.status])]);
+	}
+
+	it("shows the standard Pi profile: family, adapter profile, scope and all six capabilities in two groups", () => {
+		const view = projectRuntimeProfile(profile());
+		expect(view).toMatchObject({
+			runtimeFamily: "pi",
+			adapterProfileId: "endophasia.pi-standard.v0",
+			scope: "Session worker lifetime",
+			advertised: "6 of 6 Endophasia v0 capabilities advertised",
+			unrecognized: [],
+		});
+		expect(view).not.toHaveProperty("schemaNote");
+		expect(statuses(view)).toEqual([
+			[
+				"Runtime Observation Boundary v0",
+				[
+					["Mission Trace", "advertised"],
+					["Runtime Metrics", "advertised"],
+					["Operation Outcome", "advertised"],
+					["Usage", "advertised"],
+				],
+			],
+			[
+				"Outside that boundary today",
+				[
+					["Session Overview", "advertised"],
+					["Continuity", "advertised"],
+				],
+			],
+		]);
+		expect(view.groups[0]?.rows.map((row) => row.id)).toEqual([
+			"endophasia.mission-trace.v0",
+			"endophasia.runtime-metrics.v0",
+			"endophasia.operation-outcome.v0",
+			"endophasia.usage.v0",
+		]);
+	});
+
+	it("shows an omitted known capability only as not advertised", () => {
+		const view = projectRuntimeProfile(
+			profile({ capabilities: ["endophasia.mission-trace.v0", "endophasia.usage.v0"] }),
+		);
+		expect(view.advertised).toBe("2 of 6 Endophasia v0 capabilities advertised");
+		expect(statuses(view)).toEqual([
+			[
+				"Runtime Observation Boundary v0",
+				[
+					["Mission Trace", "advertised"],
+					["Runtime Metrics", "not advertised"],
+					["Operation Outcome", "not advertised"],
+					["Usage", "advertised"],
+				],
+			],
+			[
+				"Outside that boundary today",
+				[
+					["Session Overview", "not advertised"],
+					["Continuity", "not advertised"],
+				],
+			],
+		]);
+		expect(projectRuntimeProfile(profile({ capabilities: [] })).advertised).toBe(
+			"0 of 6 Endophasia v0 capabilities advertised",
+		);
+	});
+
+	it("never words absence, or the boundary groups, more strongly than not advertised", () => {
+		const rendered = JSON.stringify([
+			projectRuntimeProfile(profile({ capabilities: [] })),
+			projectRuntimeProfile(profile()),
+			projectRuntimeProfile({}),
+		]);
+		expect(rendered).not.toMatch(/unsupported|incompatible|unavailable|impossible|fail|pi-only|non-portable|cannot/i);
+	});
+
+	it("derives no capability from the runtime family or the adapter profile ID", () => {
+		const subset = ["endophasia.usage.v0"] as RuntimeProfileV0["capabilities"];
+		const expected = statuses(projectRuntimeProfile(profile({ capabilities: subset })));
+		for (const overrides of [
+			{ runtimeFamily: "pi" },
+			{ runtimeFamily: "prime" },
+			{ runtimeFamily: "anything" },
+			{ adapterProfileId: "endophasia.pi-standard.v0" },
+			{ adapterProfileId: "endophasia.prime-full.v0" },
+		]) {
+			expect(statuses(projectRuntimeProfile(profile({ ...overrides, capabilities: subset })))).toEqual(expected);
+		}
+		// The standard family and adapter ID with an empty list advertise nothing.
+		expect(
+			projectRuntimeProfile(profile({ capabilities: [] }))
+				.groups.flatMap((group) => group.rows)
+				.every((row) => row.status === "not advertised"),
+		).toBe(true);
+	});
+
+	it("shows unknown or hostile identifiers neutrally, without a label or a known status", () => {
+		const hostile = {
+			...profile({ capabilities: ["endophasia.usage.v0"] }),
+			capabilities: [
+				"endophasia.usage.v0",
+				"endophasia.acp.v0",
+				"endophasia.acp.v0",
+				"__proto__",
+				"toString",
+				"x".repeat(1_000),
+				7,
+				null,
+				{ id: "endophasia.continuity.v0" },
+			],
+		};
+		const view = projectRuntimeProfile(hostile);
+		expect(view.advertised).toBe("1 of 6 Endophasia v0 capabilities advertised");
+		expect(view.unrecognized).toEqual(["endophasia.acp.v0", "__proto__", "toString", `${"x".repeat(200)}…`]);
+		expect(view.groups.flatMap((group) => group.rows).find((row) => row.label === "Continuity")?.status).toBe(
+			"not advertised",
+		);
+	});
+
+	it("bounds how many unrecognized identifiers it projects, and says how many were left out", () => {
+		const many = Array.from({ length: 50_000 }, (_, index) => `x.${index}`);
+		const view = projectRuntimeProfile({
+			...profile({ capabilities: ["endophasia.usage.v0"] }),
+			capabilities: ["endophasia.usage.v0", ...many, ...many],
+		});
+		expect(view.unrecognized).toEqual(many.slice(0, UNRECOGNIZED_CAPABILITY_ROW_LIMIT));
+		expect(view.unrecognizedWindow).toBe(
+			`Showing the first ${UNRECOGNIZED_CAPABILITY_ROW_LIMIT} unrecognized identifiers · more were advertised`,
+		);
+		expect(view.advertised).toBe("1 of 6 Endophasia v0 capabilities advertised");
+		const atLimit = projectRuntimeProfile({
+			...profile(),
+			capabilities: many.slice(0, UNRECOGNIZED_CAPABILITY_ROW_LIMIT),
+		});
+		expect(atLimit.unrecognized).toHaveLength(UNRECOGNIZED_CAPABILITY_ROW_LIMIT);
+		expect(atLimit).not.toHaveProperty("unrecognizedWindow");
+		// Repeats of shown identifiers, and known IDs after the limit, are not "more".
+		const repeats = projectRuntimeProfile({
+			...profile(),
+			capabilities: [...many.slice(0, UNRECOGNIZED_CAPABILITY_ROW_LIMIT), ...many.slice(0, 5), ...ALL],
+		});
+		expect(repeats).not.toHaveProperty("unrecognizedWindow");
+		expect(repeats.advertised).toBe("6 of 6 Endophasia v0 capabilities advertised");
+	});
+
+	it("survives a malformed profile without crashing or inventing values", () => {
+		for (const malformed of [undefined, null, 7, "pi", [], {}, { capabilities: "endophasia.usage.v0" }]) {
+			const view = projectRuntimeProfile(malformed);
+			expect(view.runtimeFamily).toBe("not reported");
+			expect(view.adapterProfileId).toBe("not reported");
+			expect(view.advertised).toBe("Not interpreted · unrecognized schema version");
+			expect(view.groups).toEqual([]);
+			expect(view.schemaNote).toBe("Unrecognized schema version · none");
+		}
+		expect(
+			projectRuntimeProfile({ ...profile(), schemaVersion: "runtime-profile.v9", scope: "session" }),
+		).toMatchObject({
+			schemaNote: "Unrecognized schema version · runtime-profile.v9",
+			scope: "session",
+			workerLifetime: false,
+		});
+	});
+
+	it("interprets capability identifiers only under the exact v0 schema", () => {
+		const listed = { ...profile(), capabilities: ["endophasia.usage.v0", "endophasia.acp.v0"] };
+		expect(projectRuntimeProfile(listed)).toMatchObject({
+			interpreted: true,
+			advertised: "1 of 6 Endophasia v0 capabilities advertised",
+			unrecognized: ["endophasia.acp.v0"],
+		});
+		for (const schemaVersion of ["runtime-profile.v1", "runtime-profile.V0", "", undefined, 0]) {
+			const view = projectRuntimeProfile({ ...listed, schemaVersion });
+			// No v0 claim is read from a payload whose schema is not v0: no status rows, no count, nothing advertised.
+			expect(view).toMatchObject({
+				interpreted: false,
+				advertised: "Not interpreted · unrecognized schema version",
+				groups: [],
+				unrecognized: ["endophasia.usage.v0", "endophasia.acp.v0"],
+			});
+			expect(JSON.stringify(view)).not.toMatch(/"status":|of 6/);
+		}
+	});
+
+	it("claims the worker lifetime only for the exact v0 scope", () => {
+		expect(projectRuntimeProfile(profile()).workerLifetime).toBe(true);
+		for (const scope of ["session", "Session worker lifetime", "", undefined, 7]) {
+			expect(projectRuntimeProfile({ ...profile(), scope }).workerLifetime).toBe(false);
+		}
+	});
+
+	it("bounds every rendered string field of a hostile profile", () => {
+		const huge = "y".repeat(5_000_000);
+		const view = projectRuntimeProfile({
+			schemaVersion: huge,
+			scope: huge,
+			runtimeFamily: huge,
+			adapterProfileId: huge,
+			capabilities: [huge],
+		});
+		const bounded = `${"y".repeat(200)}…`;
+		expect(view).toMatchObject({
+			runtimeFamily: bounded,
+			adapterProfileId: bounded,
+			scope: bounded,
+			schemaNote: `Unrecognized schema version · ${bounded}`,
+			unrecognized: [bounded],
+		});
+		expect(JSON.stringify(view).length).toBeLessThan(10_000);
+		// Values at the bound are shown unchanged.
+		const exact = "z".repeat(200);
+		expect(projectRuntimeProfile({ ...profile(), runtimeFamily: exact }).runtimeFamily).toBe(exact);
 	});
 });

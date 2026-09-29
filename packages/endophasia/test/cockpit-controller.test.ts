@@ -15,6 +15,7 @@ import type {
 	MissionTraceEventV0,
 	MissionTraceObservationV0,
 	RuntimeMetricsV0,
+	RuntimeProfileV0,
 	UsageLedgerRowV0,
 	UsageObservationV0,
 } from "../src/index.ts";
@@ -111,6 +112,19 @@ function continuitySnapshot(tipId: string | null): ContinuitySnapshotV0 {
 	};
 }
 
+function runtimeProfile(
+	adapterProfileId: string,
+	capabilities: RuntimeProfileV0["capabilities"] = [],
+): RuntimeProfileV0 {
+	return {
+		schemaVersion: "runtime-profile.v0",
+		scope: "session-worker-lifetime",
+		runtimeFamily: "pi",
+		adapterProfileId,
+		capabilities,
+	};
+}
+
 function event(sequence: number, runId: string): MissionTraceEventV0 {
 	return { schemaVersion: "mission-trace.v0", sequence, kind: "mission.started", lane: "main", runId };
 }
@@ -147,6 +161,7 @@ function fixture() {
 	const models = new FakeState<ModelsState>();
 	const missionTrace = new FakeState<MissionTraceObservationV0>();
 	const usage = new FakeState<UsageObservationV0>();
+	const profile = new FakeState<RuntimeProfileV0>();
 	const attachCalls: string[] = [];
 	const attaches: Deferred<void>[] = [];
 	const overviews: Deferred<SessionOverviewV0>[] = [];
@@ -160,6 +175,7 @@ function fixture() {
 		models,
 		missionTrace,
 		usage,
+		runtimeProfile: profile,
 		attach(sessionId) {
 			attachCalls.push(sessionId);
 			const next = deferred<void>();
@@ -211,6 +227,7 @@ function fixture() {
 		models,
 		missionTrace,
 		usage,
+		profile,
 		attachCalls,
 		attaches,
 		overviews,
@@ -394,7 +411,7 @@ describe("Standard Cockpit controller", () => {
 	});
 
 	it("contains render failures and bounds diagnostics without breaking the lifecycle", () => {
-		const { connection, attachment, sessions, transcript, models, missionTrace, usage } = fixture();
+		const { connection, attachment, sessions, transcript, models, missionTrace, usage, profile } = fixture();
 		const scheduled: (() => void)[] = [];
 		let calls = 0;
 		const controller = new CockpitController({
@@ -406,6 +423,7 @@ describe("Standard Cockpit controller", () => {
 				models,
 				missionTrace,
 				usage,
+				runtimeProfile: profile,
 				attach: async () => {},
 				detach: async () => {},
 				sessionOverview: async () => overview("x"),
@@ -867,6 +885,92 @@ describe("Standard Cockpit controller", () => {
 			continuity[0]!.resolve(continuitySnapshot("tip"));
 			await pending;
 			expect(controller.continuity).toEqual({ status: "capturing", sessionId: "a" });
+		});
+	});
+
+	describe("Runtime Profile", () => {
+		it("redraws only its own region and requests no capture", async () => {
+			const { controller, attachment, profile, overviews, accounting, continuity, renders, flush } = fixture();
+			attachment.set({ status: "attached", sessionId: "a" });
+			flush();
+			renders.length = 0;
+			profile.set(runtimeProfile("endophasia.pi-standard.v0"));
+			profile.set(runtimeProfile("endophasia.pi-standard.v0", ["endophasia.usage.v0"]));
+			flush();
+			await settle();
+			expect(renders).toEqual([new Set(["profile"])]);
+			expect(overviews).toHaveLength(0);
+			expect(accounting).toHaveLength(0);
+			expect(continuity).toHaveLength(0);
+			expect(controller.runtimeProfile).toMatchObject({ status: "visible", sessionId: "a", attachment: "attached" });
+			controller.dispose();
+			expect(profile.listeners.size).toBe(0);
+		});
+
+		it("stays visible under degradation as a diagnostic, without making the attachment healthy", () => {
+			const { controller, attachment, profile } = fixture();
+			attachment.set({ status: "degraded", sessionId: "a" });
+			profile.set(runtimeProfile("endophasia.test.v0", ["endophasia.mission-trace.v0"]));
+			expect(controller.runtimeProfile).toEqual({
+				status: "visible",
+				sessionId: "a",
+				attachment: "degraded",
+				profile: runtimeProfile("endophasia.test.v0", ["endophasia.mission-trace.v0"]),
+			});
+			// Attachment health is Pi's, unchanged by the profile: still degraded, still no Session captures.
+			expect(attachment.value).toEqual({ status: "degraded", sessionId: "a" });
+			expect(controller.canCaptureAccounting).toBe(false);
+			expect(controller.canCaptureContinuity).toBe(false);
+			expect(controller.missionTrace).toEqual({ status: "hidden", reason: "degraded" });
+			expect(controller.usage).toEqual({ status: "hidden", reason: "degraded" });
+			controller.dispose();
+		});
+
+		it("hides Session A's profile as soon as Session B is requested, and while B attaches", async () => {
+			const { controller, attachment, profile, completeAttach, attaches } = fixture();
+			controller.select("a");
+			await completeAttach(0, "a");
+			profile.set(runtimeProfile("profile-of-a"));
+			expect(controller.runtimeProfile).toMatchObject({ status: "visible", sessionId: "a" });
+
+			// Pi still reports A attached and the replicated value is still A's: hidden at once.
+			controller.select("b");
+			expect(attachment.value).toEqual({ status: "attached", sessionId: "a" });
+			expect(profile.value?.adapterProfileId).toBe("profile-of-a");
+			expect(controller.runtimeProfile).toEqual({ status: "hidden", reason: "switching" });
+			attachment.set({ status: "attaching", sessionId: "b" });
+			expect(controller.runtimeProfile).toEqual({ status: "hidden", reason: "switching" });
+
+			// B's profile hydrates; it is shown once B is attached and no selection is pending, and it is B's.
+			profile.set(runtimeProfile("profile-of-b"));
+			attachment.set({ status: "attached", sessionId: "b" });
+			attaches[1]!.resolve();
+			await settle();
+			const visible = controller.runtimeProfile;
+			expect(visible).toMatchObject({ status: "visible", sessionId: "b" });
+			expect(visible.status === "visible" && visible.profile.adapterProfileId).toBe("profile-of-b");
+			controller.dispose();
+		});
+
+		it("is hidden detached and attaching, and never inferred when it did not hydrate", () => {
+			const { controller, attachment, profile } = fixture();
+			profile.set(runtimeProfile("lingering"));
+			expect(controller.runtimeProfile).toEqual({ status: "hidden", reason: "detached" });
+			attachment.set({ status: "attaching", sessionId: "x" });
+			expect(controller.runtimeProfile).toEqual({ status: "hidden", reason: "attaching" });
+			attachment.set({ status: "detached" });
+			expect(controller.runtimeProfile).toEqual({ status: "hidden", reason: "detached" });
+
+			const unhydrated = fixture();
+			for (const state of [
+				{ status: "attached", sessionId: "y" },
+				{ status: "degraded", sessionId: "y" },
+			] as const) {
+				unhydrated.attachment.set(state);
+				expect(unhydrated.controller.runtimeProfile).toEqual({ status: "hidden", reason: "unhydrated" });
+			}
+			controller.dispose();
+			unhydrated.controller.dispose();
 		});
 	});
 });
