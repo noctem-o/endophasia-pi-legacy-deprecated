@@ -664,6 +664,7 @@ export function mountCockpit(root: HTMLElement, getController: () => CockpitCont
 			const list = el("ul", "capability-list");
 			for (const id of view.unrecognized) list.append(el("li", "capability-row unrecognized mono", id));
 			section.append(list);
+			if (view.unrecognizedWindow !== undefined) section.append(el("p", "trace-window", view.unrecognizedWindow));
 			body.push(section);
 		}
 		profileSection.replaceChildren(...body);

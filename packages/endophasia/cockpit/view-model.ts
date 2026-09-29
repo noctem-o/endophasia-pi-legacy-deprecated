@@ -924,6 +924,8 @@ export function projectContinuity(
 
 /** Identifiers outside the v0 catalogue are shown at most this long. */
 const PROFILE_TEXT_LIMIT = 200;
+/** Identifiers outside the v0 catalogue the cockpit renders at most; a hostile profile can list many thousands. */
+export const UNRECOGNIZED_CAPABILITY_ROW_LIMIT = 20;
 
 type RuntimeCapabilityGroup = "observation-boundary" | "outside-boundary";
 
@@ -981,8 +983,13 @@ export interface RuntimeProfileView {
 	readonly schemaNote?: string;
 	readonly advertised: string;
 	readonly groups: readonly RuntimeCapabilityGroupView[];
-	/** Advertised identifiers outside the v0 catalogue, verbatim and bounded; no meaning is assigned to them. */
+	/**
+	 * The first distinct advertised identifiers outside the v0 catalogue, verbatim and bounded in length and number; no
+	 * meaning is assigned to them.
+	 */
 	readonly unrecognized: readonly string[];
+	/** Present when more distinct unrecognized identifiers were advertised than are shown. */
+	readonly unrecognizedWindow?: string;
 }
 
 function isKnownCapability(id: string): id is EndophasiaRuntimeCapabilityIdV0 {
@@ -999,9 +1006,13 @@ export function projectRuntimeProfile(profile: unknown): RuntimeProfileView {
 		? record.capabilities.filter((id): id is string => typeof id === "string")
 		: [];
 	const advertised = new Set(listed.filter(isKnownCapability));
-	const unrecognized = [...new Set(listed.filter((id) => !isKnownCapability(id)))].map((id) =>
-		id.length > PROFILE_TEXT_LIMIT ? `${id.slice(0, PROFILE_TEXT_LIMIT)}…` : id,
-	);
+	// Counted by reference to the received strings; only the shown few are copied and truncated.
+	const unknown = new Set(listed.filter((id) => !isKnownCapability(id)));
+	const unrecognized: string[] = [];
+	for (const id of unknown) {
+		if (unrecognized.length === UNRECOGNIZED_CAPABILITY_ROW_LIMIT) break;
+		unrecognized.push(id.length > PROFILE_TEXT_LIMIT ? `${id.slice(0, PROFILE_TEXT_LIMIT)}…` : id);
+	}
 	const catalogue = Object.keys(RUNTIME_CAPABILITY_VIEW) as EndophasiaRuntimeCapabilityIdV0[];
 	const scope = stringField(record, "scope");
 	const schemaVersion = stringField(record, "schemaVersion");
@@ -1025,5 +1036,8 @@ export function projectRuntimeProfile(profile: unknown): RuntimeProfileView {
 				})),
 		})),
 		unrecognized,
+		...(unknown.size > unrecognized.length
+			? { unrecognizedWindow: `Showing first ${unrecognized.length} of ${unknown.size} unrecognized identifiers` }
+			: {}),
 	};
 }

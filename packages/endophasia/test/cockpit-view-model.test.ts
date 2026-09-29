@@ -26,6 +26,7 @@ import {
 	projectUsage,
 	projectUsageRow,
 	projectVisibleTranscript,
+	UNRECOGNIZED_CAPABILITY_ROW_LIMIT,
 	USAGE_ROW_LIMIT,
 } from "../cockpit/view-model.ts";
 import type { ContinuityEntryV0, ContinuitySnapshotV0 } from "../src/continuity-service.ts";
@@ -1105,6 +1106,25 @@ describe("Runtime Profile projection", () => {
 		expect(view.groups.flatMap((group) => group.rows).find((row) => row.label === "Continuity")?.status).toBe(
 			"not advertised",
 		);
+	});
+
+	it("bounds how many unrecognized identifiers it projects, and says how many were left out", () => {
+		const many = Array.from({ length: 50_000 }, (_, index) => `x.${index}`);
+		const view = projectRuntimeProfile({
+			...profile({ capabilities: ["endophasia.usage.v0"] }),
+			capabilities: ["endophasia.usage.v0", ...many, ...many],
+		});
+		expect(view.unrecognized).toEqual(many.slice(0, UNRECOGNIZED_CAPABILITY_ROW_LIMIT));
+		expect(view.unrecognizedWindow).toBe(
+			`Showing first ${UNRECOGNIZED_CAPABILITY_ROW_LIMIT} of 50000 unrecognized identifiers`,
+		);
+		expect(view.advertised).toBe("1 of 6 Endophasia v0 capabilities advertised");
+		const atLimit = projectRuntimeProfile({
+			...profile(),
+			capabilities: many.slice(0, UNRECOGNIZED_CAPABILITY_ROW_LIMIT),
+		});
+		expect(atLimit.unrecognized).toHaveLength(UNRECOGNIZED_CAPABILITY_ROW_LIMIT);
+		expect(atLimit).not.toHaveProperty("unrecognizedWindow");
 	});
 
 	it("survives a malformed profile without crashing or inventing values", () => {
