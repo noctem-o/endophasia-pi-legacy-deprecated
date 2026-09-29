@@ -51,9 +51,9 @@ A production substrate built on the same transport can be checked against that e
 - **Unchanged here.** The research code, its fixtures and its findings are unchanged. Production code copies the probe's framing rules and does not import them. Differential tests hold production to the research decoder instead.
 
 `readPrimeRuntimeIdentityV0` records which Prime is running:
-- the version from `--version` (a semver string, never a path);
+- the version from `--version`: a semver string standing alone as a word (optionally `v`-prefixed), so a versioned path such as `/opt/prime/1.2.3` is never read as a version;
 - whether Prime is a standalone binary (`PRIME_AGENT_BIN`) or a source checkout (`PRIME_AGENT_ROOT`, launched through `prime-agent.sh`);
-- for a source checkout, the HEAD commit and whether tracked files are modified. The result is `clean`, `dirty` or `unknown`; untracked files do not count.
+- for a source checkout, the HEAD commit and whether tracked files are modified. The result is `clean`, `dirty` or `unknown`; untracked files do not count. Provenance is accepted only when git's top level is the configured root itself: a root that merely sits inside another repository reports `unknown`, never the ancestor's commit.
 
 A binary never carries a commit, because its source commit is not knowable from outside and is not claimed.
 
@@ -84,9 +84,10 @@ ACP is excluded for the reason in section 2.
 
 **Correlation** (`PrimeRpcConnectionV0.request`):
 - The connection assigns unique IDs (`endophasia-N`). A command that carries its own `id` is rejected.
+- A command is serialized before anything is registered. One that cannot be encoded (a cycle, a `BigInt`, a throwing getter) is rejected with no pending entry or timer left behind.
 - A response settles its request at most once:
-  - a second response with the same ID is a `duplicate-response-id` fault;
-  - an ID nobody is waiting for is `unknown-response-id`, including a late response after a timeout;
+  - a response for an ID this connection issued whose request already settled (answered, rejected or timed out) is a `stale-response-id` fault. IDs are sequential, so this needs no per-request history;
+  - any other ID is `unknown-response-id`;
   - a response without an ID is `response-without-id`.
 - A response must have:
   - a non-empty `command` string;
@@ -100,7 +101,7 @@ ACP is excluded for the reason in section 2.
 **Events** (`subscribe`):
 - Every non-response record with a string `type` is delivered to every listener in arrival order.
 - Nothing is retained, so history is not unbounded.
-- A throwing listener is reported as `listener-failure` with only its error name. Other listeners, later records and pending requests are unaffected. A throwing `onDiagnostic` sink is also contained.
+- A throwing listener is reported as `listener-failure` with only a standard error name (`TypeError`, `RangeError` and so on), `other-error` or `non-error`. An `Error`'s `name` is mutable, so a custom name is never forwarded. Other listeners, later records and pending requests are unaffected. A throwing `onDiagnostic` sink is also contained.
 
 **Commands** (`observeCommands`):
 - The connection is the sole stdin writer. Each command is announced synchronously as it is written, before any response or later event can arrive.
@@ -109,13 +110,14 @@ ACP is excluded for the reason in section 2.
 **Lifecycle**:
 - `exited` settles when the process exits or cannot start. Pending requests reject at that moment with `PrimeRpcExitErrorV0`, and later requests reject immediately.
 - `terminated` settles only when the process has exited and stdout has closed. Records written just before exit are still decoded, including a final record without an LF.
+- If Prime's stdin fails while it still runs (EPIPE), waiting requests reject at once and later requests are refused, with a `stdin-failure` diagnostic, instead of each waiting for its timeout.
 - If a descendant holds stdout open after exit, the drain is bounded by `drainGraceMs`. The process group is then killed, stdout is destroyed, and `terminated` reports `stdoutDrained: false`.
-- `close()` ends stdin and waits for `terminated`, even when the process already exited. If Prime does not exit within `closeTimeoutMs`, it sends SIGTERM to the process group, then SIGKILL two seconds later, reporting each as `forced-termination`.
+- `close()` ends stdin and waits for `terminated`, even when the process already exited. If Prime does not exit within `closeTimeoutMs`, it sends SIGTERM to the process group, then SIGKILL two seconds later, reporting each as `forced-termination`. Once SIGTERM was sent, the SIGKILL stage still reaches the group when Prime itself exited but a descendant ignoring SIGTERM remains; `close()` resolves after it.
 - Every `close()` call returns the same promise.
 - Tests confirm that no descendant outlives the connection.
 
 **Privacy**:
-- Diagnostics carry categories, byte lengths and error names only.
+- Diagnostics carry categories, byte lengths and standard error names only.
 - Connection error messages name commands, IDs and exit codes, never record content.
 - The fake Prime puts privacy sentinels into prompts, assistant output and tool arguments. Tests check that none reach diagnostics or connection errors.
 - The ingress persists nothing.
@@ -227,27 +229,29 @@ A later Prime semantic adapter builds on `PrimeRpcConnectionV0` and `readPrimeRu
   - blank lines, malformed JSON, malformed UTF-8 and non-objects.
 - **Differential framing:** the production decoder against the research decoder.
 - **Correlation:**
-  - duplicate, unknown and missing response IDs;
+  - duplicate, stale (after a timeout), unknown and missing response IDs;
+  - commands that cannot be serialized;
   - a wrong echoed command and malformed responses;
   - out-of-order responses, refusals and timeouts.
 - **Events:**
   - events without response IDs;
   - response and event interleaving;
-  - listener and diagnostic-sink failure isolation;
+  - listener and diagnostic-sink failure isolation, including listener-set error names;
   - command observation order and unsubscribe.
 - **Lifecycle:**
   - exit with a pending request;
   - records written before exit, including a final record without an LF;
   - a descendant holding stdout, with a check that the process group is gone;
-  - idempotent close, SIGTERM and SIGKILL escalation, and spawn failure.
+  - Prime closing its stdin while still running;
+  - idempotent close, SIGTERM and SIGKILL escalation (including a descendant that ignores SIGTERM after Prime exits), and spawn failure.
 - **Hermeticity and privacy:**
   - environment hermeticity;
   - privacy sentinels absent from diagnostics and errors.
 - **Identity:**
   - resolution precedence;
-  - version parsing from stdout or stderr;
+  - version parsing from stdout or stderr, and rejection of versioned paths;
   - binary without a source commit;
-  - a checkout's commit and clean, dirty or unknown tree.
+  - a checkout's commit and clean, dirty or unknown tree, and never an enclosing repository's commit.
 - **Import-graph guards.**
 
 **Opt-in live smoke.** Set `ENDOPHASIA_PRIME_LIVE_SMOKE=1` together with `PRIME_AGENT_BIN` or `PRIME_AGENT_ROOT`. The smoke then:

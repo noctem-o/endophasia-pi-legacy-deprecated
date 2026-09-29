@@ -34,8 +34,25 @@ export type PrimeRpcProtocolFaultV0 =
 	| "malformed-response"
 	| "response-without-id"
 	| "unknown-response-id"
-	| "duplicate-response-id"
+	/** An ID this connection issued whose request already settled: answered, rejected or timed out. */
+	| "stale-response-id"
 	| "command-mismatch";
+
+/**
+ * The name of a value a listener threw, from a fixed set: an Error's `name` is mutable and could carry payload text,
+ * so only the standard constructors' names pass through.
+ */
+export type PrimeRpcListenerErrorNameV0 =
+	| "Error"
+	| "TypeError"
+	| "RangeError"
+	| "ReferenceError"
+	| "SyntaxError"
+	| "EvalError"
+	| "URIError"
+	| "AggregateError"
+	| "other-error"
+	| "non-error";
 
 /**
  * What the connection reports besides responses and events. Structural categories only: a diagnostic never carries a
@@ -43,7 +60,13 @@ export type PrimeRpcProtocolFaultV0 =
  */
 export type PrimeRpcDiagnosticV0 =
 	| { readonly kind: "protocol-fault"; readonly fault: PrimeRpcProtocolFaultV0; readonly byteLength?: number }
-	| { readonly kind: "listener-failure"; readonly listener: "event" | "command"; readonly errorName: string }
+	| {
+			readonly kind: "listener-failure";
+			readonly listener: "event" | "command";
+			readonly errorName: PrimeRpcListenerErrorNameV0;
+	  }
+	/** Prime's stdin failed (e.g. EPIPE while Prime is still running): no further command can be sent. */
+	| { readonly kind: "stdin-failure" }
 	| { readonly kind: "stdout-drain-timeout" }
 	| { readonly kind: "forced-termination"; readonly signal: "SIGTERM" | "SIGKILL" };
 
@@ -121,12 +144,12 @@ export class PrimeRpcConnectionV0 {
 	readonly #child: ChildProcess;
 	readonly #decoder = new PrimeJsonlDecoderV0();
 	readonly #pending = new Map<string, Pending>();
-	readonly #settledIds = new Set<string>();
 	readonly #events = new Set<(event: PrimeRpcEventV0) => void>();
 	readonly #commands = new Set<(command: PrimeRpcSentCommandV0) => void>();
 	readonly #options: PrimeRpcConnectionOptionsV0;
 	#nextId = 0;
 	#exit: PrimeRpcExitV0 | undefined;
+	#stdinFailed = false;
 	#stdoutOpen = true;
 	#closing: Promise<PrimeRpcTerminationV0> | undefined;
 	#resolveExited!: (exit: PrimeRpcExitV0) => void;
@@ -161,8 +184,9 @@ export class PrimeRpcConnectionV0 {
 			this.#stdoutOpen = false;
 			this.#maybeTerminated();
 		});
-		// Writes after the process exited fail with EPIPE; pending requests are already rejected by the exit.
-		stdin?.on("error", () => {});
+		// A write to a closed stdin fails with EPIPE. After exit the pending requests are already rejected; while Prime
+		// still runs, nothing can be sent any more, so waiting requests fail now instead of at their timeouts.
+		stdin?.on("error", () => this.#onStdinFailure());
 		this.#child.on("exit", (code, signal) => this.#onExit({ code, signal, spawnFailed: false }));
 		this.#child.on("error", () => {
 			// A spawn failure emits no exit and no stdout close.
@@ -205,14 +229,23 @@ export class PrimeRpcConnectionV0 {
 		}
 		if ("id" in command)
 			return Promise.reject(new PrimeRpcErrorV0("Prime RPC request IDs are assigned by the connection"));
-		if (this.#exit !== undefined || this.#closing !== undefined) {
-			return Promise.reject(
-				this.#exit === undefined
-					? new PrimeRpcErrorV0(`Prime RPC connection is closing; ${command.type} was not sent`)
-					: new PrimeRpcExitErrorV0(command.type, this.#exit),
-			);
+		if (this.#exit !== undefined) return Promise.reject(new PrimeRpcExitErrorV0(command.type, this.#exit));
+		if (this.#closing !== undefined) {
+			return Promise.reject(new PrimeRpcErrorV0(`Prime RPC connection is closing; ${command.type} was not sent`));
 		}
-		const id = `endophasia-${++this.#nextId}`;
+		if (this.#stdinFailed) {
+			return Promise.reject(new PrimeRpcErrorV0(`Prime RPC input failed; ${command.type} was not sent`));
+		}
+		const id = `endophasia-${this.#nextId + 1}`;
+		// Serialize before anything is registered: a command that cannot be encoded (a cycle, a BigInt, a throwing
+		// getter) leaves no pending entry or timer behind. The thrown message is not quoted: it may name payload values.
+		let record: string;
+		try {
+			record = encodePrimeJsonlRecordV0({ ...command, id });
+		} catch {
+			return Promise.reject(new PrimeRpcErrorV0(`Prime RPC ${command.type} could not be serialized`));
+		}
+		this.#nextId++;
 		const timeoutMs = options.timeoutMs ?? this.#options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 		const response = new Promise<PrimeRpcResponseV0>((resolve, reject) => {
 			const timer = setTimeout(() => {
@@ -222,7 +255,7 @@ export class PrimeRpcConnectionV0 {
 			}, timeoutMs);
 			this.#pending.set(id, { command: command.type, resolve, reject, timer });
 		});
-		this.#child.stdin?.write(encodePrimeJsonlRecordV0({ ...command, id }));
+		this.#child.stdin?.write(record);
 		this.#notify(this.#commands, { id, type: command.type }, "command");
 		return response;
 	}
@@ -237,25 +270,60 @@ export class PrimeRpcConnectionV0 {
 			this.#child.stdin?.end();
 			const timeoutMs = this.#options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS;
 			let escalation: ReturnType<typeof setTimeout> | undefined;
+			let sigkillAt: number | undefined;
 			if (this.#exit === undefined) {
 				escalation = setTimeout(() => {
-					this.#signal("SIGTERM");
-					escalation = setTimeout(() => this.#signal("SIGKILL"), TERMINATE_GRACE_MS);
+					if (this.#exit !== undefined) return;
+					this.#diagnose({ kind: "forced-termination", signal: "SIGTERM" });
+					this.#killGroup("SIGTERM");
+					sigkillAt = Date.now() + TERMINATE_GRACE_MS;
+					escalation = setTimeout(() => this.#forceKill(), TERMINATE_GRACE_MS);
 				}, timeoutMs);
 			}
 			try {
 				return await this.terminated;
 			} finally {
 				clearTimeout(escalation);
+				// SIGTERM may end Prime while a descendant in its group ignores it. The escalation is for the whole group,
+				// so a surviving group still receives SIGKILL when the grace expires.
+				const deadline = sigkillAt;
+				if (deadline !== undefined && this.#groupAlive()) {
+					await new Promise((done) => setTimeout(done, Math.max(0, deadline - Date.now())));
+					this.#forceKill();
+				}
 			}
 		})();
 		return this.#closing;
 	}
 
-	#signal(signal: "SIGTERM" | "SIGKILL"): void {
-		if (this.#exit !== undefined) return;
-		this.#diagnose({ kind: "forced-termination", signal });
-		this.#killGroup(signal);
+	#forceKill(): void {
+		if (!this.#groupAlive()) return;
+		this.#diagnose({ kind: "forced-termination", signal: "SIGKILL" });
+		this.#killGroup("SIGKILL");
+	}
+
+	/** Whether any process of Prime's group remains. On Windows there is no group: only Prime itself is tracked. */
+	#groupAlive(): boolean {
+		const pid = this.#child.pid;
+		if (pid === undefined) return false;
+		if (process.platform === "win32") return this.#exit === undefined;
+		try {
+			process.kill(-pid, 0);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	#onStdinFailure(): void {
+		if (this.#stdinFailed || this.#exit !== undefined) return;
+		this.#stdinFailed = true;
+		this.#diagnose({ kind: "stdin-failure" });
+		for (const [id, pending] of this.#pending) {
+			clearTimeout(pending.timer);
+			this.#pending.delete(id);
+			pending.reject(new PrimeRpcErrorV0(`Prime RPC input failed before responding to ${pending.command}`));
+		}
 	}
 
 	#killGroup(signal: "SIGTERM" | "SIGKILL"): void {
@@ -337,12 +405,11 @@ export class PrimeRpcConnectionV0 {
 		}
 		const pending = this.#pending.get(id);
 		if (pending === undefined) {
-			this.#fault(this.#settledIds.has(id) ? "duplicate-response-id" : "unknown-response-id");
+			this.#fault(this.#issued(id) ? "stale-response-id" : "unknown-response-id");
 			return;
 		}
 		clearTimeout(pending.timer);
 		this.#pending.delete(id);
-		this.#settledIds.add(id);
 		// The right ID with another command's response would hand the caller a different data shape.
 		if (command !== pending.command) {
 			this.#fault("command-mismatch");
@@ -356,6 +423,12 @@ export class PrimeRpcConnectionV0 {
 			...(data === undefined ? {} : { data }),
 			...(typeof error === "string" ? { error } : {}),
 		});
+	}
+
+	/** IDs are sequential, so whether this connection issued an ID needs no per-request history. */
+	#issued(id: string): boolean {
+		const match = /^endophasia-([1-9][0-9]*)$/.exec(id);
+		return match !== null && Number(match[1]) <= this.#nextId;
 	}
 
 	#diagnose(diagnostic: PrimeRpcDiagnosticV0): void {
@@ -381,13 +454,33 @@ export class PrimeRpcConnectionV0 {
 			try {
 				deliver(value);
 			} catch (error) {
-				// Isolation: later listeners and later records are unaffected. Only the error's name is reported.
-				this.#diagnose({
-					kind: "listener-failure",
-					listener,
-					errorName: error instanceof Error ? error.name : typeof error,
-				});
+				// Isolation: later listeners and later records are unaffected. Only a standard error name is reported.
+				this.#diagnose({ kind: "listener-failure", listener, errorName: listenerErrorName(error) });
 			}
 		}
+	}
+}
+
+const STANDARD_ERROR_NAMES: ReadonlySet<string> = new Set([
+	"Error",
+	"TypeError",
+	"RangeError",
+	"ReferenceError",
+	"SyntaxError",
+	"EvalError",
+	"URIError",
+	"AggregateError",
+]);
+
+function listenerErrorName(error: unknown): PrimeRpcListenerErrorNameV0 {
+	if (!(error instanceof Error)) return "non-error";
+	try {
+		// `name` is mutable, and may be a throwing getter: only a standard name is passed through.
+		const name: unknown = error.name;
+		return typeof name === "string" && STANDARD_ERROR_NAMES.has(name)
+			? (name as PrimeRpcListenerErrorNameV0)
+			: "other-error";
+	} catch {
+		return "other-error";
 	}
 }

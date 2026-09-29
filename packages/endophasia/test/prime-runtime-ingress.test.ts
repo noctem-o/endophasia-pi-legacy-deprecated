@@ -235,11 +235,38 @@ describe("Prime RPC connection: correlation", () => {
 		expect(await second).toMatchObject({ id: "endophasia-2", command: "get_messages" });
 	});
 
-	it("settles once: a duplicate response ID is a fault", async () => {
+	it("settles once: a duplicate response ID is a stale-ID fault", async () => {
 		const { connection, diagnostics } = connect("duplicate");
 		expect(await connection.request({ type: "get_state" })).toMatchObject({ success: true });
 		await connection.request({ type: "get_state" });
-		expect(faults(diagnostics)).toEqual(["duplicate-response-id", "duplicate-response-id"]);
+		expect(faults(diagnostics)).toEqual(["stale-response-id", "stale-response-id"]);
+	});
+
+	it("classifies a response to a timed-out request as stale, and a foreign ID of its form as unknown", async () => {
+		const { connection, diagnostics } = connect("reverse");
+		await expect(connection.request({ type: "get_state" }, { timeoutMs: 50 })).rejects.toThrow("timed out");
+		// The second command makes the fake answer both, in reverse: endophasia-2, then the timed-out endophasia-1.
+		expect(await connection.request({ type: "get_messages" })).toMatchObject({ id: "endophasia-2" });
+		await connection.close();
+		expect(faults(diagnostics)).toEqual(["stale-response-id"]);
+	});
+
+	it("rejects a command that cannot be serialized without leaving a pending request behind", async () => {
+		const { connection } = connect("echo", { requestTimeoutMs: 50 });
+		const circular: Record<string, unknown> = { type: "prompt" };
+		circular.self = circular;
+		await expect(connection.request(circular as { type: string })).rejects.toThrow(
+			"Prime RPC prompt could not be serialized",
+		);
+		await expect(connection.request({ type: "prompt", n: 1n })).rejects.toThrow(
+			"Prime RPC prompt could not be serialized",
+		);
+		// Any orphaned timer would have rejected by now and failed the run as an unhandled rejection.
+		await new Promise((done) => setTimeout(done, 100));
+		// The ID sequence is not consumed by a command that was never sent.
+		expect(await connection.request({ type: "get_state" }, { timeoutMs: 10_000 })).toMatchObject({
+			id: "endophasia-1",
+		});
 	});
 
 	it("reports an unknown response ID and a response without an ID, and delivers neither", async () => {
@@ -327,11 +354,35 @@ describe("Prime RPC connection: listeners", () => {
 		expect(after).toEqual(["agent_start", "message_end", "agent_end"]);
 		expect(diagnostics.filter((diagnostic) => diagnostic.kind === "listener-failure")).toEqual([
 			{ kind: "listener-failure", listener: "event", errorName: "TypeError" },
-			{ kind: "listener-failure", listener: "event", errorName: "string" },
+			{ kind: "listener-failure", listener: "event", errorName: "non-error" },
 			{ kind: "listener-failure", listener: "event", errorName: "TypeError" },
-			{ kind: "listener-failure", listener: "event", errorName: "string" },
+			{ kind: "listener-failure", listener: "event", errorName: "non-error" },
 			{ kind: "listener-failure", listener: "event", errorName: "TypeError" },
-			{ kind: "listener-failure", listener: "event", errorName: "string" },
+			{ kind: "listener-failure", listener: "event", errorName: "non-error" },
+		]);
+		expect(JSON.stringify(diagnostics)).not.toMatch(SENTINEL);
+	});
+
+	it("reports only a standard error name, never a name a listener set", async () => {
+		const { connection, diagnostics } = connect("echo");
+		connection.subscribe((event) => {
+			const error = new Error("failed");
+			error.name = String(event.record.delta);
+			throw error;
+		});
+		connection.subscribe(() => {
+			const error = new Error("failed");
+			Object.defineProperty(error, "name", {
+				get() {
+					throw new Error("ASSISTANT_SENTINEL");
+				},
+			});
+			throw error;
+		});
+		await connection.request({ type: "get_state" });
+		expect(diagnostics).toEqual([
+			{ kind: "listener-failure", listener: "event", errorName: "other-error" },
+			{ kind: "listener-failure", listener: "event", errorName: "other-error" },
 		]);
 		expect(JSON.stringify(diagnostics)).not.toMatch(SENTINEL);
 	});
@@ -445,6 +496,49 @@ describe("Prime RPC connection: lifecycle", () => {
 		]);
 	});
 
+	it("rejects waiting and later requests promptly when Prime closes its input but keeps running", async () => {
+		const { connection, diagnostics } = connect("close-stdin", { closeTimeoutMs: 200 });
+		await connection.request({ type: "get_state" });
+		// Let the fake close its end of the pipe before the next write.
+		await new Promise((done) => setTimeout(done, 100));
+		const started = Date.now();
+		await expect(connection.request({ type: "get_state" })).rejects.toThrow(
+			"Prime RPC input failed before responding to get_state",
+		);
+		expect(Date.now() - started).toBeLessThan(5_000);
+		await expect(connection.request({ type: "get_state" })).rejects.toThrow(
+			"Prime RPC input failed; get_state was not sent",
+		);
+		expect(diagnostics).toContainEqual({ kind: "stdin-failure" });
+		expect((await connection.close()).exit.signal).toBe("SIGTERM");
+	});
+
+	it.runIf(POSIX)(
+		"still sends SIGKILL to the group when SIGTERM ended Prime but a descendant ignores it",
+		async () => {
+			const { connection, diagnostics } = connect("descendant-ignores-sigterm", { closeTimeoutMs: 200 });
+			const response = await connection.request({ type: "get_state" });
+			const descendant = (response.data as { descendant: number }).descendant;
+			const termination = await connection.close();
+			expect(termination.exit).toEqual({ code: null, signal: "SIGTERM", spawnFailed: false });
+			expect(diagnostics).toEqual([
+				{ kind: "forced-termination", signal: "SIGTERM" },
+				{ kind: "forced-termination", signal: "SIGKILL" },
+			]);
+			const deadline = Date.now() + 5_000;
+			let alive = true;
+			while (alive && Date.now() < deadline) {
+				try {
+					process.kill(descendant, 0);
+					await new Promise((done) => setTimeout(done, 50));
+				} catch {
+					alive = false;
+				}
+			}
+			expect(alive).toBe(false);
+		},
+	);
+
 	it("reports a process that could not start, and rejects its requests", async () => {
 		const { connection } = connect("echo", {
 			installation: { mode: "binary", command: join(tmpdir(), "no-such-prime-agent"), leadingArgs: [] },
@@ -511,6 +605,7 @@ describe("Prime runtime identity", () => {
 		expect(
 			(await readPrimeRuntimeIdentityV0(versionScript("prime-agent 0.9.6-beta.1\n", "stderr"), options)).version,
 		).toBe("0.9.6-beta.1");
+		expect((await readPrimeRuntimeIdentityV0(versionScript("v0.9.6\n"), options)).version).toBe("0.9.6");
 		// A version-like path segment is not a version.
 		expect((await readPrimeRuntimeIdentityV0(versionScript("/opt/prime-1.2.3/bin 0.9.6\n"), options)).version).toBe(
 			"0.9.6",
@@ -518,9 +613,11 @@ describe("Prime runtime identity", () => {
 	});
 
 	it("rejects when no version can be read", async () => {
-		await expect(readPrimeRuntimeIdentityV0(versionScript("prime-agent\n"), options)).rejects.toThrow(
-			"Could not read a Prime version from --version",
-		);
+		for (const output of ["prime-agent\n", "/opt/prime/1.2.3\n", "prime-agent-1.2.3\n", "C:\\prime\\1.2.3\n"]) {
+			await expect(readPrimeRuntimeIdentityV0(versionScript(output), options)).rejects.toThrow(
+				"Could not read a Prime version from --version",
+			);
+		}
 		await expect(
 			readPrimeRuntimeIdentityV0(
 				{ mode: "binary", command: join(tmpdir(), "no-such-prime"), leadingArgs: [] },
@@ -560,6 +657,25 @@ describe("Prime runtime identity", () => {
 		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
 			commit,
 			tree: "dirty",
+		});
+	});
+
+	it.runIf(POSIX)("never reports an enclosing repository's commit as the checkout's", async () => {
+		const outer = temporaryDirectory("prime-outer-repo-");
+		const home = temporaryDirectory("prime-git-home-");
+		const env = { PATH: process.env.PATH ?? "", HOME: home, GIT_CONFIG_NOSYSTEM: "1" };
+		const root = join(outer, "vendor", "prime");
+		mkdirSync(root, { recursive: true });
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(root, "prime-agent.sh"), 0o755);
+		const git = (...args: string[]) =>
+			execFileSync("git", ["-C", outer, "-c", "user.name=t", "-c", "user.email=t@t", ...args], { env });
+		git("init", "-q");
+		git("add", ".");
+		git("commit", "-q", "-m", "outer");
+		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
+		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
+			tree: "unknown",
 		});
 	});
 

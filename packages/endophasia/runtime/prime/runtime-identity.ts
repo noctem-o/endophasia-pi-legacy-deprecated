@@ -2,6 +2,7 @@
 // records what can be known (the reported version, how Prime is installed, a source checkout's commit and tree state)
 // and claims nothing more. A Prime semantic adapter decides whether an identity belongs to a profile it supports.
 import { execFile } from "node:child_process";
+import { realpath } from "node:fs/promises";
 import { isAbsolute, join, resolve, win32 } from "node:path";
 
 /** How Prime is started: a standalone executable, or a source checkout's documented launcher. */
@@ -47,8 +48,11 @@ export function resolvePrimeInstallationV0(
 	return undefined;
 }
 
-/** A semver version only: the version may later name a directory, so it never carries a path separator. */
-const VERSION = /\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*(?![^\s])/;
+/**
+ * A semver version standing alone as a whitespace-delimited word (optionally prefixed with "v"), so a version-like
+ * segment of a path such as /opt/prime/1.2.3 is never taken for one. Prime 0.9.6 prints the bare version.
+ */
+const VERSION = /(?<![^\s])v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*)(?![^\s])/;
 
 function run(
 	command: string,
@@ -86,15 +90,30 @@ export async function readPrimeRuntimeIdentityV0(
 		timeoutMs,
 		withStderr: true,
 	});
-	const version = output === undefined ? undefined : VERSION.exec(output)?.[0];
+	const version = output === undefined ? undefined : VERSION.exec(output)?.[1];
 	if (version === undefined) throw new Error("Could not read a Prime version from --version");
 	if (installation.mode === "binary") return { version, installation };
 	const git = (args: readonly string[]) =>
 		run("git", ["-C", installation.root, ...args], { env: options.env, cwd: options.cwd, timeoutMs });
+	// Git walks up from the root: a root that is not itself a checkout but sits inside another repository would report
+	// that ancestor's commit. Provenance is accepted only when the repository's top level is the configured root.
+	const toplevel = (await git(["rev-parse", "--show-toplevel"]))?.trim();
+	if (toplevel === undefined || !(await sameDirectory(toplevel, installation.root))) {
+		return { version, installation, source: { tree: "unknown" } };
+	}
 	const head = (await git(["rev-parse", "HEAD"]))?.trim();
 	const status = await git(["status", "--porcelain", "--untracked-files=no"]);
 	const commit = head !== undefined && /^[0-9a-f]{40}$/.test(head) ? head : undefined;
 	const tree =
 		commit === undefined || status === undefined ? "unknown" : status.trim().length === 0 ? "clean" : "dirty";
 	return { version, installation, source: { ...(commit === undefined ? {} : { commit }), tree } };
+}
+
+async function sameDirectory(a: string, b: string): Promise<boolean> {
+	try {
+		const [left, right] = await Promise.all([realpath(a), realpath(b)]);
+		return left === right;
+	} catch {
+		return false;
+	}
 }

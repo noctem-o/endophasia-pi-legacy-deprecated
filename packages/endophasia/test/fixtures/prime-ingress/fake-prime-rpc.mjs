@@ -1,6 +1,7 @@
 // Offline stand-in for `prime-agent --mode rpc`, used by prime-runtime-ingress.test.ts. Launched as
 // `node fake-prime-rpc.mjs --mode rpc <mode>`: the mode picks one protocol behavior. Raw events carry privacy sentinels.
 import { spawn } from "node:child_process";
+import { closeSync } from "node:fs";
 
 const mode = process.argv[4] ?? "echo";
 const SENTINEL = { prompt: "PROMPT_SENTINEL", output: "ASSISTANT_SENTINEL", args: "TOOL_ARGS_SENTINEL" };
@@ -20,12 +21,13 @@ process.stdin.on("data", (chunk) => {
 		newline = buffer.indexOf("\n");
 	}
 });
+const lingers = ["ignore-stdin-end", "ignore-sigterm", "close-stdin", "descendant-ignores-sigterm"].includes(mode);
 process.stdin.on("end", () => {
-	if (mode === "ignore-stdin-end" || mode === "ignore-sigterm") return;
+	if (lingers) return;
 	process.exit(0);
 });
 if (mode === "ignore-sigterm") process.on("SIGTERM", () => {});
-if (mode === "ignore-stdin-end" || mode === "ignore-sigterm") setInterval(() => {}, 1_000);
+if (lingers) setInterval(() => {}, 1_000);
 
 const held = [];
 function handle(command) {
@@ -113,5 +115,20 @@ function handle(command) {
 		case "ignore-sigterm":
 			write(respond(command));
 			return;
+		case "close-stdin":
+			// Answer, then close its input while staying alive: later writes to it fail with EPIPE.
+			write(respond(command), () => {
+				process.stdin.destroy();
+				closeSync(0);
+			});
+			return;
+		case "descendant-ignores-sigterm": {
+			// A descendant in the same process group ignores SIGTERM and does not hold stdout; Prime itself stops on SIGTERM.
+			const child = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], {
+				stdio: "ignore",
+			});
+			child.on("spawn", () => setTimeout(() => write(respond(command, { data: { descendant: child.pid } })), 200));
+			return;
+		}
 	}
 }
