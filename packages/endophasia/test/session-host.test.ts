@@ -27,13 +27,16 @@ import {
 	type SessionWorkerServices,
 } from "../../coding-agent/src/experimental/services/worker.ts";
 import {
+	captureContinuityV0,
 	captureOperationOutcomeV0,
 	captureRuntimeMetricsV0,
 	captureSessionOverviewV0,
+	createEndophasiaContinuityFacetV0,
 	createEndophasiaInspectorFacetV0,
 	createEndophasiaMissionTraceFacetV0,
 	createEndophasiaRuntimeFactsFacetV0,
 	createEndophasiaUsageFacetV0,
+	EndophasiaContinuityV0,
 	EndophasiaInspectorV0,
 	EndophasiaMissionTraceV0,
 	EndophasiaRuntimeFactsV0,
@@ -56,6 +59,7 @@ const sessionOf = new WeakMap<AgentHarnessType, Session>();
 const workers: SessionWorkerServices[] = [];
 const scope = { serverConnectionId: "server-1", attachmentId: "attachment-1" };
 const sessionOverviewCall = { serviceId: EndophasiaInspectorV0.id, member: "sessionOverview", args: [] };
+const continuityCall = { serviceId: EndophasiaContinuityV0.id, member: "snapshot", args: [] };
 const runtimeMetricsCall = { serviceId: EndophasiaRuntimeFactsV0.id, member: "runtimeMetrics", args: [] };
 const operationOutcomeCall = (operationId: string) => ({
 	serviceId: EndophasiaRuntimeFactsV0.id,
@@ -120,6 +124,7 @@ async function worker(
 								session: { scanUsage: (query, context) => session.scanUsage(query, context) },
 							}),
 						),
+						createEndophasiaContinuityFacetV0(main),
 					],
 		facetLoader: options.plugin === undefined ? undefined : createStaticFacetLoader([defineFacet(options.plugin)]),
 		publish: async () => {},
@@ -151,13 +156,14 @@ describe("Endophasia Inspector v0 in a Session worker", () => {
 			EndophasiaMissionTraceV0.id,
 			EndophasiaRuntimeFactsV0.id,
 			EndophasiaUsageV0.id,
+			EndophasiaContinuityV0.id,
 		];
 		for (const id of endophasia) {
 			expect(without).not.toContain(id);
 			expect(withEndophasia.filter((entry) => entry === id)).toHaveLength(1);
 		}
 		expect(withEndophasia.filter((id) => !without.includes(id)).sort()).toEqual(endophasia.sort());
-		expect(withEndophasia).toHaveLength(without.length + 4);
+		expect(withEndophasia).toHaveLength(without.length + 5);
 	});
 
 	it("reacquires the established main lane for Runtime Facts without creating a lane or mutating Pi", async () => {
@@ -209,6 +215,23 @@ describe("Endophasia Inspector v0 in a Session worker", () => {
 		expect(await services.invoke(operationOutcomeCall(run.value.operationId), scope, BACKGROUND_CONTEXT)).toEqual(
 			await captureOperationOutcomeV0(lane, run.value.operationId, BACKGROUND_CONTEXT),
 		);
+	});
+
+	it("serves fresh main-lane Continuity captures through the worker endpoint and across plugin reloads", async () => {
+		const { harness, faux } = await fixture();
+		const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+		const services = await worker(harness, { plugin: { id: "@test/reloadable-continuity", setup() {} } });
+		const empty = await services.invoke(continuityCall, scope, BACKGROUND_CONTEXT);
+		expect(empty).toEqual(await captureContinuityV0(lane, BACKGROUND_CONTEXT));
+
+		faux.setResponses([fauxAssistantMessage("one")]);
+		expect(await lane.prompt("first", undefined, BACKGROUND_CONTEXT)).toMatchObject({ ok: true });
+		await services.invoke({ serviceId: SessionPlugins.id, member: "reload", args: [] }, scope, BACKGROUND_CONTEXT);
+		expect((await catalogueIds(services)).filter((id) => id === EndophasiaContinuityV0.id)).toHaveLength(1);
+		// Nothing is held across the reload or between calls: each call captures the main lane afresh.
+		const after = await services.invoke(continuityCall, scope, BACKGROUND_CONTEXT);
+		expect(after).toEqual(await captureContinuityV0(lane, BACKGROUND_CONTEXT));
+		expect(after).not.toEqual(empty);
 	});
 
 	it("serves fresh Session Overview captures through the worker endpoint", async () => {

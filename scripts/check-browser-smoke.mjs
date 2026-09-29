@@ -146,7 +146,11 @@ try {
 	for (const [entryPoint, expectedInputs] of [
 		[
 			"scripts/endophasia-browser-transport-smoke-entry.ts",
-			["packages/endophasia/presentation/websocket-transport.ts", "packages/endophasia/presentation/client.ts"],
+			[
+				"packages/endophasia/presentation/websocket-transport.ts",
+				"packages/endophasia/presentation/client.ts",
+				"packages/endophasia/src/continuity-service.ts",
+			],
 		],
 		[
 			"packages/endophasia/cockpit/main.ts",
@@ -156,6 +160,7 @@ try {
 				"packages/endophasia/src/mission-trace-service.ts",
 				"packages/endophasia/src/runtime-facts-service.ts",
 				"packages/endophasia/src/usage-service.ts",
+				"packages/endophasia/src/continuity-service.ts",
 				"packages/endophasia/presentation/websocket-transport.ts",
 				"packages/endophasia/presentation/client.ts",
 				"packages/client/src/client.ts",
@@ -193,6 +198,9 @@ try {
 				normalized.endsWith("packages/endophasia/src/usage-facet.ts") ||
 				normalized.endsWith("packages/endophasia/src/usage-feed.ts") ||
 				normalized.endsWith("packages/endophasia/src/usage-ledger.ts") ||
+				// The Continuity contract is bundled; the Pi-backed capture and its host facet stay on the host.
+				normalized.endsWith("packages/endophasia/src/continuity.ts") ||
+				normalized.endsWith("packages/endophasia/src/continuity-facet.ts") ||
 				// Runtime observation contracts are bundled; the runtime adapter and its projections stay on the host.
 				normalized.endsWith("packages/endophasia/src/pi-runtime-observation.ts") ||
 				normalized.endsWith("packages/endophasia/src/mission-trace.ts") ||

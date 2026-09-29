@@ -21,6 +21,7 @@ import { Transcript } from "@earendil-works/pi-coding-agent/experimental/service
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type EndophasiaServerOptions, startEndophasiaServer } from "../runtime/server.ts";
 import {
+	EndophasiaContinuityV0,
 	EndophasiaInspectorV0,
 	EndophasiaMissionTraceV0,
 	EndophasiaRuntimeFactsV0,
@@ -165,18 +166,20 @@ describe("Endophasia runtime v0", () => {
 		expect(catalogue.filter((id) => id === EndophasiaMissionTraceV0.id)).toHaveLength(1);
 		expect(catalogue.filter((id) => id === EndophasiaRuntimeFactsV0.id)).toHaveLength(1);
 		expect(catalogue.filter((id) => id === EndophasiaUsageV0.id)).toHaveLength(1);
+		expect(catalogue.filter((id) => id === EndophasiaContinuityV0.id)).toHaveLength(1);
 		for (const service of [AgentController, Models, Transcript, SessionPlugins]) {
 			expect(catalogue).toContain(service.id);
 		}
 
 		const source = createSessionServiceSource(client);
 		const services = source.open({
-			services: [EndophasiaInspectorV0, EndophasiaRuntimeFactsV0],
+			services: [EndophasiaInspectorV0, EndophasiaRuntimeFactsV0, EndophasiaContinuityV0],
 			assertAccess() {},
 			onError() {},
 		});
 		const inspector = services.use(EndophasiaInspectorV0);
 		const facts = services.use(EndophasiaRuntimeFactsV0);
+		const continuity = services.use(EndophasiaContinuityV0);
 		try {
 			await services.ready(BACKGROUND_CONTEXT);
 			await source.whenAttached("endophasia", BACKGROUND_CONTEXT);
@@ -202,7 +205,17 @@ describe("Endophasia runtime v0", () => {
 				},
 			});
 			expect(await facts.operationOutcome("no-such-operation", BACKGROUND_CONTEXT)).toBeNull();
-			// Reacquiring the main lane for Runtime Facts did not create another lane.
+			// Continuity reads the worker's established main lane: a fresh Session's empty tip.
+			expect(await continuity.snapshot(BACKGROUND_CONTEXT)).toMatchObject({
+				schemaVersion: "continuity.v0",
+				lane: "main",
+				tipId: null,
+				configuration: { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } },
+				activePath: [],
+				contextWindow: [],
+				compaction: null,
+			});
+			// Reacquiring the main lane for Runtime Facts and Continuity did not create another lane.
 			expect((await inspector.sessionOverview(BACKGROUND_CONTEXT)).lanes.map(({ name }) => name)).toEqual(["main"]);
 		} finally {
 			await services.dispose(BACKGROUND_CONTEXT);
@@ -210,7 +223,7 @@ describe("Endophasia runtime v0", () => {
 		}
 
 		// Compared with a plain Pi server's worker, the Endophasia worker adds exactly Inspector, Mission Trace, Runtime
-		// Facts and Usage.
+		// Facts, Usage and Continuity.
 		const plain = await startServer({ ...workerModel, directory: await temporaryDirectory("endophasia-plain-") });
 		servers.push(plain);
 		const plainCatalogue = await sessionCatalogue(await attach(plain, "plain"));
@@ -218,13 +231,15 @@ describe("Endophasia runtime v0", () => {
 		expect(plainCatalogue).not.toContain(EndophasiaMissionTraceV0.id);
 		expect(plainCatalogue).not.toContain(EndophasiaRuntimeFactsV0.id);
 		expect(plainCatalogue).not.toContain(EndophasiaUsageV0.id);
-		// The Endophasia worker adds exactly its four trusted host services, no more and no less.
+		expect(plainCatalogue).not.toContain(EndophasiaContinuityV0.id);
+		// The Endophasia worker adds exactly its five trusted host services, no more and no less.
 		expect(catalogue.filter((id) => !plainCatalogue.includes(id)).sort()).toEqual(
 			[
 				EndophasiaInspectorV0.id,
 				EndophasiaMissionTraceV0.id,
 				EndophasiaRuntimeFactsV0.id,
 				EndophasiaUsageV0.id,
+				EndophasiaContinuityV0.id,
 			].sort(),
 		);
 		expect(plainCatalogue.filter((id) => !catalogue.includes(id))).toEqual([]);

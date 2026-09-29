@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { EntryView, VisibleEntryCache } from "../cockpit/view-model.ts";
 import {
 	boundText,
+	CONTINUITY_ENTRY_ROW_LIMIT,
 	formatClock,
 	formatExactNumber,
 	formatStructuredPreview,
@@ -9,6 +10,8 @@ import {
 	PREVIEW_LIMIT,
 	projectAttachment,
 	projectConnection,
+	projectContinuity,
+	projectContinuityEntry,
 	projectMessage,
 	projectMissionTrace,
 	projectMissionTraceEvent,
@@ -24,6 +27,7 @@ import {
 	projectVisibleTranscript,
 	USAGE_ROW_LIMIT,
 } from "../cockpit/view-model.ts";
+import type { ContinuityEntryV0, ContinuitySnapshotV0 } from "../src/continuity-service.ts";
 import type { RuntimeMetricsV0 } from "../src/runtime-facts-service.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
 import type { UsageLedgerRowV0 } from "../src/usage-service.ts";
@@ -789,5 +793,172 @@ describe("Usage Activity projection", () => {
 		expect(complete.earlier).toBeUndefined();
 		expect(complete.window).toBeUndefined();
 		expect(JSON.stringify(complete)).not.toMatch(/lost|dropped/i);
+	});
+});
+
+describe("Continuity projection", () => {
+	const base = { parentId: "parent", timestamp: 1_790_000_000_000 };
+	const entries: ContinuityEntryV0[] = [
+		{ ...base, id: "u1", seq: 3, type: "message", role: "user", terminate: false },
+		{ ...base, id: "a1", seq: 9, type: "message", role: "assistant", stopReason: "toolUse", terminate: false },
+		{ ...base, id: "t1", seq: 12, type: "message", role: "toolResult", terminate: true },
+		{
+			...base,
+			id: "c1",
+			seq: 20,
+			type: "compaction",
+			tokensBefore: 154_800,
+			retainedTailCount: 0,
+			fromHook: true,
+			hasSummary: true,
+		},
+		{ ...base, id: "b1", seq: 21, type: "branch_summary", fromId: null, fromHook: false, hasSummary: false },
+		{ ...base, id: "b2", seq: 22, type: "branch_summary", fromId: "src", fromHook: true, hasSummary: true },
+		{ ...base, id: "x1", seq: 30, type: "custom", customType: "app-note", hasData: true },
+		{ ...base, id: "x2", seq: 31, type: "custom", customType: "", hasData: false },
+	];
+
+	function snapshot(overrides: Partial<ContinuitySnapshotV0> = {}): ContinuitySnapshotV0 {
+		return {
+			schemaVersion: "continuity.v0",
+			lane: "main",
+			tipId: "x2",
+			configuration: {
+				model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+				thinkingLevel: "high",
+				activeToolNames: ["read", "bash"],
+			},
+			activePath: entries,
+			contextWindow: entries.slice(3),
+			compaction: { entryId: "c1", tokensBefore: 154_800, retainedTailCount: 0, fromHook: true },
+			counts: { activePathEntries: 8, contextWindowEntries: 5, beforeContextWindow: 3 },
+			...overrides,
+		};
+	}
+
+	it("projects each entry from its own structural fields only", () => {
+		expect(entries.map(projectContinuityEntry)).toEqual([
+			{ sequence: "#3", id: "u1", label: "Message · user", meta: [] },
+			{ sequence: "#9", id: "a1", label: "Message · assistant", meta: ["stop toolUse"] },
+			{ sequence: "#12", id: "t1", label: "Message · toolResult", meta: ["terminate"] },
+			{
+				sequence: "#20",
+				id: "c1",
+				label: "Compaction",
+				meta: ["154,800 tokens before", "0 retained", "from hook", "summary not shown"],
+			},
+			{ sequence: "#21", id: "b1", label: "Branch summary", meta: ["from root", "empty summary"] },
+			{ sequence: "#22", id: "b2", label: "Branch summary", meta: ["from src", "from hook", "summary not shown"] },
+			{ sequence: "#30", id: "x1", label: "Custom · app-note", meta: ["data not shown"] },
+			{ sequence: "#31", id: "x2", label: "Custom · ", meta: ["no data"] },
+		]);
+	});
+
+	it("shows the snapshot's own configuration, counts and compaction boundary exactly", () => {
+		const view = projectContinuity(snapshot(), Date.UTC(2026, 0, 1, 12, 0, 0));
+		expect(view.capturedAt).toBe(formatClock(Date.UTC(2026, 0, 1, 12, 0, 0)));
+		expect(view.fields).toEqual([
+			{ label: "Lane", value: "main" },
+			{ label: "Tip", value: "x2" },
+			{ label: "Configured model", value: "anthropic/claude-sonnet-4-5" },
+			{ label: "Thinking level", value: "high" },
+			{ label: "Active tools", value: "read, bash" },
+			{ label: "Active-path entries", value: "8" },
+			{ label: "Context-window entries", value: "5" },
+			{ label: "Before context window", value: "3" },
+		]);
+		expect(view.compaction).toEqual([
+			{ label: "Entry", value: "c1" },
+			{ label: "Tokens before", value: "154,800" },
+			{ label: "Retained tail", value: "0" },
+			{ label: "From hook", value: "yes" },
+		]);
+		expect(view.activePath).toEqual({ total: 8, rows: entries.map(projectContinuityEntry) });
+		expect(view.contextWindow).toEqual({ total: 5, rows: entries.slice(3).map(projectContinuityEntry) });
+	});
+
+	it("shows an empty lane, no compaction and no tools as such", () => {
+		const view = projectContinuity(
+			snapshot({
+				tipId: null,
+				configuration: { model: { provider: "p", modelId: "m" }, thinkingLevel: "off", activeToolNames: [] },
+				activePath: [],
+				contextWindow: [],
+				compaction: null,
+				counts: { activePathEntries: 0, contextWindowEntries: 0, beforeContextWindow: 0 },
+			}),
+			0,
+		);
+		expect(view.fields.find(({ label }) => label === "Tip")?.value).toBe("empty");
+		expect(view.fields.find(({ label }) => label === "Active tools")?.value).toBe("none");
+		expect(view).not.toHaveProperty("compaction");
+		expect(view.activePath).toEqual({ total: 0, rows: [] });
+		expect(view.contextWindow).toEqual({ total: 0, rows: [] });
+	});
+
+	it("reports the snapshot's counts as given, never recomputed from the lists", () => {
+		// Counts are the capture's facts; the cockpit does not reconcile them with the list lengths.
+		const view = projectContinuity(
+			snapshot({ counts: { activePathEntries: 1_234_567, contextWindowEntries: 0, beforeContextWindow: -1 } }),
+			0,
+		);
+		expect(view.fields.slice(5)).toEqual([
+			{ label: "Active-path entries", value: "1,234,567" },
+			{ label: "Context-window entries", value: "0" },
+			{ label: "Before context window", value: "-1" },
+		]);
+		expect(view.activePath.total).toBe(8);
+	});
+
+	it("renders only the latest rows of a long list and says the capture holds them all", () => {
+		const long: ContinuityEntryV0[] = Array.from({ length: CONTINUITY_ENTRY_ROW_LIMIT + 5 }, (_, index) => ({
+			...base,
+			id: `e${index}`,
+			seq: index,
+			type: "message",
+			role: "user",
+			terminate: false,
+		}));
+		const view = projectContinuity(snapshot({ activePath: long }), 0);
+		expect(view.activePath.total).toBe(CONTINUITY_ENTRY_ROW_LIMIT + 5);
+		expect(view.activePath.rows).toHaveLength(CONTINUITY_ENTRY_ROW_LIMIT);
+		expect(view.activePath.rows[0]?.id).toBe("e5");
+		expect(view.activePath.rows.at(-1)?.id).toBe(`e${CONTINUITY_ENTRY_ROW_LIMIT + 4}`);
+		expect(view.activePath.window).toBe(
+			`Showing latest ${CONTINUITY_ENTRY_ROW_LIMIT} of ${CONTINUITY_ENTRY_ROW_LIMIT + 5} captured entries`,
+		);
+		expect(view.contextWindow.window).toBeUndefined();
+	});
+
+	it("never renders payload fields, timestamps, parents or joins, even when a value carries them", () => {
+		// A hostile or future snapshot with payload fields beside the schema's: none may reach the rendered view.
+		const hostile = entries.map((entry) => ({
+			...entry,
+			content: "PAYLOAD_SENTINEL",
+			summary: "PAYLOAD_SENTINEL",
+			data: { secret: "PAYLOAD_SENTINEL" },
+			arguments: "PAYLOAD_SENTINEL",
+			message: { content: "PAYLOAD_SENTINEL" },
+		})) as unknown as ContinuityEntryV0[];
+		const view = projectContinuity(
+			snapshot({ activePath: hostile, contextWindow: hostile, ...({ prompt: "PAYLOAD_SENTINEL" } as object) }),
+			0,
+		);
+		const rendered = JSON.stringify(view);
+		expect(rendered).not.toContain("PAYLOAD_SENTINEL");
+		expect(rendered).not.toContain("parent");
+		expect(rendered).not.toContain(String(base.timestamp));
+		expect(rendered).not.toMatch(/run|turn|usage|cost|occupan|remember|provider-visible/i);
+	});
+
+	it("shows an unknown entry type neutrally rather than interpreting it", () => {
+		const unknown = {
+			...base,
+			id: "q",
+			seq: 1,
+			type: "future",
+			payload: "PAYLOAD_SENTINEL",
+		} as unknown as ContinuityEntryV0;
+		expect(projectContinuityEntry(unknown)).toEqual({ sequence: "#1", id: "q", label: "Unknown entry", meta: [] });
 	});
 });

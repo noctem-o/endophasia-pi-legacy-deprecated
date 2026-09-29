@@ -11,7 +11,14 @@ import { type RunningServer, startServer } from "@earendil-works/pi-coding-agent
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { type EndophasiaPresentationClientV0, openEndophasiaPresentationClientV0 } from "../presentation/client.ts";
 import { startEndophasiaServer } from "../runtime/server.ts";
-import type { OperationOutcomeV0, RuntimeMetricsV0, UsageLedgerPageV0, UsageLedgerQueryV0 } from "../src/index.ts";
+import {
+	CONTINUITY_REMOTE_BYTE_LIMIT,
+	type ContinuitySnapshotV0,
+	type OperationOutcomeV0,
+	type RuntimeMetricsV0,
+	type UsageLedgerPageV0,
+	type UsageLedgerQueryV0,
+} from "../src/index.ts";
 
 const directories: string[] = [];
 const servers: RunningServer[] = [];
@@ -133,6 +140,21 @@ describe("Endophasia Presentation Client v0", () => {
 				rows: [],
 				nextAfterSequence: 7,
 			});
+			// A fresh Session's main lane: an empty tip, captured by the worker on request.
+			expect(await presentation.continuitySnapshot(BACKGROUND_CONTEXT)).toEqual({
+				schemaVersion: "continuity.v0",
+				lane: "main",
+				tipId: null,
+				configuration: {
+					model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+					thinkingLevel: expect.any(String),
+					activeToolNames: expect.any(Array),
+				},
+				activePath: [],
+				contextWindow: [],
+				compaction: null,
+				counts: { activePathEntries: 0, contextWindowEntries: 0, beforeContextWindow: 0 },
+			});
 		};
 		await observe("observed");
 
@@ -147,6 +169,8 @@ describe("Endophasia Presentation Client v0", () => {
 		await expect(
 			Promise.resolve().then(() => presentation.usagePage(undefined, BACKGROUND_CONTEXT)),
 		).rejects.toThrow();
+		// Nor a synthetic empty Continuity snapshot.
+		await expect(Promise.resolve().then(() => presentation.continuitySnapshot(BACKGROUND_CONTEXT))).rejects.toThrow();
 
 		// Later attachment generations rebind every Session service, including the Inspector.
 		await observe("other");
@@ -163,6 +187,7 @@ describe("Endophasia Presentation Client v0", () => {
 		await disposal;
 		expect(presentation.dispose()).toBe(disposal);
 		await expect(Promise.resolve().then(() => presentation.sessionOverview(BACKGROUND_CONTEXT))).rejects.toThrow();
+		await expect(Promise.resolve().then(() => presentation.continuitySnapshot(BACKGROUND_CONTEXT))).rejects.toThrow();
 		// The server releases the disposed client's attachment, so the idle worker stops.
 		await expect.poll(() => server.workerPids.size, { timeout: 10_000 }).toBe(0);
 	});
@@ -182,7 +207,12 @@ describe("Endophasia Presentation Client v0", () => {
 			| "runtimeMetrics"
 			| "operationOutcome"
 			| "usagePage"
+			| "continuitySnapshot"
 			| "dispose"
+		>();
+		// Continuity is one fresh read returning its schema: not the service object, lane or harness.
+		expectTypeOf<EndophasiaPresentationClientV0["continuitySnapshot"]>().toEqualTypeOf<
+			(context: Context) => Promise<ContinuitySnapshotV0>
 		>();
 		// Usage is read-only replicated state plus a durable page read, not the underlying service object.
 		expectTypeOf<keyof EndophasiaPresentationClientV0["usage"]>().toEqualTypeOf<"value" | "subscribe">();
@@ -224,9 +254,9 @@ describe("Endophasia Presentation Client v0", () => {
 		});
 		servers.push(server);
 		const presentation = await open(server);
-		// The worker lacks Mission Trace, Runtime Facts and Usage; any missing service degrades the attachment.
+		// The worker lacks Mission Trace, Runtime Facts, Usage and Continuity; any missing service degrades the attachment.
 		await expect(presentation.attach("observed", BACKGROUND_CONTEXT)).rejects.toThrow(
-			/Remote service endophasia\.(mission-trace|runtime-facts|usage)\.v0 is not allowlisted/,
+			/Remote service endophasia\.(mission-trace|runtime-facts|usage|continuity)\.v0 is not allowlisted/,
 		);
 		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
 		// A missing capability is not reported as a real trace with zero events.
@@ -241,9 +271,9 @@ describe("Endophasia Presentation Client v0", () => {
 		});
 		servers.push(server);
 		const presentation = await open(server);
-		// The worker lacks Runtime Facts and Usage; either missing service degrades the attachment.
+		// The worker lacks Runtime Facts, Usage and Continuity; any missing service degrades the attachment.
 		await expect(presentation.attach("observed", BACKGROUND_CONTEXT)).rejects.toThrow(
-			/Remote service endophasia\.(runtime-facts|usage)\.v0 is not allowlisted/,
+			/Remote service endophasia\.(runtime-facts|usage|continuity)\.v0 is not allowlisted/,
 		);
 		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
 		// A missing capability is never reported as zero accounting or as "no durable result".
@@ -271,6 +301,60 @@ describe("Endophasia Presentation Client v0", () => {
 			Promise.resolve().then(() => presentation.usagePage(undefined, BACKGROUND_CONTEXT)),
 		).rejects.toThrow();
 	});
+
+	it("requires Continuity: a worker without it degrades instead of fabricating an empty snapshot", async () => {
+		const server = await startServer({
+			...workerModel,
+			directory: await temporaryDirectory("endophasia-no-continuity-"),
+			sessionWorkerEntryUrl: new URL("./fixtures/no-continuity-session-worker.ts", import.meta.url),
+		});
+		servers.push(server);
+		const presentation = await open(server);
+		// Every other Endophasia service is present, so only Continuity can be the missing one.
+		await expect(presentation.attach("observed", BACKGROUND_CONTEXT)).rejects.toThrow(
+			"Remote service endophasia.continuity.v0 is not allowlisted",
+		);
+		expect(presentation.attachment.value).toEqual({ status: "degraded", sessionId: "observed" });
+		await expect(Promise.resolve().then(() => presentation.continuitySnapshot(BACKGROUND_CONTEXT))).rejects.toThrow();
+	});
+
+	it("carries a Continuity snapshot at the remote byte limit whole, and fails a larger one without disconnecting", async () => {
+		const sizes: Record<string, ContinuitySnapshotV0 | Error> = {};
+		// Each server attaches its own Session, so neither waits on the other's worker to release it.
+		for (const [mode, sessionId] of [
+			["at-limit", "observed"],
+			["over-limit", "other"],
+		] as const) {
+			vi.stubEnv("ENDOPHASIA_TEST_CONTINUITY", mode);
+			const server = await startServer({
+				...workerModel,
+				directory: await temporaryDirectory(`endophasia-continuity-${mode}-`),
+				sessionWorkerEntryUrl: new URL("./fixtures/large-continuity-session-worker.ts", import.meta.url),
+			});
+			servers.push(server);
+			const errors: Error[] = [];
+			const presentation = await open(server, errors);
+			await presentation.attach(sessionId, BACKGROUND_CONTEXT);
+			sizes[mode] = await presentation.continuitySnapshot(BACKGROUND_CONTEXT).catch((error: Error) => error);
+			// A refused read is local to the call: the connection, the attachment and other services stay usable.
+			expect(presentation.connection.value).toMatchObject({ status: "connected" });
+			expect(presentation.attachment.value).toEqual({ status: "attached", sessionId });
+			expect(await presentation.runtimeMetrics(BACKGROUND_CONTEXT)).toMatchObject({ scope: "session" });
+			expect(errors).toEqual([]);
+		}
+		const whole = sizes["at-limit"];
+		if (!whole || whole instanceof Error) throw whole ?? new Error("No at-limit capture");
+		const bytes = new TextEncoder().encode(JSON.stringify(whole)).byteLength;
+		expect(bytes).toBeLessThanOrEqual(CONTINUITY_REMOTE_BYTE_LIMIT);
+		expect(bytes).toBeGreaterThan(CONTINUITY_REMOTE_BYTE_LIMIT - 1_200);
+		expect(whole.activePath).toHaveLength(whole.counts.activePathEntries);
+		// The read is refused, not shortened. Pi's server does not forward a service's own error text, so a remote
+		// reader sees its generic internal error; the worker endpoint's exact reason is covered in continuity-service.
+		const refused = sizes["over-limit"];
+		expect(refused).toBeInstanceOf(Error);
+		expect((refused as Error).message).toBe("Internal server error");
+		// Two worker processes and an 8 MiB response.
+	}, 60_000);
 
 	it("contains a throwing diagnostic observer without changing the attachment lifecycle", async () => {
 		const server = await startServer({ ...workerModel, directory: await temporaryDirectory("endophasia-observer-") });

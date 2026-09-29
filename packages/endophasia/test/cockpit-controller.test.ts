@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { CockpitController, type CockpitPresentation, type CockpitRegion } from "../cockpit/controller.ts";
 import { projectAttachment, projectSessions } from "../cockpit/view-model.ts";
 import type {
+	ContinuitySnapshotV0,
 	MissionTraceEventV0,
 	MissionTraceObservationV0,
 	RuntimeMetricsV0,
@@ -83,6 +84,33 @@ function metrics(totalTokens: number, costTotal = 0): RuntimeMetricsV0 {
 	};
 }
 
+function continuitySnapshot(tipId: string | null): ContinuitySnapshotV0 {
+	const entries =
+		tipId === null
+			? []
+			: [
+					{
+						id: tipId,
+						parentId: null,
+						seq: 1,
+						timestamp: 1,
+						type: "message" as const,
+						role: "user" as const,
+						terminate: false,
+					},
+				];
+	return {
+		schemaVersion: "continuity.v0",
+		lane: "main",
+		tipId,
+		configuration: { model: { provider: "p", modelId: "m" }, thinkingLevel: "off", activeToolNames: [] },
+		activePath: entries,
+		contextWindow: entries,
+		compaction: null,
+		counts: { activePathEntries: entries.length, contextWindowEntries: entries.length, beforeContextWindow: 0 },
+	};
+}
+
 function event(sequence: number, runId: string): MissionTraceEventV0 {
 	return { schemaVersion: "mission-trace.v0", sequence, kind: "mission.started", lane: "main", runId };
 }
@@ -123,6 +151,7 @@ function fixture() {
 	const attaches: Deferred<void>[] = [];
 	const overviews: Deferred<SessionOverviewV0>[] = [];
 	const accounting: Deferred<RuntimeMetricsV0>[] = [];
+	const continuity: Deferred<ContinuitySnapshotV0>[] = [];
 	const presentation: CockpitPresentation = {
 		connection,
 		attachment,
@@ -148,6 +177,11 @@ function fixture() {
 		runtimeMetrics() {
 			const next = deferred<RuntimeMetricsV0>();
 			accounting.push(next);
+			return next.promise;
+		},
+		continuitySnapshot() {
+			const next = deferred<ContinuitySnapshotV0>();
+			continuity.push(next);
 			return next.promise;
 		},
 	};
@@ -181,6 +215,7 @@ function fixture() {
 		attaches,
 		overviews,
 		accounting,
+		continuity,
 		controller,
 		scheduled,
 		renders,
@@ -375,6 +410,7 @@ describe("Standard Cockpit controller", () => {
 				detach: async () => {},
 				sessionOverview: async () => overview("x"),
 				runtimeMetrics: async () => metrics(0),
+				continuitySnapshot: async () => continuitySnapshot(null),
 			},
 			render: () => {
 				calls++;
@@ -631,6 +667,206 @@ describe("Standard Cockpit controller", () => {
 			expect(unhydrated.controller.usage).toMatchObject({ status: "visible", observation: { rows: [] } });
 			controller.dispose();
 			unhydrated.controller.dispose();
+		});
+	});
+
+	describe("Continuity", () => {
+		it("is an explicit capture: attach, transcript, trace and usage activity never request it", async () => {
+			const { controller, missionTrace, transcript, usage, continuity, accounting, completeAttach, flush, renders } =
+				fixture();
+			controller.select("a");
+			await completeAttach(0, "a");
+			missionTrace.set(observation(event(1, "run")));
+			transcript.set({} as TranscriptState);
+			usage.set(usageObservation(usageRow(3, 10)));
+			flush();
+			await settle();
+			expect(continuity).toHaveLength(0);
+			expect(controller.continuity).toEqual({ status: "none" });
+
+			renders.length = 0;
+			const capture = controller.captureContinuity();
+			expect(controller.continuity).toEqual({ status: "capturing", sessionId: "a" });
+			expect(controller.canCaptureContinuity).toBe(false);
+			// A second click while capturing starts nothing.
+			await controller.captureContinuity();
+			expect(continuity).toHaveLength(1);
+			continuity[0]!.resolve(continuitySnapshot("tip-a"));
+			await capture;
+			expect(controller.continuity).toEqual({
+				status: "captured",
+				sessionId: "a",
+				snapshot: continuitySnapshot("tip-a"),
+				capturedAt: 1_000,
+			});
+			flush();
+			// A capture redraws only its own region.
+			expect(renders).toEqual([new Set(["continuity"])]);
+			expect(controller.canCaptureContinuity).toBe(true);
+
+			// Live activity afterwards neither refreshes it nor requests another capture, nor Session Accounting.
+			missionTrace.set(observation(event(1, "run"), event(2, "run")));
+			transcript.set({} as TranscriptState);
+			usage.set(usageObservation(usageRow(3, 10), usageRow(4, 5)));
+			flush();
+			await settle();
+			expect(continuity).toHaveLength(1);
+			expect(accounting).toHaveLength(0);
+			expect(controller.continuity).toMatchObject({ status: "captured", snapshot: continuitySnapshot("tip-a") });
+
+			// One click, one fresh capture.
+			const again = controller.captureContinuity();
+			expect(continuity).toHaveLength(2);
+			continuity[1]!.resolve(continuitySnapshot("tip-a2"));
+			await again;
+			expect(controller.continuity).toMatchObject({ status: "captured", snapshot: continuitySnapshot("tip-a2") });
+			controller.dispose();
+		});
+
+		it("clears on a Session switch and never shows Session A's late capture under Session B", async () => {
+			const { controller, attachment, continuity, completeAttach } = fixture();
+			controller.select("a");
+			await completeAttach(0, "a");
+			const captured = controller.captureContinuity();
+			continuity[0]!.resolve(continuitySnapshot("tip-a"));
+			await captured;
+			expect(controller.continuity).toMatchObject({ status: "captured", sessionId: "a" });
+
+			// Requesting B clears A's capture at once, although Pi still reports A attached.
+			controller.select("b");
+			expect(attachment.value).toEqual({ status: "attached", sessionId: "a" });
+			expect(controller.continuity).toEqual({ status: "none" });
+			expect(controller.canCaptureContinuity).toBe(false);
+			await completeAttach(1, "b");
+			expect(controller.continuity).toEqual({ status: "none" });
+
+			// A capture started for B, then a late one for A (started before a switch back and forth): only B's shows.
+			const currentB = controller.captureContinuity();
+			continuity[1]!.resolve(continuitySnapshot("tip-b"));
+			await currentB;
+			expect(controller.continuity).toMatchObject({ status: "captured", sessionId: "b" });
+
+			const lateB = controller.captureContinuity();
+			attachment.set({ status: "attaching", sessionId: "a" });
+			expect(controller.continuity).toEqual({ status: "none" });
+			attachment.set({ status: "attached", sessionId: "a" });
+			continuity[2]!.resolve(continuitySnapshot("tip-b-late"));
+			await lateB;
+			expect(controller.continuity).toEqual({ status: "none" });
+			controller.dispose();
+		});
+
+		it("drops an in-flight capture on selection, detach, degradation and re-attach of the same Session", async () => {
+			const { controller, attachment, continuity, completeAttach } = fixture();
+			attachment.set({ status: "attached", sessionId: "a" });
+
+			// A selection of another Session starts while the capture is in flight.
+			const beforeSelect = controller.captureContinuity();
+			controller.select("b");
+			continuity[0]!.resolve(continuitySnapshot("tip-a"));
+			await beforeSelect;
+			expect(controller.continuity).toEqual({ status: "none" });
+			await completeAttach(0, "b");
+
+			// Detach and re-attach of the same Session before the late result arrives.
+			const beforeDetach = controller.captureContinuity();
+			attachment.set({ status: "detached" });
+			expect(controller.continuity).toEqual({ status: "none" });
+			attachment.set({ status: "attached", sessionId: "b" });
+			continuity[1]!.resolve(continuitySnapshot("tip-old-b"));
+			await beforeDetach;
+			expect(controller.continuity).toEqual({ status: "none" });
+
+			// Degradation of the same Session.
+			const beforeDegraded = controller.captureContinuity();
+			attachment.set({ status: "degraded", sessionId: "b" });
+			expect(controller.continuity).toEqual({ status: "none" });
+			continuity[2]!.resolve(continuitySnapshot("tip-degraded"));
+			await beforeDegraded;
+			expect(controller.continuity).toEqual({ status: "none" });
+
+			// A captured value is also cleared, not just hidden, when the attachment leaves attached.
+			attachment.set({ status: "attached", sessionId: "b" });
+			const kept = controller.captureContinuity();
+			continuity[3]!.resolve(continuitySnapshot("tip-b"));
+			await kept;
+			expect(controller.continuity).toMatchObject({ status: "captured" });
+			for (const state of [
+				{ status: "attaching", sessionId: "b" },
+				{ status: "degraded", sessionId: "b" },
+				{ status: "detached" },
+			] as const) {
+				attachment.set({ status: "attached", sessionId: "b" });
+				const next = controller.captureContinuity();
+				continuity.at(-1)!.resolve(continuitySnapshot("tip-b"));
+				await next;
+				expect(controller.continuity).toMatchObject({ status: "captured" });
+				attachment.set(state);
+				expect(controller.continuity).toEqual({ status: "none" });
+			}
+			controller.dispose();
+		});
+
+		it("is available only for a healthy attached Session with no selection pending", async () => {
+			const { controller, attachment, continuity } = fixture();
+			expect(controller.canCaptureContinuity).toBe(false);
+			await controller.captureContinuity();
+			for (const state of [
+				{ status: "attaching", sessionId: "a" },
+				{ status: "degraded", sessionId: "a" },
+			] as const) {
+				attachment.set(state);
+				expect(controller.canCaptureContinuity).toBe(false);
+				await controller.captureContinuity();
+			}
+			expect(continuity).toHaveLength(0);
+			expect(controller.continuity).toEqual({ status: "none" });
+
+			attachment.set({ status: "attached", sessionId: "a" });
+			expect(controller.canCaptureContinuity).toBe(true);
+			controller.select("b");
+			expect(controller.canCaptureContinuity).toBe(false);
+			await controller.captureContinuity();
+			expect(continuity).toHaveLength(0);
+			controller.dispose();
+			expect(controller.canCaptureContinuity).toBe(false);
+			await controller.captureContinuity();
+			expect(continuity).toHaveLength(0);
+		});
+
+		it("keeps a failure local and bounded, and a later capture can succeed", async () => {
+			const { controller, attachment, continuity, renders, flush } = fixture();
+			attachment.set({ status: "attached", sessionId: "a" });
+			flush();
+			renders.length = 0;
+			const failing = controller.captureContinuity();
+			continuity[0]!.reject(new Error("x".repeat(2_000)));
+			await failing;
+			expect(controller.continuity).toMatchObject({ status: "failed", sessionId: "a" });
+			const message = controller.continuity.status === "failed" ? controller.continuity.message : "";
+			expect(message.length).toBeLessThanOrEqual(501);
+			flush();
+			// Only the Continuity panel changes: no diagnostic, no attachment change.
+			expect(renders.every((regions) => [...regions].every((region) => region === "continuity"))).toBe(true);
+			expect(controller.diagnostics).toEqual([]);
+			expect(attachment.value).toEqual({ status: "attached", sessionId: "a" });
+			expect(controller.canCaptureContinuity).toBe(true);
+
+			const retry = controller.captureContinuity();
+			continuity[1]!.resolve(continuitySnapshot(null));
+			await retry;
+			expect(controller.continuity).toMatchObject({ status: "captured", snapshot: continuitySnapshot(null) });
+			controller.dispose();
+		});
+
+		it("drops a capture that finishes after dispose", async () => {
+			const { controller, attachment, continuity } = fixture();
+			attachment.set({ status: "attached", sessionId: "a" });
+			const pending = controller.captureContinuity();
+			controller.dispose();
+			continuity[0]!.resolve(continuitySnapshot("tip"));
+			await pending;
+			expect(controller.continuity).toEqual({ status: "capturing", sessionId: "a" });
 		});
 	});
 });

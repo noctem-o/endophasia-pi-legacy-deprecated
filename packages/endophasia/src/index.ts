@@ -1,5 +1,7 @@
-export type { ContinuityEntryV0, ContinuitySnapshotV0 } from "./continuity.ts";
 export { captureContinuityV0 } from "./continuity.ts";
+export { createEndophasiaContinuityFacetV0 } from "./continuity-facet.ts";
+export type { ContinuityEntryV0, ContinuitySnapshotV0 } from "./continuity-service.ts";
+export { CONTINUITY_REMOTE_BYTE_LIMIT, EndophasiaContinuityV0 } from "./continuity-service.ts";
 export type { ControlReceiptV0, ControlStateV0 } from "./control-deck.ts";
 export {
 	captureControlStateV0,

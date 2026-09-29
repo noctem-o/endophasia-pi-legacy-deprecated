@@ -8,6 +8,7 @@ import {
 	isDirectInternalProcessEntry,
 } from "@earendil-works/pi-coding-agent/experimental/process";
 import { runCodingAgentSessionWorker } from "@earendil-works/pi-coding-agent/experimental/session-worker";
+import { createEndophasiaContinuityFacetV0 } from "../src/continuity-facet.ts";
 import { createEndophasiaInspectorFacetV0 } from "../src/inspector-service.ts";
 import { createEndophasiaMissionTraceFacetV0 } from "../src/mission-trace-service.ts";
 import { createPiRuntimeObservationSourcesV0 } from "../src/pi-runtime-observation.ts";
@@ -15,9 +16,10 @@ import { createEndophasiaRuntimeFactsFacetV0 } from "../src/runtime-facts-servic
 import { createEndophasiaUsageFacetV0 } from "../src/usage-facet.ts";
 
 /**
- * Run the standard coding-agent Session worker with the read-only Endophasia Inspector, Mission Trace, Runtime Facts and
- * Usage as trusted host facets. This composition root is the one place that knows the worker's runtime is Pi: it
- * builds Pi's runtime observation capabilities and gives each facet only the capability it needs.
+ * Run the standard coding-agent Session worker with the read-only Endophasia Inspector, Mission Trace, Runtime Facts,
+ * Usage and Continuity as trusted host facets. This composition root is the one place that knows the worker's runtime
+ * is Pi: it builds Pi's runtime observation capabilities and gives each facet only the capability it needs.
+ * Continuity is Pi-backed by design and reads the main lane directly, not through a runtime observation port.
  */
 export function runEndophasiaSessionWorker(args: readonly string[]): Promise<void> {
 	return runCodingAgentSessionWorker(args, {
@@ -35,6 +37,8 @@ export function runEndophasiaSessionWorker(args: readonly string[]): Promise<voi
 					operationOutcome: pi.operationOutcome,
 				}),
 				createEndophasiaUsageFacetV0(pi.usage),
+				// Only the main lane's watch and findEntries reads, the capability Continuity v0 capture needs.
+				createEndophasiaContinuityFacetV0(main),
 			];
 		},
 	});

@@ -1,10 +1,11 @@
 // DOM-free Standard Cockpit v0 controller. Runtime and Session truth stays in the Presentation Client's replicated
 // states, which the renderer reads directly; the controller holds only presentation-local state: a pending
-// selection, the latest explicit Session Overview and Session Accounting captures and ephemeral diagnostics. Replicated-state updates only
-// mark regions dirty, and one scheduled frame renders each burst.
+// selection, the latest explicit Session Overview, Session Accounting and Continuity captures and ephemeral
+// diagnostics. Replicated-state updates only mark regions dirty, and one scheduled frame renders each burst.
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { EndophasiaPresentationClientV0 } from "../presentation/client.ts";
+import type { ContinuitySnapshotV0 } from "../src/continuity-service.ts";
 import type { MissionTraceObservationV0 } from "../src/mission-trace-service.ts";
 import type { RuntimeMetricsV0 } from "../src/runtime-facts-service.ts";
 import type { SessionOverviewV0 } from "../src/session-overview.ts";
@@ -24,10 +25,22 @@ export type CockpitPresentation = Pick<
 	| "detach"
 	| "sessionOverview"
 	| "runtimeMetrics"
+	| "continuitySnapshot"
 >;
 
-/** Mission Trace and Usage have their own regions: they can change far more often than the rest of the inspector. */
-export type CockpitRegion = "status" | "sessions" | "transcript" | "inspector" | "trace" | "usage" | "diagnostics";
+/**
+ * Mission Trace and Usage have their own regions: they can change far more often than the rest of the inspector.
+ * Continuity has its own region because a capture can hold many entries and changes only on explicit capture.
+ */
+export type CockpitRegion =
+	| "status"
+	| "sessions"
+	| "transcript"
+	| "inspector"
+	| "trace"
+	| "usage"
+	| "continuity"
+	| "diagnostics";
 
 /** Why the cockpit shows no Session state, for a live instrument that may only show the attached Session's own. */
 export type HiddenReason = "detached" | "switching" | "attaching" | "degraded" | "hydrating";
@@ -67,6 +80,19 @@ export type AccountingCapture =
 	  }
 	| { readonly status: "failed"; readonly sessionId: string; readonly message: string };
 
+/** The latest explicit Continuity capture of the attached Session's main lane. It is never refreshed implicitly. */
+export type ContinuityCapture =
+	| { readonly status: "none" }
+	| { readonly status: "capturing"; readonly sessionId: string }
+	| {
+			readonly status: "captured";
+			readonly sessionId: string;
+			readonly snapshot: ContinuitySnapshotV0;
+			/** When this cockpit received the capture; the snapshot itself carries no capture time. */
+			readonly capturedAt: number;
+	  }
+	| { readonly status: "failed"; readonly sessionId: string; readonly message: string };
+
 export interface Diagnostic {
 	readonly at: number;
 	readonly message: string;
@@ -91,6 +117,7 @@ const ALL_REGIONS: readonly CockpitRegion[] = [
 	"inspector",
 	"trace",
 	"usage",
+	"continuity",
 	"diagnostics",
 ];
 
@@ -112,6 +139,9 @@ export class CockpitController {
 	private accountingValue: AccountingCapture = { status: "none" };
 	/** Incremented whenever the observed Session changes or an accounting capture starts. */
 	private accountingGeneration = 0;
+	private continuityValue: ContinuityCapture = { status: "none" };
+	/** Incremented whenever the observed Session changes or a Continuity capture starts. */
+	private continuityGeneration = 0;
 	private observedSessionId: string | undefined;
 	private readonly diagnosticsValue: Diagnostic[] = [];
 
@@ -127,13 +157,13 @@ export class CockpitController {
 			connection.subscribe(() => this.invalidate("status", "inspector")),
 			attachment.subscribe(() => {
 				this.followAttachment();
-				this.invalidate("status", "sessions", "transcript", "inspector", "trace", "usage");
+				this.invalidate("status", "sessions", "transcript", "inspector", "trace", "usage", "continuity");
 			}),
 			sessions.subscribe(() => this.invalidate("sessions")),
 			transcript.subscribe(() => this.invalidate("transcript", "inspector")),
 			models.subscribe(() => this.invalidate("status", "inspector")),
 			missionTrace.subscribe(() => this.invalidate("trace")),
-			// A usage row redraws only Usage Activity; Session Accounting stays an explicit capture.
+			// A usage row redraws only Usage Activity; Session Accounting and Continuity stay explicit captures.
 			usage.subscribe(() => this.invalidate("usage")),
 		);
 		this.invalidate(...ALL_REGIONS);
@@ -159,6 +189,20 @@ export class CockpitController {
 			this.pending === undefined &&
 			attachedSessionId(this.presentation) !== undefined &&
 			this.accountingValue.status !== "capturing"
+		);
+	}
+
+	get continuity(): ContinuityCapture {
+		return this.continuityValue;
+	}
+
+	/** Whether a Continuity capture may start: Pi reports the Session attached and healthy, with no selection pending. */
+	get canCaptureContinuity(): boolean {
+		return (
+			!this.disposed &&
+			this.pending === undefined &&
+			attachedSessionId(this.presentation) !== undefined &&
+			this.continuityValue.status !== "capturing"
 		);
 	}
 
@@ -267,6 +311,34 @@ export class CockpitController {
 		this.setAccounting(next);
 	}
 
+	/**
+	 * Capture the attached Session's main-lane Continuity once, on explicit request. Nothing subscribes, polls or
+	 * refreshes it; a capture that finishes after the observed Session changed, or after a newer capture started, is
+	 * dropped. A failure stays in the Continuity panel and does not affect the attachment.
+	 */
+	async captureContinuity(): Promise<void> {
+		if (!this.canCaptureContinuity) return;
+		const sessionId = attachedSessionId(this.presentation);
+		if (sessionId === undefined) return;
+		const generation = ++this.continuityGeneration;
+		this.setContinuity({ status: "capturing", sessionId });
+		let next: ContinuityCapture;
+		try {
+			const snapshot = await this.presentation.continuitySnapshot(this.context);
+			next = { status: "captured", sessionId, snapshot, capturedAt: this.now() };
+		} catch (error) {
+			next = { status: "failed", sessionId, message: boundMessage(error) };
+		}
+		if (
+			this.disposed ||
+			generation !== this.continuityGeneration ||
+			attachedSessionId(this.presentation) !== sessionId
+		) {
+			return;
+		}
+		this.setContinuity(next);
+	}
+
 	/** Record an ephemeral presentation diagnostic. Never throws. */
 	report(error: unknown): void {
 		try {
@@ -302,8 +374,11 @@ export class CockpitController {
 
 	private async runSelection(sessionId: string): Promise<void> {
 		this.pending = sessionId;
+		// Pi still reports the previous Session attached until this attach completes; a Continuity capture of it is
+		// cleared, and one in flight is dropped, as soon as another Session is requested.
+		this.resetContinuity();
 		// The inspector shows the pending request and whether Detach is available.
-		this.invalidate("sessions", "status", "inspector", "trace", "usage");
+		this.invalidate("sessions", "status", "inspector", "trace", "usage", "continuity");
 		try {
 			await this.presentation.attach(sessionId, this.context);
 			if (this.queuedSelection === undefined) void this.refreshOverview();
@@ -311,7 +386,7 @@ export class CockpitController {
 			this.report(error);
 		} finally {
 			this.pending = undefined;
-			this.invalidate("sessions", "status", "inspector", "trace", "usage");
+			this.invalidate("sessions", "status", "inspector", "trace", "usage", "continuity");
 		}
 		const next = this.queuedSelection;
 		this.queuedSelection = undefined;
@@ -327,11 +402,23 @@ export class CockpitController {
 		this.overviewValue = { status: "none" };
 		this.accountingGeneration++;
 		this.accountingValue = { status: "none" };
+		this.resetContinuity();
+	}
+
+	/** Forget the Continuity capture, including one still in flight. */
+	private resetContinuity(): void {
+		this.continuityGeneration++;
+		this.continuityValue = { status: "none" };
 	}
 
 	private setAccounting(value: AccountingCapture): void {
 		this.accountingValue = value;
 		this.invalidate("inspector");
+	}
+
+	private setContinuity(value: ContinuityCapture): void {
+		this.continuityValue = value;
+		this.invalidate("continuity");
 	}
 
 	private setOverview(value: OverviewCapture): void {
