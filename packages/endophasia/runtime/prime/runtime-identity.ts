@@ -153,7 +153,8 @@ export async function readPrimeRuntimeIdentityV0(
 	}
 	const head = (await git(["rev-parse", "HEAD"]))?.trim();
 	const status = await git(["status", "--porcelain", "--untracked-files=no"]);
-	const commit = head !== undefined && /^[0-9a-f]{40}$/.test(head) ? head : undefined;
+	// A SHA-1 or SHA-256 object ID: git supports both object formats.
+	const commit = head !== undefined && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head) ? head : undefined;
 	const tree =
 		commit === undefined || status === undefined ? "unknown" : status.trim().length === 0 ? "clean" : "dirty";
 	return { version, installation, source: { ...(commit === undefined ? {} : { commit }), tree } };

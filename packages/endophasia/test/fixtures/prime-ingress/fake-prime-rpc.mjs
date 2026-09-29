@@ -68,6 +68,22 @@ function handle(command) {
 		case "wrong-command":
 			write(respond(command, { command: "get_messages" }));
 			return;
+		case "extension-ui":
+			// Prime opens a dialog and blocks on an extension_ui_response with the same ID; that response gets no reply.
+			if (command.type === "extension_ui_response") {
+				const { type, id, ...answer } = command;
+				write({ type: "ui_answered", id, answer });
+				return;
+			}
+			write({ type: "extension_ui_request", id: "ui-1", method: "confirm", title: SENTINEL.prompt });
+			write(respond(command));
+			return;
+		case "early-exit-descendant": {
+			// A descendant in the group that does not hold stdout; Prime itself exits normally when its input ends.
+			const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+			child.on("spawn", () => write(respond(command, { data: { descendant: child.pid } })));
+			return;
+		}
 		case "success-with-error":
 			write({ type: "response", id: command.id, command: command.type, success: true, error: SENTINEL.prompt });
 			write(respond(command));

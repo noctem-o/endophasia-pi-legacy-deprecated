@@ -69,6 +69,41 @@ function connect(mode: string, options: Partial<PrimeRpcConnectionOptionsV0> = {
 	return { connection, diagnostics, events };
 }
 
+/** Whether a process (or any member of a group) is running: zombies, which kill(pid, 0) still sees, do not count. */
+function running(target: { readonly pid: number } | { readonly group: number }): boolean {
+	try {
+		process.kill("pid" in target ? target.pid : -target.group, 0);
+	} catch {
+		return false;
+	}
+	let entries: string[];
+	try {
+		entries = readdirSync("/proc");
+	} catch {
+		return true;
+	}
+	return entries.some((entry) => {
+		try {
+			const stat = readFileSync(`/proc/${entry}/stat`, "utf8");
+			const [state, , group] = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+			const member = "pid" in target ? Number(entry) === target.pid : Number(group) === target.group;
+			return member && state !== "Z" && state !== "X";
+		} catch {
+			return false;
+		}
+	});
+}
+
+/** Wait up to 5 s for a process or group to stop running. */
+async function gone(target: { readonly pid: number } | { readonly group: number }): Promise<boolean> {
+	const deadline = Date.now() + 5_000;
+	while (running(target)) {
+		if (Date.now() > deadline) return false;
+		await new Promise((done) => setTimeout(done, 25));
+	}
+	return true;
+}
+
 const faults = (diagnostics: readonly PrimeRpcDiagnosticV0[]) =>
 	diagnostics.flatMap((diagnostic) => (diagnostic.kind === "protocol-fault" ? [diagnostic.fault] : []));
 
@@ -342,6 +377,18 @@ describe("Prime RPC connection: correlation", () => {
 			},
 		};
 		expect(await connection.request(shifting)).toMatchObject({ command: "get_state", data: { echoed: "get_state" } });
+		// `type` is read exactly once, including while the other fields are copied.
+		let typeReads = 0;
+		const once = {
+			get type(): string {
+				typeReads++;
+				if (typeReads > 1) throw new Error("PROMPT_SENTINEL read twice");
+				return "get_state";
+			},
+			payload: 1,
+		};
+		expect(await connection.request(once)).toMatchObject({ command: "get_state" });
+		expect(typeReads).toBe(1);
 		// A root toJSON could replace the checked type and assigned ID in what is written: it is refused unsent.
 		const observed: string[] = [];
 		connection.observeCommands((command) => observed.push(command.type));
@@ -561,17 +608,7 @@ describe("Prime RPC connection: lifecycle", () => {
 		const termination = await connection.close();
 		expect(termination.stdoutDrained).toBe(false);
 		expect(diagnostics).toContainEqual({ kind: "stdout-drain-timeout" });
-		const deadline = Date.now() + 5_000;
-		let alive = true;
-		while (alive && Date.now() < deadline) {
-			try {
-				process.kill(-pid, 0);
-				await new Promise((done) => setTimeout(done, 50));
-			} catch {
-				alive = false;
-			}
-		}
-		expect(alive).toBe(false);
+		expect(await gone({ group: pid })).toBe(true);
 	});
 
 	it("closes idempotently, and refuses requests while closing", async () => {
@@ -633,19 +670,21 @@ describe("Prime RPC connection: lifecycle", () => {
 				{ kind: "forced-termination", signal: "SIGTERM" },
 				{ kind: "forced-termination", signal: "SIGKILL" },
 			]);
-			const deadline = Date.now() + 5_000;
-			let alive = true;
-			while (alive && Date.now() < deadline) {
-				try {
-					process.kill(descendant, 0);
-					await new Promise((done) => setTimeout(done, 50));
-				} catch {
-					alive = false;
-				}
-			}
-			expect(alive).toBe(false);
+			expect(await gone({ pid: descendant })).toBe(true);
 		},
 	);
+
+	it.runIf(POSIX)("reaps a descendant left in the group when Prime exits by itself before escalation", async () => {
+		const { connection, diagnostics } = connect("early-exit-descendant", { closeTimeoutMs: 5_000 });
+		const response = await connection.request({ type: "get_state" });
+		const descendant = (response.data as { descendant: number }).descendant;
+		const started = Date.now();
+		const termination = await connection.close();
+		expect(termination.exit).toEqual({ code: 0, signal: null, spawnFailed: false });
+		expect(Date.now() - started).toBeLessThan(4_000);
+		expect(diagnostics[0]).toEqual({ kind: "forced-termination", signal: "SIGTERM" });
+		expect(await gone({ pid: descendant })).toBe(true);
+	});
 
 	it("reports a process that could not start, and rejects its requests", async () => {
 		const { connection } = connect("echo", {
@@ -656,6 +695,52 @@ describe("Prime RPC connection: lifecycle", () => {
 		expect((error as Error).message).toMatch(/^Prime RPC process could not start before responding to get_state/);
 		expect(await connection.exited).toEqual({ code: null, signal: null, spawnFailed: true });
 		expect(await connection.close()).toMatchObject({ exit: { spawnFailed: true } });
+	});
+});
+
+describe("Prime RPC connection: extension UI answers", () => {
+	it("answers a dialog with Prime's own request ID, as a write that expects no response", async () => {
+		const { connection, events } = connect("extension-ui");
+		const observed: string[] = [];
+		connection.observeCommands((command) => observed.push(`${command.type} ${command.id}`));
+		await connection.request({ type: "prompt", message: "hi" });
+		const dialog = events.find((event) => event.type === "extension_ui_request");
+		expect(dialog?.record.id).toBe("ui-1");
+		await connection.answerExtensionUi("ui-1", { confirmed: true });
+		await connection.answerExtensionUi("ui-1", { value: "Allow" });
+		await connection.answerExtensionUi("ui-1", { cancelled: true });
+		const deadline = Date.now() + 5_000;
+		while (events.filter((event) => event.type === "ui_answered").length < 3 && Date.now() < deadline) {
+			await new Promise((done) => setTimeout(done, 10));
+		}
+		expect(events.filter((event) => event.type === "ui_answered").map((event) => event.record)).toEqual([
+			{ type: "ui_answered", id: "ui-1", answer: { confirmed: true } },
+			{ type: "ui_answered", id: "ui-1", answer: { value: "Allow" } },
+			{ type: "ui_answered", id: "ui-1", answer: { cancelled: true } },
+		]);
+		expect(observed).toEqual([
+			"prompt endophasia-1",
+			"extension_ui_response ui-1",
+			"extension_ui_response ui-1",
+			"extension_ui_response ui-1",
+		]);
+	});
+
+	it("refuses malformed answers, and answers after close", async () => {
+		const { connection } = connect("extension-ui");
+		await expect(connection.answerExtensionUi("", { confirmed: true })).rejects.toThrow(
+			"An extension UI answer needs Prime's request ID",
+		);
+		for (const answer of [{ value: 1 }, { confirmed: "yes" }, { cancelled: false }, {}]) {
+			await expect(
+				connection.answerExtensionUi("ui-1", answer as unknown as { readonly cancelled: true }),
+			).rejects.toThrow("An extension UI answer is malformed");
+		}
+		const closing = connection.close();
+		await expect(connection.answerExtensionUi("ui-1", { cancelled: true })).rejects.toThrow(
+			"Prime RPC connection is closing; extension_ui_response was not sent",
+		);
+		await closing;
 	});
 });
 
@@ -799,6 +884,29 @@ describe("Prime runtime identity", () => {
 		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
 			commit,
 			tree: "dirty",
+		});
+	});
+
+	it.runIf(POSIX)("accepts a SHA-256 repository's commit", async () => {
+		const root = temporaryDirectory("prime-sha256-");
+		const home = temporaryDirectory("prime-git-home-");
+		const env = { PATH: process.env.PATH ?? "", HOME: home, GIT_CONFIG_NOSYSTEM: "1" };
+		const git = (...args: string[]) =>
+			execFileSync("git", ["-C", root, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+				env,
+				encoding: "utf8",
+			});
+		writeFileSync(join(root, "prime-agent.sh"), '#!/bin/sh\necho "0.9.6"\n');
+		chmodSync(join(root, "prime-agent.sh"), 0o755);
+		git("init", "-q", "--object-format=sha256");
+		git("add", "prime-agent.sh");
+		git("commit", "-q", "-m", "init");
+		const commit = git("rev-parse", "HEAD").trim();
+		expect(commit).toMatch(/^[0-9a-f]{64}$/);
+		const installation = resolvePrimeInstallationV0({ PRIME_AGENT_ROOT: root }, tmpdir()) as PrimeInstallationV0;
+		expect((await readPrimeRuntimeIdentityV0(installation, { env, cwd: tmpdir() })).source).toEqual({
+			commit,
+			tree: "clean",
 		});
 	});
 

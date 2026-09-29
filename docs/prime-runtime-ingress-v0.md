@@ -53,7 +53,7 @@ A production substrate built on the same transport can be checked against that e
 `readPrimeRuntimeIdentityV0` records which Prime is running:
 - the version from `--version`: a semver string standing alone as a word (optionally `v`-prefixed), so a versioned path such as `/opt/prime/1.2.3` is never read as a version. The output must name exactly one distinct version (a launcher that also prints its Node version is ambiguous and rejected). `--version` and the git reads are bounded: at the timeout the process group is killed and the read fails, even if the command ignores SIGTERM or a descendant holds its output open;
 - whether Prime is a standalone binary (`PRIME_AGENT_BIN`) or a source checkout (`PRIME_AGENT_ROOT`, launched through `prime-agent.sh`);
-- for a source checkout, the HEAD commit and whether tracked files are modified. The result is `clean`, `dirty` or `unknown`; untracked files do not count. Provenance is accepted only when git's top level is the configured root itself: a root that merely sits inside another repository reports `unknown`, never the ancestor's commit.
+- for a source checkout, the HEAD commit (a SHA-1 or SHA-256 object ID) and whether tracked files are modified. The result is `clean`, `dirty` or `unknown`; untracked files do not count. Provenance is accepted only when git's top level is the configured root itself: a root that merely sits inside another repository reports `unknown`, never the ancestor's commit.
 
 A binary never carries a commit, because its source commit is not knowable from outside and is not claimed.
 
@@ -107,6 +107,7 @@ ACP is excluded for the reason in section 2.
 
 **Commands** (`observeCommands`):
 - The connection is the sole stdin writer. Each command is announced synchronously as it is written, before any response or later event can arrive.
+- `answerExtensionUi(requestId, answer)` answers a dialog Prime opened with `extension_ui_request`. Prime blocks until an `extension_ui_response` with the same ID arrives and sends no reply to it (`prime:packages/coding-agent/src/modes/rpc/rpc-mode.ts:461-473`), so it is a write, not a request, and it keeps Prime's ID. The record is built only from the three answer shapes Prime accepts (`value`, `confirmed`, `cancelled: true`). The ingress still does not interpret the dialog.
 - This lets a future adapter know, in order, which aborts it sent itself.
 
 **Lifecycle**:
@@ -114,7 +115,7 @@ ACP is excluded for the reason in section 2.
 - `terminated` settles only when the process has exited and stdout has closed. Records written just before exit are still decoded, including a final record without an LF.
 - If Prime's stdin fails while it still runs (EPIPE), waiting requests reject at once and later requests are refused, with a `stdin-failure` diagnostic, instead of each waiting for its timeout.
 - If a descendant holds stdout open after exit, the drain is bounded by `drainGraceMs`. The process group is then killed, stdout is destroyed, and `terminated` reports `stdoutDrained: false`.
-- `close()` ends stdin and waits for `terminated`, even when the process already exited. If Prime does not exit within `closeTimeoutMs`, it sends SIGTERM to the process group, then SIGKILL two seconds later, reporting each as `forced-termination`. Once SIGTERM was sent, the SIGKILL stage still reaches the group when Prime itself exited but a descendant ignoring SIGTERM remains; `close()` resolves after it.
+- `close()` ends stdin and waits for `terminated`, even when the process already exited. If Prime does not exit within `closeTimeoutMs`, it sends SIGTERM to the process group, then SIGKILL two seconds later, reporting each as `forced-termination`. The connection owns the whole group: if anything in it is still running once Prime has exited (by itself or on SIGTERM), the group gets SIGTERM (unless it already did) and SIGKILL when the grace expires, and `close()` resolves after that. Where `/proc` exists, only live members count, since a killed descendant may stay a zombie when a container's PID 1 does not reap it.
 - Every `close()` call returns the same promise.
 - Tests confirm that no descendant outlives the connection.
 

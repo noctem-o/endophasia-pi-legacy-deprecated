@@ -3,6 +3,7 @@
 // no event: Prime's vocabulary stays raw here, for a Prime-specific semantic adapter above it to validate and map.
 // Node-side and Prime-specific; never part of the browser-facing contract surface.
 import { type ChildProcess, spawn } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
 import { encodePrimeJsonlRecordV0, PrimeJsonlDecoderV0, type PrimeJsonlFaultV0 } from "./jsonl.ts";
 import type { PrimeInstallationV0 } from "./runtime-identity.ts";
 
@@ -24,6 +25,7 @@ export interface PrimeRpcEventV0 {
 
 /** A command this connection wrote to Prime's stdin, observed synchronously as it is written. */
 export interface PrimeRpcSentCommandV0 {
+	/** The connection's request ID; for an `extension_ui_response`, Prime's request ID it answers. */
 	readonly id: string;
 	readonly type: string;
 }
@@ -253,7 +255,11 @@ export class PrimeRpcConnectionV0 {
 			// throwing getter) leaves no pending entry or timer behind. `type` is pinned to the value that was checked.
 			// A null-prototype envelope, and no own `toJSON`: JSON.stringify would call a root `toJSON` for the whole
 			// envelope, letting it replace the checked `type` and the assigned `id` with a command nobody is waiting for.
-			const envelope: Record<string, unknown> = Object.assign(Object.create(null), command, { type, id });
+			// The other fields are copied by key, skipping `type`, so its getter is never read a second time.
+			const envelope: Record<string, unknown> = Object.create(null);
+			envelope.type = type;
+			for (const key of Object.keys(command)) if (key !== "type") envelope[key] = command[key];
+			envelope.id = id;
 			if (Object.hasOwn(envelope, "toJSON")) {
 				return Promise.reject(new PrimeRpcErrorV0("A Prime RPC command must not define toJSON"));
 			}
@@ -261,18 +267,8 @@ export class PrimeRpcConnectionV0 {
 		} catch {
 			return Promise.reject(new PrimeRpcErrorV0("A Prime RPC command could not be serialized"));
 		}
-		if (this.#exit !== undefined) return Promise.reject(new PrimeRpcExitErrorV0(type, this.#exit));
-		if (this.#closing !== undefined) {
-			return Promise.reject(new PrimeRpcErrorV0(`Prime RPC connection is closing; ${type} was not sent`));
-		}
-		if (this.#stdinFailed) {
-			return Promise.reject(new PrimeRpcErrorV0(`Prime RPC input failed; ${type} was not sent`));
-		}
-		const backlog = this.#child.stdin?.writableLength ?? 0;
-		const maxBacklog = this.#options.maxInputBacklogBytes ?? DEFAULT_MAX_INPUT_BACKLOG_BYTES;
-		if (backlog + Buffer.byteLength(record) > maxBacklog) {
-			return Promise.reject(new PrimeRpcErrorV0(`Prime RPC input backlog is full; ${type} was not sent`));
-		}
+		const refusal = this.#refuseWrite(type, record);
+		if (refusal !== undefined) return Promise.reject(refusal);
 		this.#nextId++;
 		const timeoutMs = options.timeoutMs ?? this.#options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 		const response = new Promise<PrimeRpcResponseV0>((resolve, reject) => {
@@ -283,9 +279,66 @@ export class PrimeRpcConnectionV0 {
 			}, timeoutMs);
 			this.#pending.set(id, { command: type, resolve, reject, timer });
 		});
+		this.#write(id, type, record);
+		return response;
+	}
+
+	/**
+	 * Answer a dialog Prime opened with `extension_ui_request` (select, confirm, input, editor). Prime blocks until an
+	 * `extension_ui_response` carrying the same `id` arrives, and sends no response to it, so this is a write, not a
+	 * request: it resolves once the record is handed to stdin. The ID is Prime's, which is why it cannot go through
+	 * request(). The record is built field by field from the three shapes Prime accepts, nothing else.
+	 */
+	answerExtensionUi(
+		requestId: string,
+		answer: { readonly value: string } | { readonly confirmed: boolean } | { readonly cancelled: true },
+	): Promise<void> {
+		const type = "extension_ui_response";
+		let record: string;
+		try {
+			if (typeof requestId !== "string" || requestId.length === 0) {
+				return Promise.reject(new PrimeRpcErrorV0("An extension UI answer needs Prime's request ID"));
+			}
+			const fields: Record<string, unknown> =
+				"cancelled" in answer
+					? { cancelled: answer.cancelled }
+					: "confirmed" in answer
+						? { confirmed: answer.confirmed }
+						: { value: answer.value };
+			const [field, value] = Object.entries(fields)[0];
+			const valid =
+				(field === "cancelled" && value === true) ||
+				(field === "confirmed" && typeof value === "boolean") ||
+				(field === "value" && typeof value === "string");
+			if (!valid) return Promise.reject(new PrimeRpcErrorV0("An extension UI answer is malformed"));
+			record = encodePrimeJsonlRecordV0({ type, id: requestId, [field]: value });
+		} catch {
+			return Promise.reject(new PrimeRpcErrorV0("An extension UI answer could not be serialized"));
+		}
+		const refusal = this.#refuseWrite(type, record);
+		if (refusal !== undefined) return Promise.reject(refusal);
+		this.#write(requestId, type, record);
+		return Promise.resolve();
+	}
+
+	/** Why a record cannot be written now, if it cannot: the process is gone, closing, its input failed, or backlogged. */
+	#refuseWrite(type: string, record: string): Error | undefined {
+		if (this.#exit !== undefined) return new PrimeRpcExitErrorV0(type, this.#exit);
+		if (this.#closing !== undefined)
+			return new PrimeRpcErrorV0(`Prime RPC connection is closing; ${type} was not sent`);
+		if (this.#stdinFailed) return new PrimeRpcErrorV0(`Prime RPC input failed; ${type} was not sent`);
+		const backlog = this.#child.stdin?.writableLength ?? 0;
+		const maxBacklog = this.#options.maxInputBacklogBytes ?? DEFAULT_MAX_INPUT_BACKLOG_BYTES;
+		if (backlog + Buffer.byteLength(record) > maxBacklog) {
+			return new PrimeRpcErrorV0(`Prime RPC input backlog is full; ${type} was not sent`);
+		}
+		return undefined;
+	}
+
+	/** The only stdin write: every record is announced to command observers synchronously as it is written. */
+	#write(id: string, type: string, record: string): void {
 		this.#child.stdin?.write(record);
 		this.#notify(this.#commands, { id, type }, "command");
-		return response;
 	}
 
 	/**
@@ -312,11 +365,16 @@ export class PrimeRpcConnectionV0 {
 				return await this.terminated;
 			} finally {
 				clearTimeout(escalation);
-				// SIGTERM may end Prime while a descendant in its group ignores it. The escalation is for the whole group,
-				// so a surviving group still receives SIGKILL when the grace expires.
-				const deadline = sigkillAt;
-				if (deadline !== undefined && this.#groupAlive()) {
-					await new Promise((done) => setTimeout(done, Math.max(0, deadline - Date.now())));
+				// The connection owns Prime's whole process group. Prime may exit (by itself, or on SIGTERM) while a
+				// descendant that does not hold stdout lives on: the group then gets SIGTERM (unless it already did), and
+				// SIGKILL if anything is left when the grace expires.
+				if (this.#groupAlive()) {
+					if (sigkillAt === undefined) {
+						this.#diagnose({ kind: "forced-termination", signal: "SIGTERM" });
+						this.#killGroup("SIGTERM");
+						sigkillAt = Date.now() + TERMINATE_GRACE_MS;
+					}
+					while (this.#groupAlive() && Date.now() < sigkillAt) await new Promise((done) => setTimeout(done, 25));
 					this.#forceKill();
 				}
 			}
@@ -337,10 +395,12 @@ export class PrimeRpcConnectionV0 {
 		if (process.platform === "win32") return this.#exit === undefined;
 		try {
 			process.kill(-pid, 0);
-			return true;
 		} catch {
 			return false;
 		}
+		// A killed descendant whose parent already exited stays a zombie until init reaps it, and a container's PID 1
+		// may never do so; kill(-pgid, 0) still counts zombies. Where /proc exists, only a live member counts.
+		return liveGroupMember(pid) ?? true;
 	}
 
 	#onStdinFailure(): void {
@@ -513,4 +573,30 @@ function listenerErrorName(error: unknown): PrimeRpcListenerErrorNameV0 {
 	} catch {
 		return "other-error";
 	}
+}
+
+/**
+ * Whether process group `pgid` has a member that is not a zombie, from /proc (Linux). Undefined when /proc cannot be
+ * read, so the caller falls back to kill(-pgid, 0). A /proc/<pid>/stat line is "pid (comm) state ppid pgrp ...", where
+ * comm may itself contain spaces and parentheses, so the fields are read after the last ")".
+ */
+function liveGroupMember(pgid: number): boolean | undefined {
+	let entries: string[];
+	try {
+		entries = readdirSync("/proc");
+	} catch {
+		return undefined;
+	}
+	for (const entry of entries) {
+		if (!/^[0-9]+$/.test(entry)) continue;
+		let stat: string;
+		try {
+			stat = readFileSync(`/proc/${entry}/stat`, "utf8");
+		} catch {
+			continue; // The process ended while the directory was read.
+		}
+		const [state, , group] = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+		if (Number(group) === pgid && state !== "Z" && state !== "X") return true;
+	}
+	return false;
 }
