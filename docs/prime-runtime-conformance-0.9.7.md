@@ -83,7 +83,7 @@ The actual default CLI path connects to a daemon-owned runtime before entering e
 
 ACP session IDs identify the single client slot. In `close-recreate`, two different ACP UUIDs, prompt counter resets and producer sequence resets accompany **one durable file containing both exchanges**. `session/new` allocates a UUID and attaches to the existing connection; it does not create a new durable runtime Session. Thus neither ACP UUID nor `promptTurnId` is an Endophasia operation ID. Source comments call `eventSequence` connection-wide, but the producer is constructed per new slot and the live witness shows it restarting within the same process. Its scope is the producer/slot, not a durable session-global Usage cursor. The relevant producer code is [acp-mode.ts, lines 186–337](https://github.com/PrimeIntellect-ai/prime-agent/blob/08ff1b2e2794ea9e8f4a08d12bc95408a66e1074/packages/coding-agent/src/modes/acp/acp-mode.ts#L186); metadata declarations are [acp-meta.ts, lines 86–123](https://github.com/PrimeIntellect-ai/prime-agent/blob/08ff1b2e2794ea9e8f4a08d12bc95408a66e1074/packages/coding-agent/src/modes/acp/acp-meta.ts#L86).
 
-`session/load` returns JSON-RPC `-32601`. A second simultaneous slot creation and a prompt for an unknown slot return `-32603`. These are observed request errors, not Endophasia declined operation records. No history/tail/page API is exposed by these ACP operations.
+`session/load` returns JSON-RPC `-32601`. A second slot creation while the first slot is occupied and a prompt for an unknown slot return `-32603`. These are observed request errors, not Endophasia declined operation records. No history/tail/page API is exposed by these ACP operations.
 
 ## Delta table
 
