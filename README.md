@@ -163,6 +163,21 @@ A receipt records runtime acceptance. It does not claim that the runtime consume
 
 DEVELOP and EVOLVE describe what the user is doing. They do not select a fixed runtime.
 
+~~~text
+DEVELOP
+  current-session cognition and control
+
+EVOLVE
+  candidate experiments
+  harness and policy evolution
+  agentic RL
+  RSI-style adaptation
+  evaluation and held-out testing
+  evidence and promotion gates
+~~~
+
+The EVOLVE lines above describe the intended experiment space, not a claim that every mechanism is implemented today. Agentic RL and RSI-style adaptation should remain optional providers behind the same experiment, evaluation, evidence, and promotion contracts.
+
 ### Develop
 
 DEVELOP covers the current piece of work.
