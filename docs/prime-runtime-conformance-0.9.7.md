@@ -9,8 +9,8 @@ This document supplements [the historical 0.9.6 audit](prime-runtime-conformance
 - Endophasia main/base: `08068242aa5e115ea947e996b88b11107eea9a0d`, the merge of PR #25. The isolated research branch is `research/prime-0.9.7-conformance`.
 - Historical Prime source: `2d24ad4e6b2d1ee8e6919af6f108e980a14d550e`, version `0.9.6`, probe `0.13.0`.
 - Audited Prime source/tag: [`08ff1b2e2794ea9e8f4a08d12bc95408a66e1074`](https://github.com/PrimeIntellect-ai/prime-agent/tree/08ff1b2e2794ea9e8f4a08d12bc95408a66e1074), `v0.9.7`, [release dated 2026-09-28](https://github.com/PrimeIntellect-ai/prime-agent/releases/tag/v0.9.7).
-- Research probe: `prime-conformance-v0`, `0.14.1`; environment `linux-x64`, Node `v26.10.0`.
-- Clean Endophasia instrument at capture: `332784e05bf47aad0795f2299a3475f210f48b0a`; source SHA-256: `d2ab80a4797b149c58bc5f9f18b8d426fdcf7eb2078856ddcdcc3d80123fb204`.
+- Research probe: `prime-conformance-v0`, `0.14.2`; environment `linux-x64`, Node `v26.10.0`.
+- Clean Endophasia instrument at capture: `ce66a7479d19b919d02149f2c84ce5390c5cd369`; source SHA-256: `47a871267d84bd9f919e17f52e29790a1245af46473de53df7317ec883a712e2`.
 - Actual launcher: the pinned checkout's `prime-agent.sh`, with no leading arguments; its default source CLI loads compiled workspace dependencies. Both `--mode rpc` and `--mode acp` use that same launcher/build.
 - Fresh build output SHA-256 (`packages/*/dist`, sorted paths and bytes): `a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6`.
 - Launcher SHA-256: `0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d`.
@@ -89,6 +89,21 @@ Probe 0.14.1 remediates the seven Codex findings with explicit attacks in `prime
 | P2 offline canonicalization | Joint report construction orders RPC by its declared invariant scenario list and ACP by `ACP_SCENARIOS`. Reversed inputs and fixture creation order produce the same report; the actual offline command reproduces committed `report.json` byte-for-byte with normal LF formatting. Historical baseline ordering remains unchanged. |
 
 The entire 0.14.0 reference was replaced by a fresh 0.14.1 live run after offline hostile checks passed. No old fixture was retagged. Test-only synthetic controls let those mutation checks run before refresh; they are never written as audited reference evidence.
+
+Probe 0.14.2 addresses the eight additional findings from the review of `326b38ece8`, with explicit mutations in `prime-097-review2.test.ts`:
+
+| Finding | Hardened boundary and regression witness |
+| --- | --- |
+| P1 audited artifact identity | The 0.9.7 profile pins exact artifact, launcher and lock hashes. Uniform forged hashes across all 27 scenarios withdraw audited classifications and refuse publication. Historical 0.9.6 coordinates are unchanged. |
+| P1 approved scalar/list slots | Every retained string has a finite approved vocabulary or an identity grammar; descriptions must equal the declared scenario description. All string and list-string slots, including initially empty diagnostic/Usage/meta lists and arbitrary flag keys, reject non-sentinel private text before any write. Raw RPC failures/protocol diagnostics are reduced to closed categories; unknown new names require schema review. Numeric drift and safe scenario failures remain inspectable. |
+| P2 session/prompt command witnesses | Successful session creation records the returned UUID. Every prompt command records its requested slot and local ordinal; close records the requested slot. The complete ordered serial request transcript must match initialization, creation/recreation, recorded prompt results and close. Missing, duplicate, swapped-slot, wrong-ordinal and wrong-response mutations fail. |
+| P2 unsupported request coverage | The ordered rejected requests must be occupied `session/new/-32603`, current-slot `session/load/-32601`, and unknown-slot `session/prompt/-32603`. Method, code, slot, missing and duplicate mutations fail. |
+| P2 initialize consistency | All scenarios must agree on the complete sanitized initializer, independent of inventory/map ordering. A later changed advertisement invalidates the joint set; the report retains every scenario's initializer and omits a global initializer on disagreement. Consistent changed booleans remain inspectable and do not admit capabilities. |
+| P2 bilateral metadata | Every retained mandatory/optional metadata field must be present in `metaKeys`, and every recorded known metadata key must have its corresponding value. Missing keys, missing values and invented optional keys fail for outcome, terminal promise, autonomy, quiescence and compaction. |
+| P3 requirement version | The current audited requirement derives its probe text from `PROBE_VERSION`; a withdrawn audit names the actual current version. Historical requirement semantics remain unchanged. |
+| P2 indivisible report publication | A complete valid historical baseline is mandatory and assessed before creating a directory. Missing, empty, partial and private-content baselines refuse publication on both fresh and existing references; the existing report and fixture set remain in place. |
+
+The complete 0.14.1 set was replaced by a fresh 0.14.2 measurement after the offline attacks passed. No old fixture was retagged. The audited subject hashes are exact accepted build coordinates, not an assertion that hashes alone prove how a build was produced.
 
 ## ACP protocol, initialization and identity
 
@@ -210,10 +225,10 @@ PRIME_AGENT_ROOT=/absolute/path/to/clean-built-prime-agent npm run check:prime-c
 
 ## Validation result
 
-The fresh 0.14.1 live run on 2026-09-30 exercised all 12 RPC and 15 ACP scenarios against exact freshly rebuilt Prime `08ff1b2e2794ea9e8f4a08d12bc95408a66e1074`. Both pre/post checks verified clean Endophasia instrument `332784e05bf47aad0795f2299a3475f210f48b0a` and identical source hash `d2ab80a4797b149c58bc5f9f18b8d426fdcf7eb2078856ddcdcc3d80123fb204`. The joint gate returned `invalid=[]`, `unpublishable=[]`; the complete fixture set and report were atomically replaced. Offline command output is byte-identical to committed `report.json` (SHA-256 `98acd659525a60f3a1759716ae01729839486cd7ff00508c5c2d0cb89f46c4b1`). Recomputed RPC/ACP/durable support, semantic fit and basis for every capability match the previous matrix; `candidateForPR27=[]` remains evidence-derived. The subsequent fixture/documentation commit does not change executable source.
+The fresh 0.14.2 live run on 2026-09-30 exercised all 12 RPC and 15 ACP scenarios against exact freshly rebuilt Prime `08ff1b2e2794ea9e8f4a08d12bc95408a66e1074`. Both pre/post checks verified clean Endophasia instrument `ce66a7479d19b919d02149f2c84ce5390c5cd369` and identical source hash `47a871267d84bd9f919e17f52e29790a1245af46473de53df7317ec883a712e2`. The joint gate returned `invalid=[]`, `unpublishable=[]`; the complete fixture set and report were atomically replaced. Offline command output is byte-identical to committed `report.json` (SHA-256 `be7ae01399db7833ce922af347fd8b43c5228caa51b644be3bba6d025a7df67e`). Recomputed RPC/ACP/durable support, semantic fit and basis for every capability match the previous matrix; `candidateForPR27=[]` remains evidence-derived. The subsequent fixture/documentation commit does not change executable source.
 
-- Full `@endophasia/core`: 35 files passed, 875 tests passed, 2 existing tests skipped.
-- Focused Prime offline suites, hostile mutations and research boundary guards: 395 tests passed across 6 files. Before the live refresh, the five suites that do not require the replacement fixture identity passed 305 tests.
+- Full `@endophasia/core`: 36 files passed, 1010 tests passed, 2 existing tests skipped.
+- Focused Prime offline suites, hostile mutations and research boundary guards: 530 tests passed across 7 files. Before the live refresh, the six suites that do not require the replacement fixture identity passed 440 tests.
 - Core build, offline report regeneration, browser smoke, Cockpit check, pinned/runtime dependency checks, TypeScript import checks, entry-graph budgets, shrinkwrap/install-lock checks, Biome and whitespace checks passed.
 - Root `npm run check` reaches TypeScript and fails on ten existing `moonshotai/Kimi-K2.6` model-catalog type errors. The exact base was checked in a separate detached worktree with the same dependency/model-data environment. Its diagnostics and the candidate diagnostics are byte-for-byte equal. There are no new root TypeScript errors; no unrelated catalog cleanup was made. Browser/Cockpit checks were run separately because the root command stops at that known failure.
 
