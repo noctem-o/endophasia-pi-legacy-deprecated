@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AcpScenarioEvidence } from "../research/prime-conformance/acp-evidence.ts";
+import { AUDITED_INSTRUMENT_097 } from "../research/prime-conformance/audited.ts";
 import { PROBE_VERSION } from "../research/prime-conformance/evidence.ts";
 import { readPrimeFixturesV0 } from "../research/prime-conformance/report.ts";
 
@@ -16,7 +17,11 @@ export function controls() {
 	);
 	const legacy = rpc[0]!.provenance.probeVersion !== PROBE_VERSION;
 	for (const run of legacy ? [...rpc, ...acp] : [])
-		Object.assign(run.provenance, { probeVersion: PROBE_VERSION, endophasiaBuild: "clean-checkout" });
+		Object.assign(run.provenance, {
+			probeVersion: PROBE_VERSION,
+			researchHash: AUDITED_INSTRUMENT_097.researchHash,
+			endophasiaBuild: "clean-checkout",
+		});
 	for (const run of legacy ? acp : []) {
 		let session = 0;
 		let ordinal = 0;

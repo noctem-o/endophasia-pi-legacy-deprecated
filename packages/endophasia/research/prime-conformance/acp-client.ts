@@ -26,6 +26,8 @@ export class ResearchAcpClient {
 	#exit: PrimeProcessExitV0 | undefined;
 	#recordBytes = 0;
 	#closing: Promise<PrimeProcessExitV0> | undefined;
+	#reading = true;
+	#drainTimedOut = false;
 	constructor(options: {
 		command: string;
 		args: readonly string[];
@@ -41,13 +43,25 @@ export class ResearchAcpClient {
 			stderr: "ignore",
 		});
 		this.#group.stdin?.on("error", () => this.#fail("ACP input closed"));
-		this.#ended = new Promise((resolve) =>
-			this.#group.stdout?.once("end", () => {
-				this.#receive(this.#decoder.end(), options.onUpdate);
+		this.#ended = new Promise((resolve) => {
+			const output = this.#group.stdout;
+			if (!output) {
 				resolve();
-			}),
-		);
+				return;
+			}
+			output.once("end", () => {
+				if (this.#reading) this.#receive(this.#decoder.end(), options.onUpdate);
+				this.#reading = false;
+				resolve();
+			});
+			output.once("error", () => {
+				if (this.#reading) this.#fail("ACP stdout read failed");
+				this.#reading = false;
+				resolve();
+			});
+		});
 		this.#group.stdout?.on("data", (bytes: Buffer) => {
+			if (!this.#reading) return;
 			for (const byte of bytes) {
 				this.#recordBytes = byte === 10 ? 0 : this.#recordBytes + 1;
 				if (this.#recordBytes > 8 * 1024 * 1024) {
@@ -141,6 +155,9 @@ export class ResearchAcpClient {
 			});
 		});
 	}
+	get drainTimedOut(): boolean {
+		return this.#drainTimedOut;
+	}
 	close(): Promise<PrimeProcessExitV0> {
 		this.#closing ??= (async () => {
 			this.#group.stdin?.end();
@@ -148,7 +165,23 @@ export class ResearchAcpClient {
 			try {
 				const exit = await this.#group.exited;
 				await this.#group.release();
-				await this.#ended;
+				let drainTimer: ReturnType<typeof setTimeout> | undefined;
+				try {
+					const drained = await Promise.race([
+						this.#ended.then(() => true),
+						new Promise<boolean>((resolve) => {
+							drainTimer = setTimeout(() => resolve(false), 2_000);
+						}),
+					]);
+					if (!drained) {
+						this.#drainTimedOut = true;
+						this.#reading = false;
+						this.#fail("ACP stdout did not drain after process exit");
+						this.#group.stdout?.destroy();
+					}
+				} finally {
+					clearTimeout(drainTimer);
+				}
 				return exit;
 			} finally {
 				clearTimeout(timer);

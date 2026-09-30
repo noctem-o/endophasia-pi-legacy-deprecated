@@ -1,8 +1,8 @@
 // Re-check persisted, sanitized ACP evidence. Correlation is scoped to the ACP slot, never a durable operation.
-import { type AcpScenarioEvidence, acpObject, acpSessionId } from "./acp-evidence.ts";
+import { ACP_NAMESPACE, type AcpScenarioEvidence, acpObject, acpSessionId } from "./acp-evidence.ts";
 import { ACP_SCENARIOS } from "./acp-probe.ts";
 import { PROBE_MODEL_COST } from "./environment.ts";
-import { entryProblems } from "./evidence.ts";
+import { assertRequiredProvenance, entryProblems } from "./evidence.ts";
 import { expectedPrimeUsageV0 } from "./fake-provider.ts";
 import { assertPrivacyDomains } from "./privacy-domains.ts";
 import type { PrimeUsageEvidenceV0 } from "./protocol.ts";
@@ -74,6 +74,7 @@ export function acpPrivacyShapeProblems(value: unknown): string[] {
 			"scenario",
 		]);
 		tag(p.mode, ["acp"]);
+		assertRequiredProvenance(p, "acp");
 		for (const key of Object.keys(p)) if (typeof p[key] !== "string") throw new Error("provenance string required");
 		if (v.initialize !== undefined) {
 			const init = closed(v.initialize, [
@@ -245,6 +246,29 @@ export function acpEvidenceProblems(value: unknown): string[] {
 
 export function acpScenarioProblems(run: AcpScenarioEvidence): string[] {
 	const problems: string[] = [];
+	const init = run.initialize;
+	if (init) {
+		const inventories = [init.agentInfoKeys, init.metaNamespaces, init.primeMetaKeys, init.capabilityFields];
+		if (
+			inventories.some((keys) => new Set(keys).size !== keys.length) ||
+			!["name", "version"].every((key) => init.agentInfoKeys.includes(key)) ||
+			!init.metaNamespaces.includes(ACP_NAMESPACE)
+		)
+			problems.push("ACP initialize inventories contradict retained identity/metadata");
+		// Every boolean comes from a visited leaf, and every nested field has visited nonboolean parent groups.
+		const flags = Object.keys(init.capabilityFlags);
+		for (const field of [...flags, ...init.capabilityFields]) {
+			const parts = field.split(".");
+			if (
+				!init.capabilityFields.includes(field) ||
+				parts.slice(0, -1).some((_, i) => {
+					const parent = parts.slice(0, i + 1).join(".");
+					return !init.capabilityFields.includes(parent) || flags.includes(parent);
+				})
+			)
+				problems.push("ACP capability fields contradict boolean/group traversal");
+		}
+	}
 	const scenario = ACP_SCENARIOS.find((s) => s.name === run.provenance.scenario);
 	if (!scenario) return ["unknown ACP scenario"];
 	const expectedPrompts = scenario.markers.length + (scenario.name === "compaction" ? 1 : 0);
@@ -308,6 +332,20 @@ export function acpScenarioProblems(run: AcpScenarioEvidence): string[] {
 	const sequences = new Map<string, number>();
 	const tools = new Map<string, string>();
 	for (const u of run.updates) {
+		if (
+			new Set(u.keys).size !== u.keys.length ||
+			!["sessionUpdate", "_meta"].every((field) => u.keys.includes(field)) ||
+			(["agent_message_chunk", "agent_thought_chunk"].includes(u.kind) && !u.keys.includes("content"))
+		)
+			problems.push("ACP update keys contradict retained wire observations");
+		for (const [field, wire] of [
+			["toolCallId", "toolCallId"],
+			["toolKind", "kind"],
+			["status", "status"],
+			["messageId", "messageId"],
+		] as const)
+			if (u.keys.includes(wire) !== (u[field] !== undefined))
+				problems.push("ACP update keys contradict retained wire observations");
 		if (!run.sessionIds.includes(u.sessionId)) problems.push("ACP update names an unknown session");
 		if (u.eventSequence !== (sequences.get(u.sessionId) ?? 0) + 1)
 			problems.push("ACP producer sequence repeats or has a gap");

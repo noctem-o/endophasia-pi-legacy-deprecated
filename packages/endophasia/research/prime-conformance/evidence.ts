@@ -5,7 +5,28 @@
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.14.2";
+export const PROBE_VERSION = "0.14.3";
+
+/** Required on every sanitized scenario, including diagnostics. Optional build identities remain separate. */
+export function assertRequiredProvenance(value: unknown, mode: "rpc" | "acp"): void {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("provenance required");
+	const p = value as Record<string, unknown>;
+	for (const key of [
+		"source",
+		"version",
+		"build",
+		"mode",
+		"generatedBy",
+		"probeVersion",
+		"platform",
+		"node",
+		"scenario",
+	])
+		if (!Object.hasOwn(p, key) || typeof p[key] !== "string" || p[key].length === 0)
+			throw new Error("required provenance field missing");
+	if (p.source !== "prime-agent" || p.generatedBy !== PROBE_NAME || p.mode !== mode)
+		throw new Error("provenance boundary mismatch");
+}
 
 /**
  * How the Prime that ran is known:

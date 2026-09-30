@@ -1,13 +1,23 @@
 // Offline ACP transport adversary. Never imports or launches Prime.
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 const mode = process.argv[2];
+if (mode === "hold-stdout") {
+ setTimeout(() => process.exit(0), 8_000);
+} else {
 const lines = createInterface({ input: process.stdin });
 const write = (v) => process.stdout.write(`${JSON.stringify(v)}\n`);
 lines.on("line", (line) => {
 	const request = JSON.parse(line);
 	if (request.id === undefined) return;
 	const response = { jsonrpc: "2.0", id: request.id, result: { ok: true } };
-	if (mode === "exit") process.exit(7);
+	if (mode === "descendant-stdout") {
+ const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "hold-stdout"], { detached: true, stdio: ["ignore", "inherit", "ignore"] });
+ child.unref();
+ child.once("spawn", () => { write({ ...response, result: { descendantPid: child.pid } }); process.exit(0); });
+}
+else if (mode === "exit") process.exit(7);
 	else if (mode === "duplicate") { write(response); write(response); }
 	else if (mode === "unknown-id") write({ ...response, id: 999 });
 	else if (mode === "ambiguous") write({ ...response, error: { code: -1, message: "private" } });
@@ -23,3 +33,5 @@ lines.on("line", (line) => {
 	else if (mode === "bad-update") write({ jsonrpc: "2.0", method: "session/update", params: {} });
 	else write(response);
 });
+
+}
