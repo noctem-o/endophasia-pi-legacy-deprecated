@@ -1,5 +1,5 @@
 // Every test uses committed, payload-minimal evidence. Normal CI never resolves or executes Prime.
-import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +18,7 @@ import {
 } from "../research/prime-conformance/comparison.ts";
 import type { PrimeProvenanceV0, PrimeScenarioEvidenceV0 } from "../research/prime-conformance/evidence.ts";
 import { SENTINELS } from "../research/prime-conformance/fake-provider.ts";
+import { researchInstrumentHash } from "../research/prime-conformance/instrument.ts";
 import { scenarioInvariantProblemsV0 } from "../research/prime-conformance/invariants.ts";
 import {
 	buildPrimeConformanceReportV0,
@@ -45,7 +46,7 @@ describe("audited historical/current profiles", () => {
 		expect(baseline.every((r) => r.provenance.probeVersion === "0.13.0" && auditedProvenance(r.provenance))).toBe(
 			true,
 		);
-		expect(rpc.every((r) => r.provenance.probeVersion === "0.14.0" && auditedProvenance(r.provenance))).toBe(true);
+		expect(rpc.every((r) => r.provenance.probeVersion === "0.14.1" && auditedProvenance(r.provenance))).toBe(true);
 		for (const set of [baseline, rpc])
 			expect(buildPrimeConformanceReportV0(set).findings.every((f) => f.basis === "established")).toBe(true);
 		expect(buildPrimeConformanceReportV0(rpc, { reference: baseline[0]!.provenance }).drift).toMatchObject({
@@ -55,17 +56,7 @@ describe("audited historical/current profiles", () => {
 		});
 	});
 	it("binds the captured research build to the committed probe source", () => {
-		const dir = fileURLToPath(new URL("../research/prime-conformance", import.meta.url));
-		const hash = createHash("sha256")
-			.update(
-				readdirSync(dir)
-					.filter((name) => name.endsWith(".ts"))
-					.sort()
-					.map((name) => `${name}\0${readFileSync(join(dir, name), "utf8")}\0`)
-					.join(""),
-			)
-			.digest("hex");
-		expect(rpc[0]!.provenance.researchHash).toBe(hash);
+		expect(rpc[0]!.provenance.researchHash).toBe(researchInstrumentHash());
 	});
 	it.each([
 		["same version, wrong commit", { commit: "0".repeat(40) }],
@@ -73,6 +64,9 @@ describe("audited historical/current profiles", () => {
 		["historical probe on new version", { probeVersion: "0.13.0" }],
 		["missing artifact identity", { artifactsHash: undefined }],
 		["missing research identity", { researchHash: undefined }],
+		["dirty Endophasia instrument", { endophasiaBuild: "dirty-checkout" }],
+		["missing Endophasia cleanliness", { endophasiaBuild: undefined }],
+		["old 0.14.0 instrument", { probeVersion: "0.14.0" }],
 		["dirty checkout", { build: "dirty-checkout" }],
 		["unknown checkout", { build: "unverified-checkout" }],
 		["unverified executable", { build: "binary", commit: undefined }],
@@ -97,6 +91,21 @@ describe("audited historical/current profiles", () => {
 });
 
 describe("committed 0.9.7 evidence and capability matrix", () => {
+	it("offline regeneration is byte-identical, including with reversed boundary inputs", () => {
+		const committed = readFileSync(join(root, "0.9.7", "report.json"), "utf8").replace(/\r\n/g, "\n");
+		for (const [r, a] of [
+			[rpc, acp],
+			[[...rpc].reverse(), [...acp].reverse()],
+		] as const)
+			expect(`${JSON.stringify(buildPrime097Report(r, a, baseline), null, "\t")}\n`).toBe(committed);
+		expect(
+			execFileSync(
+				process.execPath,
+				[fileURLToPath(new URL("../research/prime-conformance/offline-097.ts", import.meta.url))],
+				{ encoding: "utf8" },
+			),
+		).toBe(committed);
+	});
 	it.each(rpc.map((r) => [r.provenance.scenario, r] as const))(
 		"RPC %s retains every old scenario invariant",
 		(_name, run) => expect(scenarioInvariantProblemsV0(run)).toEqual([]),

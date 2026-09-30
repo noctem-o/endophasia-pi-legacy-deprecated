@@ -12,7 +12,7 @@ import {
 import { join } from "node:path";
 import type { AcpScenarioEvidence } from "./acp-evidence.ts";
 import { ACP_SCENARIOS } from "./acp-probe.ts";
-import { acpEvidenceProblems, acpUsageScriptMatches } from "./acp-validation.ts";
+import { acpEvidenceProblems, acpPrivacyShapeProblems, acpUsageScriptMatches } from "./acp-validation.ts";
 import { auditedProvenance, PRIME_097 } from "./audited.ts";
 import type { PrimeScenarioEvidenceV0 } from "./evidence.ts";
 import { PROBE_NAME, PROBE_VERSION } from "./evidence.ts";
@@ -76,6 +76,8 @@ export function assessPrime097(
 ): PrimeEvidenceAssessmentV0 {
 	const invalid: string[] = rpc.flatMap(rpcPrivacyShapeProblems);
 	const unpublishable: string[] = [];
+	invalid.push(...acp.flatMap(acpPrivacyShapeProblems));
+	if (invalid.length) return { invalid: [...new Set(invalid)], unpublishable };
 	try {
 		const report = buildPrimeConformanceReportV0(rpc);
 		const assessment = assessPrimeEvidenceV0({ report, requestedScenarios: SCENARIO_NAMES_WITH_INVARIANTS });
@@ -131,6 +133,12 @@ export function buildPrime097Report(
 	acp: readonly AcpScenarioEvidence[],
 	baseline: readonly PrimeScenarioEvidenceV0[],
 ) {
+	// Canonicalize at construction, regardless of live execution, filesystem or caller order.
+	rpc = canonicalScenarios(rpc, SCENARIO_NAMES_WITH_INVARIANTS);
+	acp = canonicalScenarios(
+		acp,
+		ACP_SCENARIOS.map((s) => s.name),
+	);
 	const assessment = assessPrime097(rpc, acp);
 	const rpcReport = buildPrimeConformanceReportV0(rpc, { reference: baseline[0]?.provenance });
 	const oldReport = buildPrimeConformanceReportV0(baseline);
@@ -178,7 +186,13 @@ export function buildPrime097Report(
 				semanticFit: ["RuntimeMetricsV0", "UsageLedgerRowV0", "ContinuitySnapshotV0"].includes(contract)
 					? "qualified"
 					: "incompatible",
-				basis: !facts.providerUsageDecodedExactly ? "contradicted" : established ? "established" : "unverified",
+				basis:
+					(contract === "RuntimeMetricsV0" || contract === "UsageLedgerRowV0") &&
+					!facts.providerUsageDecodedExactly
+						? "contradicted"
+						: established
+							? "established"
+							: "unverified",
 				exactProjection: "unverified",
 				boundary: "durable-session-files, separately observed",
 			},
@@ -224,6 +238,19 @@ export function buildPrime097Report(
 		],
 	};
 	return { ...report, privacyViolations: scanForSentinelsV0("comparison report", report) };
+}
+
+function canonicalScenarios<T extends { provenance: { scenario: string } }>(
+	runs: readonly T[],
+	names: readonly string[],
+): T[] {
+	return [...runs].sort((a, b) => {
+		const rank = (name: string) => (names.includes(name) ? names.indexOf(name) : names.length);
+		return (
+			rank(a.provenance.scenario) - rank(b.provenance.scenario) ||
+			a.provenance.scenario.localeCompare(b.provenance.scenario)
+		);
+	});
 }
 
 export function readAcpFixtures(directory: string): AcpScenarioEvidence[] {

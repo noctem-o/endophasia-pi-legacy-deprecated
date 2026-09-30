@@ -5,7 +5,7 @@
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.14.0";
+export const PROBE_VERSION = "0.14.1";
 
 /**
  * How the Prime that ran is known:
@@ -35,6 +35,7 @@ export interface PrimeProvenanceV0 {
 	readonly node: string;
 	/** Research source revision, distinct from Prime and from a production composition. */
 	readonly endophasiaCommit?: string;
+	readonly endophasiaBuild?: string;
 	readonly researchHash?: string;
 	/** Hash of the exact launcher and dependency lock used with the freshly built artifacts. */
 	readonly launcherHash?: string;

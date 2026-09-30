@@ -129,8 +129,17 @@ export class ResearchAcpClient {
 			this.#group.stdin?.write(encodeJsonlRecordV0({ jsonrpc: "2.0", id, method, params }));
 		});
 	}
-	notify(method: string, params: Record<string, unknown>): void {
-		this.#group.stdin?.write(encodeJsonlRecordV0({ jsonrpc: "2.0", method, params }));
+	/** Resolves on the local Writable callback; JSON-RPC notifications have no remote response. */
+	notify(method: string, params: Record<string, unknown>): Promise<void> {
+		const input = this.#group.stdin;
+		if (this.#exit !== undefined || this.#closing !== undefined || !input || input.destroyed || input.writableEnded)
+			return Promise.reject(new PrimeDecodeError("ACP connection closed"));
+		return new Promise((resolve, reject) => {
+			input.write(encodeJsonlRecordV0({ jsonrpc: "2.0", method, params }), (error) => {
+				if (error) reject(new PrimeDecodeError("ACP notification local write failed"));
+				else resolve();
+			});
+		});
 	}
 	close(): Promise<PrimeProcessExitV0> {
 		this.#closing ??= (async () => {

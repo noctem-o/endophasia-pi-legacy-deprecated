@@ -16,16 +16,18 @@ const ENTRY = [
 ];
 const USAGE = ["input", "output", "cacheRead", "cacheWrite", "totalTokens", "cost", "extraKeys"];
 const COST = ["input", "output", "cacheRead", "cacheWrite", "total"];
-function closed(value: unknown, keys: readonly string[]): void {
-	if (
-		value === null ||
-		typeof value !== "object" ||
-		Array.isArray(value) ||
-		Object.keys(value).some((key) => !keys.includes(key))
-	)
-		throw new Error("unapproved RPC evidence field");
-}
 export function rpcPrivacyShapeProblems(run: PrimeScenarioEvidenceV0): string[] {
+	const checked = new Set<object>();
+	function closed(value: unknown, keys: readonly string[]): void {
+		if (
+			value === null ||
+			typeof value !== "object" ||
+			Array.isArray(value) ||
+			Object.keys(value).some((key) => !keys.includes(key))
+		)
+			throw new Error("unapproved RPC evidence field");
+		checked.add(value);
+	}
 	try {
 		closed(run, [
 			"provenance",
@@ -53,6 +55,7 @@ export function rpcPrivacyShapeProblems(run: PrimeScenarioEvidenceV0): string[] 
 			"platform",
 			"node",
 			"endophasiaCommit",
+			"endophasiaBuild",
 			"researchHash",
 			"launcherHash",
 			"lockHash",
@@ -131,6 +134,16 @@ export function rpcPrivacyShapeProblems(run: PrimeScenarioEvidenceV0): string[] 
 			if (event.type === "turn_end")
 				for (const result of event.toolResults) closed(result, ["toolCallId", "toolName", "isError"]);
 		}
+		// A scalar/list slot must not smuggle a new object past the closed object checks above.
+		const walk = (value: unknown): void => {
+			if (Array.isArray(value)) {
+				for (const item of value) walk(item);
+			} else if (value !== null && typeof value === "object") {
+				if (!checked.has(value)) throw new Error("unapproved RPC evidence object");
+				for (const item of Object.values(value)) walk(item);
+			}
+		};
+		walk(run);
 		return [];
 	} catch {
 		return ["RPC evidence contains an unapproved payload field"];

@@ -145,6 +145,18 @@ function client(mode: string): ResearchAcpClient {
 	});
 }
 describe("ACP NDJSON process transport", () => {
+	it("notification success means local writer completion and fails after close", async () => {
+		const c = client("normal");
+		try {
+			await expect(c.notify("session/cancel", { sessionId: update.sessionId })).resolves.toBeUndefined();
+			// This response is to a separate request. The cancellation notification has no response ID or acknowledgement.
+			expect(await c.request("initialize", {})).toEqual({ ok: true });
+		} finally {
+			await c.close();
+		}
+		await expect(c.notify("session/cancel", {})).rejects.toThrow("connection closed");
+		expect(c.protocolErrors).toEqual([]);
+	});
 	it.each(["normal", "split", "final"])("correlates %s framing and drains cleanly", async (mode) => {
 		const c = client(mode);
 		try {

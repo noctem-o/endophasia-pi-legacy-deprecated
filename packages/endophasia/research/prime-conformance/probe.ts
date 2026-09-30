@@ -45,6 +45,7 @@ import {
 	type PrimeStatsEvidenceV0,
 } from "./evidence.ts";
 import { CHILD_USAGE_SEED, type FakeProviderV0, SENTINELS, startFakeProviderV0 } from "./fake-provider.ts";
+import { describeResearchInstrument } from "./instrument.ts";
 import { scenarioInvariantProblemsV0 } from "./invariants.ts";
 import type { PrimeEvidenceEventV0, PrimeRpcResponseV0 } from "./protocol.ts";
 import { PrimeRpcClientV0, PrimeRpcError, type PrimeRpcExitV0 } from "./rpc-client.ts";
@@ -726,16 +727,7 @@ export function describePrimeV0(binary: PrimeBinaryV0): PrimeProvenanceV0 {
 		probeVersion: PROBE_VERSION,
 		platform: `${process.platform}-${process.arch}`,
 		node: process.version,
-		endophasiaCommit: git(resolve(import.meta.dirname, "../../../.."), ["rev-parse", "HEAD"]),
-		researchHash: createHash("sha256")
-			.update(
-				readdirSync(import.meta.dirname)
-					.filter((name) => name.endsWith(".ts"))
-					.sort()
-					.map((name) => `${name}\0${readFileSync(join(import.meta.dirname, name), "utf8")}\0`)
-					.join(""),
-			)
-			.digest("hex"),
+		...describeResearchInstrument(),
 		...(binary.checkout === undefined ||
 		!existsSync(binary.command) ||
 		!existsSync(join(binary.checkout, "package-lock.json"))

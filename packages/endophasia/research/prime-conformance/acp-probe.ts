@@ -68,6 +68,7 @@ export async function runAcpProbe(
 		};
 		let sessionId: string | undefined;
 		let cancelKind: string | undefined;
+		let cancellation: Promise<void> | undefined;
 		const baseArgs = [...environment.baseArgs];
 		baseArgs[baseArgs.indexOf("rpc")] = "acp";
 		const client = new ResearchAcpClient({
@@ -80,9 +81,22 @@ export async function runAcpProbe(
 				run.updates.push(update);
 				if (cancelKind === update.kind && sessionId !== undefined) {
 					cancelKind = undefined;
-					run.cancelAfter.push(run.updates.length - 1);
-					run.commands.push({ method: "session/cancel", success: true });
-					client.notify("session/cancel", { sessionId });
+					const triggerIndex = run.updates.length - 1;
+					const cancelledSession = sessionId;
+					run.cancelAfter.push(triggerIndex);
+					cancellation = client.notify("session/cancel", { sessionId }).then(
+						() => {
+							run.commands.push({
+								method: "session/cancel",
+								success: true,
+								sessionId: cancelledSession,
+								triggerIndex,
+							});
+						},
+						() => {
+							run.failures.push("ACP cancellation local write failed");
+						},
+					);
 				}
 			},
 		});
@@ -151,6 +165,7 @@ export async function runAcpProbe(
 			if (scenario.name === "cancel-tool") cancelKind = "tool_call";
 			for (const marker of scenario.markers) {
 				await prompt(marker);
+				await cancellation;
 				if (scenario.name === "close-recreate" && marker === "multi-a") {
 					await request("session/close", { sessionId });
 					await open();
@@ -168,6 +183,7 @@ export async function runAcpProbe(
 		} catch {
 			run.failures.push("ACP scenario execution failed");
 		} finally {
+			await cancellation;
 			const exit = await client.close();
 			if (exit.code !== 0 || exit.signal !== null || exit.spawnFailed)
 				run.failures.push("ACP abnormal process exit");

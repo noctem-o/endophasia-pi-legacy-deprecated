@@ -4,6 +4,7 @@ import { ACP_SCENARIOS } from "./acp-probe.ts";
 import { PROBE_MODEL_COST } from "./environment.ts";
 import { entryProblems } from "./evidence.ts";
 import { expectedPrimeUsageV0 } from "./fake-provider.ts";
+import type { PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 function closed(value: unknown, fields: string[]): Record<string, unknown> {
 	const record = acpObject(value, "sanitized object");
@@ -34,7 +35,8 @@ function usage(value: unknown): void {
 	strings(u.extraKeys);
 }
 
-export function acpEvidenceProblems(value: unknown): string[] {
+/** Privacy/closed shape only: failed or incomplete experiments remain safe diagnostic material. */
+export function acpPrivacyShapeProblems(value: unknown): string[] {
 	try {
 		const v = closed(value, [
 			"schemaVersion",
@@ -67,25 +69,28 @@ export function acpEvidenceProblems(value: unknown): string[] {
 			"researchHash",
 			"launcherHash",
 			"lockHash",
+			"endophasiaBuild",
 			"scenario",
 		]);
 		tag(p.mode, ["acp"]);
 		for (const key of Object.keys(p)) if (typeof p[key] !== "string") throw new Error("provenance string required");
-		const init = closed(v.initialize, [
-			"protocolVersion",
-			"agentName",
-			"agentVersion",
-			"agentInfoKeys",
-			"capabilityFields",
-			"capabilityFlags",
-			"metaNamespaces",
-			"primeMetaKeys",
-		]);
-		integer(init.protocolVersion);
-		for (const key of ["agentName", "agentVersion"])
-			if (typeof init[key] !== "string") throw new Error("agent identity required");
-		for (const key of ["agentInfoKeys", "capabilityFields", "metaNamespaces", "primeMetaKeys"]) strings(init[key]);
-		for (const flag of Object.values(acpObject(init.capabilityFlags, "capability flags"))) boolean(flag);
+		if (v.initialize !== undefined) {
+			const init = closed(v.initialize, [
+				"protocolVersion",
+				"agentName",
+				"agentVersion",
+				"agentInfoKeys",
+				"capabilityFields",
+				"capabilityFlags",
+				"metaNamespaces",
+				"primeMetaKeys",
+			]);
+			integer(init.protocolVersion);
+			for (const key of ["agentName", "agentVersion"])
+				if (typeof init[key] !== "string") throw new Error("agent identity required");
+			for (const key of ["agentInfoKeys", "capabilityFields", "metaNamespaces", "primeMetaKeys"]) strings(init[key]);
+			for (const flag of Object.values(acpObject(init.capabilityFlags, "capability flags"))) boolean(flag);
+		}
 		for (const key of [
 			"updates",
 			"prompts",
@@ -118,7 +123,7 @@ export function acpEvidenceProblems(value: unknown): string[] {
 			}
 		}
 		for (const command of run.commands) {
-			closed(command, ["method", "success", "errorCode"]);
+			closed(command, ["method", "success", "errorCode", "sessionId", "triggerIndex"]);
 			tag(command.method, [
 				"initialize",
 				"session/new",
@@ -128,6 +133,8 @@ export function acpEvidenceProblems(value: unknown): string[] {
 				"session/load",
 			]);
 			boolean(command.success);
+			if (command.sessionId !== undefined) acpSessionId(command.sessionId);
+			if (command.triggerIndex !== undefined) integer(command.triggerIndex);
 			if (command.errorCode !== undefined) {
 				integer(command.errorCode, true);
 				if (command.success) throw new Error("command contradicts error");
@@ -210,13 +217,27 @@ export function acpEvidenceProblems(value: unknown): string[] {
 					"keys",
 				]);
 				strings(entry.keys);
+				for (const key of ["type", "id", "parentId", "role", "stopReason", "firstKeptEntryId", "targetId"])
+					if (
+						entry[key as keyof typeof entry] !== undefined &&
+						entry[key as keyof typeof entry] !== null &&
+						typeof entry[key as keyof typeof entry] !== "string"
+					)
+						throw new Error("entry identity string required");
 				for (const u of [entry.usage, entry.childUsage, entry.aggregateUsage]) if (u !== undefined) usage(u);
 			}
 		}
-		return [...run.files.flatMap((file) => entryProblems("ACP durable file", file)), ...acpScenarioProblems(run)];
+		return [];
 	} catch {
 		return ["ACP evidence is not the closed sanitized schema"];
 	}
+}
+
+export function acpEvidenceProblems(value: unknown): string[] {
+	const shape = acpPrivacyShapeProblems(value);
+	if (shape.length) return shape;
+	const run = value as AcpScenarioEvidence;
+	return [...run.files.flatMap((file) => entryProblems("ACP durable file", file)), ...acpScenarioProblems(run)];
 }
 
 export function acpScenarioProblems(run: AcpScenarioEvidence): string[] {
@@ -250,7 +271,8 @@ export function acpScenarioProblems(run: AcpScenarioEvidence): string[] {
 		for (const field of ["promptTurnId", "eventSequence", "phase"])
 			if (!u.metaKeys.includes(field)) problems.push("ACP metadata keys contradict recorded fields");
 		const turns = scenario.name === "close-recreate" ? 1 : expectedPrompts;
-		if (u.promptTurnId > turns) problems.push("ACP update names an unknown prompt");
+		// This probe retains only prompt-associated updates. No session-level update is used as prompt evidence.
+		if (u.promptTurnId < 1 || u.promptTurnId > turns) problems.push("ACP update names an unknown prompt");
 		if (u.phase !== "event" && (u.promptTurnId === 0 || u.outcome === undefined))
 			problems.push("ACP terminal lacks prompt/outcome");
 		const key = `${u.sessionId}/${u.promptTurnId}/${u.toolCallId}`;
@@ -292,10 +314,22 @@ export function acpScenarioProblems(run: AcpScenarioEvidence): string[] {
 			problems.push("ACP terminal precedes response boundary");
 	}
 	if (scenario.name.startsWith("cancel-")) {
+		const cancels = run.commands.filter((c) => c.method === "session/cancel");
 		const expected = scenario.name === "cancel-stream" ? "agent_message_chunk" : "tool_call";
 		if (run.cancelAfter.length !== 1 || run.updates[run.cancelAfter[0] ?? -1]?.kind !== expected)
 			problems.push("ACP cancellation trigger missing");
-	} else if (run.cancelAfter.length) problems.push("unexpected ACP cancellation");
+		const cancel = cancels[0];
+		const trigger = run.updates[run.cancelAfter[0] ?? -1];
+		if (
+			cancels.length !== 1 ||
+			cancel?.success !== true ||
+			cancel.errorCode !== undefined ||
+			cancel.triggerIndex !== run.cancelAfter[0] ||
+			cancel.sessionId !== trigger?.sessionId
+		)
+			problems.push("ACP successful local cancellation emission missing or uncorrelated");
+	} else if (run.cancelAfter.length || run.commands.some((c) => c.method === "session/cancel"))
+		problems.push("unexpected ACP cancellation");
 	if (
 		scenario.name === "unsupported-requests" &&
 		run.commands.filter((c) => !c.success && c.errorCode !== undefined).length !== 3
@@ -321,6 +355,23 @@ export function acpScenarioProblems(run: AcpScenarioEvidence): string[] {
 }
 
 // Numeric disagreements with the audited provider mapping are real observed drift, not a malformed transport.
+function exactUsage(
+	actual: PrimeUsageEvidenceV0 | undefined,
+	expected: ReturnType<typeof expectedPrimeUsageV0>,
+	count = 1,
+): boolean {
+	return (
+		actual !== undefined &&
+		actual.extraKeys?.length === 0 &&
+		(["input", "output", "cacheRead", "cacheWrite", "totalTokens"] as const).every(
+			(key) => actual[key] === expected[key] * count,
+		) &&
+		(["input", "output", "cacheRead", "cacheWrite", "total"] as const).every(
+			(key) => actual.cost?.[key] === expected.cost[key] * count,
+		)
+	);
+}
+
 export function acpUsageScriptMatches(run: AcpScenarioEvidence): boolean {
 	const names = run.provenance.scenario;
 	const script =
@@ -353,33 +404,11 @@ export function acpUsageScriptMatches(run: AcpScenarioEvidence): boolean {
 			: expectedPrimeUsageV0(name, PROBE_MODEL_COST),
 	);
 	if (assistants.length !== expected.length) return false;
-	if (
-		assistants.some((entry, i) => {
-			const u = entry.usage;
-			const e = expected[i]!;
-			return (
-				!u ||
-				u.extraKeys.length > 0 ||
-				["input", "output", "cacheRead", "cacheWrite", "totalTokens"].some(
-					(key) => u[key as keyof typeof e] !== e[key as keyof typeof e],
-				) ||
-				JSON.stringify(u.cost) !== JSON.stringify(e.cost)
-			);
-		})
-	)
-		return false;
+	if (assistants.some((entry, i) => !exactUsage(entry.usage, expected[i]!))) return false;
 	const summaries = run.files.flat().filter((entry) => entry.type === "compaction");
 	if (summaries.length !== (names === "compaction" ? 1 : 0)) return false;
 	if (summaries.length) {
-		const e = expectedPrimeUsageV0("summary", PROBE_MODEL_COST);
-		const u = summaries[0]!.usage;
-		if (
-			!u ||
-			u.input !== e.input * run.summaryRequests ||
-			u.output !== e.output * run.summaryRequests ||
-			u.totalTokens !== e.totalTokens * run.summaryRequests ||
-			u.cost.total !== e.cost.total * run.summaryRequests
-		)
+		if (!exactUsage(summaries[0]!.usage, expectedPrimeUsageV0("summary", PROBE_MODEL_COST), run.summaryRequests))
 			return false;
 	}
 	return true;

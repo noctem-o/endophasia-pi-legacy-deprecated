@@ -51,7 +51,8 @@ export interface AcpScenarioEvidence {
 	initialize?: AcpInitializeEvidence;
 	updates: AcpUpdateEvidence[];
 	prompts: AcpPromptEvidence[];
-	commands: { method: string; success: boolean; errorCode?: number }[];
+	/** session/cancel success means local write completion only, never remote acknowledgement. */
+	commands: { method: string; success: boolean; errorCode?: number; sessionId?: string; triggerIndex?: number }[];
 	sessionIds: string[];
 	cancelAfter: number[];
 	providerRequests: number;

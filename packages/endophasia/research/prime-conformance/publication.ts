@@ -41,6 +41,7 @@ function sameProvenance(a: PrimeProvenanceV0, b: PrimeProvenanceV0): boolean {
 		a.researchHash === b.researchHash &&
 		a.mode === b.mode &&
 		a.endophasiaCommit === b.endophasiaCommit &&
+		a.endophasiaBuild === b.endophasiaBuild &&
 		a.launcherHash === b.launcherHash &&
 		a.lockHash === b.lockHash
 	);

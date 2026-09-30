@@ -147,6 +147,7 @@ function assertHomogeneous(evidence: readonly PrimeScenarioEvidenceV0[]): PrimeP
 		if (
 			other.researchHash !== provenance.researchHash ||
 			other.endophasiaCommit !== provenance.endophasiaCommit ||
+			other.endophasiaBuild !== provenance.endophasiaBuild ||
 			other.launcherHash !== provenance.launcherHash ||
 			other.lockHash !== provenance.lockHash
 		)

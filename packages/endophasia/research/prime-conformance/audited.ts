@@ -4,7 +4,7 @@ import type { PrimeProvenanceV0 } from "./evidence.ts";
 export const PRIME_097 = { version: "0.9.7", commit: "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074" } as const;
 export const AUDITED_PROFILES = [
 	{ version: "0.9.6", commit: "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e", probeVersion: "0.13.0" },
-	{ ...PRIME_097, probeVersion: "0.14.0" },
+	{ ...PRIME_097, probeVersion: "0.14.1" },
 ] as const;
 
 export function auditedProvenance(provenance: PrimeProvenanceV0 | undefined): boolean {
@@ -13,9 +13,10 @@ export function auditedProvenance(provenance: PrimeProvenanceV0 | undefined): bo
 		provenance.mode === "rpc" &&
 		provenance.build === "clean-checkout" &&
 		(provenance.version !== PRIME_097.version ||
-			[provenance.artifactsHash, provenance.launcherHash, provenance.lockHash, provenance.researchHash].every(
-				(value) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value),
-			)) &&
+			(provenance.endophasiaBuild === "clean-checkout" &&
+				[provenance.artifactsHash, provenance.launcherHash, provenance.lockHash, provenance.researchHash].every(
+					(value) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value),
+				))) &&
 		AUDITED_PROFILES.some(
 			(profile) =>
 				profile.version === provenance.version &&
