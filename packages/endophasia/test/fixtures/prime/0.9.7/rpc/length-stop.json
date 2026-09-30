@@ -7,12 +7,12 @@
 		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.14.2",
+		"probeVersion": "0.14.3",
 		"platform": "linux-x64",
 		"node": "v26.10.0",
-		"endophasiaCommit": "ce66a7479d19b919d02149f2c84ce5390c5cd369",
+		"endophasiaCommit": "0bb8ec243eafaf292b16ad0025fb4b17b56b25d4",
 		"endophasiaBuild": "clean-checkout",
-		"researchHash": "47a871267d84bd9f919e17f52e29790a1245af46473de53df7317ec883a712e2",
+		"researchHash": "1f445bc42feab3de623dc7e179973109fb5ef1fedfe47c35978626b5f2619376",
 		"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
 		"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
 		"scenario": "length-stop"
@@ -167,7 +167,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0f0a1-84e6-726f-b4b4-21c84fa5898a",
+			"id": "01a0f0cd-782d-71d6-b646-bf58c5c834e4",
 			"keys": [
 				"cwd",
 				"id",
@@ -179,7 +179,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "050fab0d",
+			"id": "6445f80f",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -192,8 +192,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "0a848ea3",
-			"parentId": "050fab0d",
+			"id": "2513c3e8",
+			"parentId": "6445f80f",
 			"keys": [
 				"id",
 				"parentId",
@@ -204,8 +204,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "094799ea",
-			"parentId": "0a848ea3",
+			"id": "1c111eb4",
+			"parentId": "2513c3e8",
 			"keys": [
 				"id",
 				"parentId",
@@ -216,8 +216,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "9f5a21af",
-			"parentId": "094799ea",
+			"id": "162a5053",
+			"parentId": "1c111eb4",
 			"keys": [
 				"id",
 				"parentId",
@@ -228,8 +228,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "c2a8228e",
-			"parentId": "9f5a21af",
+			"id": "f850dfb3",
+			"parentId": "162a5053",
 			"keys": [
 				"content",
 				"customType",
@@ -243,8 +243,8 @@
 		},
 		{
 			"type": "message",
-			"id": "433b28b5",
-			"parentId": "c2a8228e",
+			"id": "7a7df67f",
+			"parentId": "f850dfb3",
 			"keys": [
 				"id",
 				"message",
@@ -256,8 +256,8 @@
 		},
 		{
 			"type": "message",
-			"id": "32c6ac2f",
-			"parentId": "433b28b5",
+			"id": "7ae07d95",
+			"parentId": "7a7df67f",
 			"keys": [
 				"id",
 				"message",

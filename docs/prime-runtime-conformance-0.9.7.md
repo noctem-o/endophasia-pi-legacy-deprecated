@@ -9,8 +9,8 @@ This document supplements [the historical 0.9.6 audit](prime-runtime-conformance
 - Endophasia main/base: `08068242aa5e115ea947e996b88b11107eea9a0d`, the merge of PR #25. The isolated research branch is `research/prime-0.9.7-conformance`.
 - Historical Prime source: `2d24ad4e6b2d1ee8e6919af6f108e980a14d550e`, version `0.9.6`, probe `0.13.0`.
 - Audited Prime source/tag: [`08ff1b2e2794ea9e8f4a08d12bc95408a66e1074`](https://github.com/PrimeIntellect-ai/prime-agent/tree/08ff1b2e2794ea9e8f4a08d12bc95408a66e1074), `v0.9.7`, [release dated 2026-09-28](https://github.com/PrimeIntellect-ai/prime-agent/releases/tag/v0.9.7).
-- Research probe: `prime-conformance-v0`, `0.14.2`; environment `linux-x64`, Node `v26.10.0`.
-- Clean Endophasia instrument at capture: `ce66a7479d19b919d02149f2c84ce5390c5cd369`; source SHA-256: `47a871267d84bd9f919e17f52e29790a1245af46473de53df7317ec883a712e2`.
+- Research probe: `prime-conformance-v0`, `0.14.3`; environment `linux-x64`, Node `v26.10.0`.
+- Clean Endophasia instrument at capture: `0bb8ec243eafaf292b16ad0025fb4b17b56b25d4`; source SHA-256: `1f445bc42feab3de623dc7e179973109fb5ef1fedfe47c35978626b5f2619376`.
 - Actual launcher: the pinned checkout's `prime-agent.sh`, with no leading arguments; its default source CLI loads compiled workspace dependencies. Both `--mode rpc` and `--mode acp` use that same launcher/build.
 - Fresh build output SHA-256 (`packages/*/dist`, sorted paths and bytes): `a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6`.
 - Launcher SHA-256: `0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d`.
@@ -104,6 +104,18 @@ Probe 0.14.2 addresses the eight additional findings from the review of `326b38e
 | P2 indivisible report publication | A complete valid historical baseline is mandatory and assessed before creating a directory. Missing, empty, partial and private-content baselines refuse publication on both fresh and existing references; the existing report and fixture set remain in place. |
 
 The complete 0.14.1 set was replaced by a fresh 0.14.2 measurement after the offline attacks passed. No old fixture was retagged. The audited subject hashes are exact accepted build coordinates, not an assertion that hashes alone prove how a build was produced.
+
+Probe 0.14.3 addresses the five findings from review `5361742756` of `b86f0f557d`, with explicit hostile regressions in `prime-097-review3.test.ts`:
+
+| Finding | Hardened boundary and regression witness |
+| --- | --- |
+| P1 audited instrument hash | The audited profile pins the exact repository-wide `researchHash` in tracked `audited-instrument-097.json`. Uniform replacement by another 64-hex hash withdraws both boundary classifications and refuses publication. The registry is nonexecutable audit data, outside the executable-source hash to avoid a self-reference; the clean capture commit binds its bytes. Registry shape/version/hash and real path are checked. |
+| P2 complete provenance | The pre-persistence RPC/ACP shape gates require every mandatory provenance field as an own nonempty string and exact source/generator/boundary. Uniform deletion, empty strings and nonstrings for all nine required fields refuse diagnostics and publication before filesystem mutation. A successful whole-set publication reloads both fixture readers and reproduces its report. Optional build coordinates remain separate from safe diagnostic shape. |
+| P2 update inventory | Every retained ACP update requires `sessionUpdate` and `_meta`; text/thought chunks require `content`. Tool identity, kind, status and message identity agree with their wire keys in both directions. Empty inventories, individual omissions, duplicate keys and retained-value deletion fail. Payload-only fields remain names without payload values. Safe semantic inventory failures can still produce diagnostics. |
+| P2 initializer inventory | Each initializer requires name/version and the Prime namespace, unique inventories, a visited field for every boolean, and visited nonboolean ancestor groups for every nested field. Uniform deletion/contradiction across all scenarios fails independently of cross-scenario agreement. Legitimate empty groups and consistent changed booleans remain observations. |
+| P2 bounded ACP drain | After process exit/release, stdout has a two-second drain grace. Expiry records a protocol failure, stops decoding and destroys the reader; close settles idempotently. A real detached descendant holding inherited stdout survives group release and exercises the deadline, with test-owned PID cleanup. Existing fragmented/final-record tests still drain cleanly. The resulting normalized protocol failure invalidates the joint gate. |
+
+All 12 RPC and 15 ACP fixtures were remeasured under committed clean 0.14.3 after the offline attacks passed. The full set/report was replaced atomically; no 0.14.2 fixture was retagged. The previous 0.14.1 and 0.14.2 remediations above remain covered.
 
 ## ACP protocol, initialization and identity
 
@@ -225,10 +237,10 @@ PRIME_AGENT_ROOT=/absolute/path/to/clean-built-prime-agent npm run check:prime-c
 
 ## Validation result
 
-The fresh 0.14.2 live run on 2026-09-30 exercised all 12 RPC and 15 ACP scenarios against exact freshly rebuilt Prime `08ff1b2e2794ea9e8f4a08d12bc95408a66e1074`. Both pre/post checks verified clean Endophasia instrument `ce66a7479d19b919d02149f2c84ce5390c5cd369` and identical source hash `47a871267d84bd9f919e17f52e29790a1245af46473de53df7317ec883a712e2`. The joint gate returned `invalid=[]`, `unpublishable=[]`; the complete fixture set and report were atomically replaced. Offline command output is byte-identical to committed `report.json` (SHA-256 `be7ae01399db7833ce922af347fd8b43c5228caa51b644be3bba6d025a7df67e`). Recomputed RPC/ACP/durable support, semantic fit and basis for every capability match the previous matrix; `candidateForPR27=[]` remains evidence-derived. The subsequent fixture/documentation commit does not change executable source.
+The fresh 0.14.3 live run on 2026-09-30 exercised all 12 RPC and 15 ACP scenarios against exact freshly rebuilt Prime `08ff1b2e2794ea9e8f4a08d12bc95408a66e1074`. Both pre/post checks verified clean Endophasia instrument `0bb8ec243eafaf292b16ad0025fb4b17b56b25d4` and identical source hash `1f445bc42feab3de623dc7e179973109fb5ef1fedfe47c35978626b5f2619376`. The joint gate returned `invalid=[]`, `unpublishable=[]`; the complete fixture set and report were atomically replaced. Offline command output is byte-identical to committed `report.json` (SHA-256 `a7eeb01fdb1e26a656a1b8dc26a8540572f9a9e418d98a5cb6b6d8e7ebf72ac9`). Recomputed RPC/ACP/durable support, semantic fit and basis for every capability match the previous matrix; `candidateForPR27=[]` remains evidence-derived. The subsequent fixture/documentation commit does not change executable source.
 
-- Full `@endophasia/core`: 36 files passed, 1010 tests passed, 2 existing tests skipped.
-- Focused Prime offline suites, hostile mutations and research boundary guards: 530 tests passed across 7 files. Before the live refresh, the six suites that do not require the replacement fixture identity passed 440 tests.
+- Full `@endophasia/core`: 37 files passed, 1045 tests passed, 2 existing tests skipped.
+- Focused Prime offline suites, hostile mutations and research boundary guards: 565 tests passed across 8 files. Before the live refresh, the seven suites that do not require the replacement fixture identity passed 474 tests.
 - Core build, offline report regeneration, browser smoke, Cockpit check, pinned/runtime dependency checks, TypeScript import checks, entry-graph budgets, shrinkwrap/install-lock checks, Biome and whitespace checks passed.
 - Root `npm run check` reaches TypeScript and fails on ten existing `moonshotai/Kimi-K2.6` model-catalog type errors. The exact base was checked in a separate detached worktree with the same dependency/model-data environment. Its diagnostics and the candidate diagnostics are byte-for-byte equal. There are no new root TypeScript errors; no unrelated catalog cleanup was made. Browser/Cockpit checks were run separately because the root command stops at that known failure.
 
