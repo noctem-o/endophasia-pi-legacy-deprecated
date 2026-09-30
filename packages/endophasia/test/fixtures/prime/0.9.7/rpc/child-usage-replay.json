@@ -7,11 +7,12 @@
 		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.14.0",
+		"probeVersion": "0.14.1",
 		"platform": "linux-x64",
 		"node": "v26.10.0",
-		"endophasiaCommit": "08068242aa5e115ea947e996b88b11107eea9a0d",
-		"researchHash": "c6a1e07a7157e554684c30588cf62e3b4c203a79aaae31216684553484811aeb",
+		"endophasiaCommit": "332784e05bf47aad0795f2299a3475f210f48b0a",
+		"endophasiaBuild": "clean-checkout",
+		"researchHash": "d2ab80a4797b149c58bc5f9f18b8d426fdcf7eb2078856ddcdcc3d80123fb204",
 		"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
 		"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
 		"scenario": "child-usage-replay"
@@ -176,7 +177,7 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "7269b255",
+			"id": "4dbcf3b5",
 			"parentId": "a0000003",
 			"keys": [
 				"id",
@@ -188,8 +189,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "3bb45349",
-			"parentId": "7269b255",
+			"id": "7fc36e3f",
+			"parentId": "4dbcf3b5",
 			"keys": [
 				"id",
 				"parentId",
@@ -200,8 +201,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "3cba481b",
-			"parentId": "3bb45349",
+			"id": "17b56f32",
+			"parentId": "7fc36e3f",
 			"keys": [
 				"content",
 				"customType",

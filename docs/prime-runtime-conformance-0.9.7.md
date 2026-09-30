@@ -9,13 +9,16 @@ This document supplements [the historical 0.9.6 audit](prime-runtime-conformance
 - Endophasia main/base: `08068242aa5e115ea947e996b88b11107eea9a0d`, the merge of PR #25. The isolated research branch is `research/prime-0.9.7-conformance`.
 - Historical Prime source: `2d24ad4e6b2d1ee8e6919af6f108e980a14d550e`, version `0.9.6`, probe `0.13.0`.
 - Audited Prime source/tag: [`08ff1b2e2794ea9e8f4a08d12bc95408a66e1074`](https://github.com/PrimeIntellect-ai/prime-agent/tree/08ff1b2e2794ea9e8f4a08d12bc95408a66e1074), `v0.9.7`, [release dated 2026-09-28](https://github.com/PrimeIntellect-ai/prime-agent/releases/tag/v0.9.7).
-- Research probe: `prime-conformance-v0`, `0.14.0`; environment `linux-x64`, Node `v26.10.0`.
+- Research probe: `prime-conformance-v0`, `0.14.1`; environment `linux-x64`, Node `v26.10.0`.
+- Clean Endophasia instrument at capture: `332784e05bf47aad0795f2299a3475f210f48b0a`; source SHA-256: `d2ab80a4797b149c58bc5f9f18b8d426fdcf7eb2078856ddcdcc3d80123fb204`.
 - Actual launcher: the pinned checkout's `prime-agent.sh`, with no leading arguments; its default source CLI loads compiled workspace dependencies. Both `--mode rpc` and `--mode acp` use that same launcher/build.
 - Fresh build output SHA-256 (`packages/*/dist`, sorted paths and bytes): `a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6`.
 - Launcher SHA-256: `0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d`.
 - Upstream lock SHA-256: `4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51`; resolved ACP SDK `@agentclientprotocol/sdk@1.3.0`.
 
-Each scenario records its boundary, upstream commit, clean tracked-source state, artifact/launcher/lock identities, probe version, environment, Endophasia checkout HEAD at capture and `researchHash`. The last hash covers the sorted names and bytes of every research `.ts` file; an offline test compares it to the committed source. `endophasiaCommit` is the checkout HEAD at capture, while `researchHash` identifies the research edits measured before their commit. It does not assert that the Endophasia worktree was clean. These are measurement coordinates, not cryptographic build attestations: a clean tracked tree alone cannot prove ignored output was built from that tree. The fresh build recipe and hashes provide the narrower evidence here.
+Each scenario records its boundary, upstream commit, artifact/launcher/lock identities, probe version, environment, `endophasiaCommit`, `endophasiaBuild=clean-checkout` and `researchHash`. The instrument must be committed and clean (tracked changes and nonignored untracked files are refused) before and after the complete experiment. Both complete identities must match before any diagnostic or reference write. `researchHash` covers sorted repository-relative names and bytes of **all tracked executable source** (`ts`, `mts`, `cts`, `js`, `mjs`, `cjs`, `tsx`, `jsx`), including the transitive process-group keeper. There is no hand-maintained dependency list. An offline test compares it with the published source.
+
+The live instrument runs direct tracked TypeScript plus Node builtins. A transitive static-module guard, after erasing type-only edges, refuses untracked/generated/linked modules, external imports and computed import loaders; injected Node flags or `NODE_OPTIONS` are refused. Endophasia's ignored `dist` and installed package code are not instrument inputs. The probe-tool source emitted into each temporary Prime environment is a tracked string in `environment.ts`, covered by the instrument hash; its `typebox` dependency is part of the pinned Prime subject. Prime's ignored compiled workspace output remains separately hashed and freshly rebuilt. These coordinates establish a bounded measuring instrument, not a cryptographic build attestation or production composition.
 
 Prime was cloned at the exact tag and verified against the commit through GitHub. Dependencies were installed from its lock with lifecycle scripts disabled. The source was built with the installed compiler, then assets and the bundle were generated:
 
@@ -72,6 +75,20 @@ RPC keeps the existing decoder, invariants, fake provider, file reader, mission 
 The new reference contains 12 RPC and 15 ACP scenario fixtures plus the generated comparison report in `test/fixtures/prime/0.9.7/`. Prompts, answers, reasoning, tool inputs/outputs, errors, summaries, raw ACP updates and raw transcripts are never committed. Evidence retains safe identities, numbers, closed discriminators, booleans and field-name sets. Unknown metadata values are dropped. Summary and gate-failure text become presence flags. Sentinel scanning covers evidence, report and derived projections before persistence. Defensive schema checks reject unapproved payload slots even when no sentinel is present.
 
 The joint publication gate extends the existing RPC gate and is the only 0.9.7 writer. It rejects missing/duplicate scenarios, invalid structure, correlation contradictions, process/protocol failures, privacy violations, dirty/unverified/wrong revisions, cross-boundary build mismatches and probe/environment/research mismatches. Partial 0.9.7 refreshes are refused. Full refreshes stage the whole directory and restore the previous directory if replacement fails. The legacy RPC writer refuses 0.9.7. Structurally valid changed stop reasons or accounting values remain drift evidence; they are not coerced back to the old result.
+
+Probe 0.14.1 remediates the seven Codex findings with explicit attacks in `prime-097-remediation.test.ts` and the committed-fixture/transport suites:
+
+| Finding | Hardened boundary and regression witness |
+| --- | --- |
+| P1 diagnostic privacy | Dedicated RPC/ACP closed-shape plus sentinel checks run before any directory/write. Non-sentinel private fields and sentinel attacks leave no artifacts; a closed-schema failed provider-witness invariant still produces sanitized diagnostics, but cannot publish. ACP shape validation is separate from scenario semantics. |
+| P1 measuring instrument | Clean Endophasia identity is required before/after all 27 scenarios; repository-wide source hashing includes transitive code. A process-group edit keeps HEAD but changes the hash and fails the clean gate. A clean tracked checkout importing ignored generated code fails the module guard. Old 0.14.0 provenance is unpublishable. |
+| P2 cancellation witness | Exactly one successful local writer callback records `session/cancel`, session UUID and trigger index; this is no remote acknowledgement. Missing, duplicate, failed and cross-trigger/session sends fail. Noncancel scenarios require zero sends. |
+| P2 prompt identity | Every retained prompt-associated update must name a positive in-range turn in its ACP slot. Message, tool start and tool completion mutations to zero/unknown positive turns fail. Session-level metadata is not promoted to correlated prompt evidence. |
+| P2 summary accounting | Assistant and summary Usage share one exact comparator over five token fields, five cost fields and empty `extraKeys`; summary accounting scales by `summaryRequests`. Every field mutation/omission and wrong request multiplier fails equality. Structurally valid number drift remains inspectable. |
+| P2 capability dependencies | Durable Usage disagreement contradicts Metrics and Usage only. A Usage-only mutation leaves the other four capabilities' bases and compatibility unchanged. |
+| P2 offline canonicalization | Joint report construction orders RPC by its declared invariant scenario list and ACP by `ACP_SCENARIOS`. Reversed inputs and fixture creation order produce the same report; the actual offline command reproduces committed `report.json` byte-for-byte with normal LF formatting. Historical baseline ordering remains unchanged. |
+
+The entire 0.14.0 reference was replaced by a fresh 0.14.1 live run after offline hostile checks passed. No old fixture was retagged. Test-only synthetic controls let those mutation checks run before refresh; they are never written as audited reference evidence.
 
 ## ACP protocol, initialization and identity
 
@@ -193,10 +210,10 @@ PRIME_AGENT_ROOT=/absolute/path/to/clean-built-prime-agent npm run check:prime-c
 
 ## Validation result
 
-The final live run exercised all 12 RPC and 15 ACP scenarios against the identified clean 0.9.7 checkout. The joint gate returned `invalid=[]`, `unpublishable=[]`; the generated report has no privacy violations and no exact candidate. Its committed source hash is `c6a1e07a7157e554684c30588cf62e3b4c203a79aaae31216684553484811aeb`.
+The fresh 0.14.1 live run on 2026-09-30 exercised all 12 RPC and 15 ACP scenarios against exact freshly rebuilt Prime `08ff1b2e2794ea9e8f4a08d12bc95408a66e1074`. Both pre/post checks verified clean Endophasia instrument `332784e05bf47aad0795f2299a3475f210f48b0a` and identical source hash `d2ab80a4797b149c58bc5f9f18b8d426fdcf7eb2078856ddcdcc3d80123fb204`. The joint gate returned `invalid=[]`, `unpublishable=[]`; the complete fixture set and report were atomically replaced. Offline command output is byte-identical to committed `report.json` (SHA-256 `98acd659525a60f3a1759716ae01729839486cd7ff00508c5c2d0cb89f46c4b1`). Recomputed RPC/ACP/durable support, semantic fit and basis for every capability match the previous matrix; `candidateForPR27=[]` remains evidence-derived. The subsequent fixture/documentation commit does not change executable source.
 
-- Full `@endophasia/core`: 34 files passed, 831 tests passed, 2 existing tests skipped.
-- Focused Prime offline suites and research boundary guards: 351 tests passed across 5 files.
+- Full `@endophasia/core`: 35 files passed, 875 tests passed, 2 existing tests skipped.
+- Focused Prime offline suites, hostile mutations and research boundary guards: 395 tests passed across 6 files. Before the live refresh, the five suites that do not require the replacement fixture identity passed 305 tests.
 - Core build, offline report regeneration, browser smoke, Cockpit check, pinned/runtime dependency checks, TypeScript import checks, entry-graph budgets, shrinkwrap/install-lock checks, Biome and whitespace checks passed.
 - Root `npm run check` reaches TypeScript and fails on ten existing `moonshotai/Kimi-K2.6` model-catalog type errors. The exact base was checked in a separate detached worktree with the same dependency/model-data environment. Its diagnostics and the candidate diagnostics are byte-for-byte equal. There are no new root TypeScript errors; no unrelated catalog cleanup was made. Browser/Cockpit checks were run separately because the root command stops at that known failure.
 

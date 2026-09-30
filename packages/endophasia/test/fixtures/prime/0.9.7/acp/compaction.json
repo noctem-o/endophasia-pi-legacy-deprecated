@@ -8,18 +8,19 @@
 		"build": "clean-checkout",
 		"mode": "acp",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.14.0",
+		"probeVersion": "0.14.1",
 		"platform": "linux-x64",
 		"node": "v26.10.0",
-		"endophasiaCommit": "08068242aa5e115ea947e996b88b11107eea9a0d",
-		"researchHash": "c6a1e07a7157e554684c30588cf62e3b4c203a79aaae31216684553484811aeb",
+		"endophasiaCommit": "332784e05bf47aad0795f2299a3475f210f48b0a",
+		"endophasiaBuild": "clean-checkout",
+		"researchHash": "d2ab80a4797b149c58bc5f9f18b8d426fdcf7eb2078856ddcdcc3d80123fb204",
 		"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
 		"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
 		"scenario": "compaction"
 	},
 	"updates": [
 		{
-			"sessionId": "9f18a2bc-31c0-442d-9263-e829b0cc5aa1",
+			"sessionId": "bb043335-db21-4dc3-a514-4078fd1cd790",
 			"kind": "agent_message_chunk",
 			"keys": [
 				"_meta",
@@ -38,7 +39,7 @@
 			"messageId": "prime-agent-assistant-1"
 		},
 		{
-			"sessionId": "9f18a2bc-31c0-442d-9263-e829b0cc5aa1",
+			"sessionId": "bb043335-db21-4dc3-a514-4078fd1cd790",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -58,7 +59,7 @@
 			"terminalQuiescenceExpected": true
 		},
 		{
-			"sessionId": "9f18a2bc-31c0-442d-9263-e829b0cc5aa1",
+			"sessionId": "bb043335-db21-4dc3-a514-4078fd1cd790",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -79,7 +80,7 @@
 			}
 		},
 		{
-			"sessionId": "9f18a2bc-31c0-442d-9263-e829b0cc5aa1",
+			"sessionId": "bb043335-db21-4dc3-a514-4078fd1cd790",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -102,7 +103,7 @@
 			}
 		},
 		{
-			"sessionId": "9f18a2bc-31c0-442d-9263-e829b0cc5aa1",
+			"sessionId": "bb043335-db21-4dc3-a514-4078fd1cd790",
 			"kind": "agent_message_chunk",
 			"keys": [
 				"_meta",
@@ -121,7 +122,7 @@
 			"messageId": "prime-agent-assistant-2"
 		},
 		{
-			"sessionId": "9f18a2bc-31c0-442d-9263-e829b0cc5aa1",
+			"sessionId": "bb043335-db21-4dc3-a514-4078fd1cd790",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -141,7 +142,7 @@
 			"terminalQuiescenceExpected": true
 		},
 		{
-			"sessionId": "9f18a2bc-31c0-442d-9263-e829b0cc5aa1",
+			"sessionId": "bb043335-db21-4dc3-a514-4078fd1cd790",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -162,7 +163,7 @@
 			}
 		},
 		{
-			"sessionId": "9f18a2bc-31c0-442d-9263-e829b0cc5aa1",
+			"sessionId": "bb043335-db21-4dc3-a514-4078fd1cd790",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -185,7 +186,7 @@
 			}
 		},
 		{
-			"sessionId": "9f18a2bc-31c0-442d-9263-e829b0cc5aa1",
+			"sessionId": "bb043335-db21-4dc3-a514-4078fd1cd790",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -206,7 +207,7 @@
 			}
 		},
 		{
-			"sessionId": "9f18a2bc-31c0-442d-9263-e829b0cc5aa1",
+			"sessionId": "bb043335-db21-4dc3-a514-4078fd1cd790",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -226,7 +227,7 @@
 			"terminalQuiescenceExpected": true
 		},
 		{
-			"sessionId": "9f18a2bc-31c0-442d-9263-e829b0cc5aa1",
+			"sessionId": "bb043335-db21-4dc3-a514-4078fd1cd790",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -247,7 +248,7 @@
 			}
 		},
 		{
-			"sessionId": "9f18a2bc-31c0-442d-9263-e829b0cc5aa1",
+			"sessionId": "bb043335-db21-4dc3-a514-4078fd1cd790",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -314,7 +315,7 @@
 		}
 	],
 	"sessionIds": [
-		"9f18a2bc-31c0-442d-9263-e829b0cc5aa1"
+		"bb043335-db21-4dc3-a514-4078fd1cd790"
 	],
 	"cancelAfter": [],
 	"providerRequests": 4,
@@ -323,7 +324,7 @@
 		[
 			{
 				"type": "session",
-				"id": "01a0eeea-f37f-74b1-857c-0e9e86cb3ae7",
+				"id": "01a0f076-bed4-74de-82c3-1d8753852844",
 				"keys": [
 					"cwd",
 					"id",
@@ -335,7 +336,7 @@
 			},
 			{
 				"type": "model_change",
-				"id": "0d9d69a6",
+				"id": "8f22428e",
 				"parentId": null,
 				"keys": [
 					"id",
@@ -348,8 +349,8 @@
 			},
 			{
 				"type": "thinking_level_change",
-				"id": "0ffe4c27",
-				"parentId": "0d9d69a6",
+				"id": "b0ba94fd",
+				"parentId": "8f22428e",
 				"keys": [
 					"id",
 					"parentId",
@@ -360,8 +361,8 @@
 			},
 			{
 				"type": "service_tier_change",
-				"id": "150a296e",
-				"parentId": "0ffe4c27",
+				"id": "22fc8087",
+				"parentId": "b0ba94fd",
 				"keys": [
 					"id",
 					"parentId",
@@ -372,8 +373,8 @@
 			},
 			{
 				"type": "session_state",
-				"id": "cd8c05ad",
-				"parentId": "150a296e",
+				"id": "80a7e2a1",
+				"parentId": "22fc8087",
 				"keys": [
 					"id",
 					"parentId",
@@ -384,8 +385,8 @@
 			},
 			{
 				"type": "custom_message",
-				"id": "12b79b33",
-				"parentId": "cd8c05ad",
+				"id": "2be86ecc",
+				"parentId": "80a7e2a1",
 				"keys": [
 					"content",
 					"customType",
@@ -399,8 +400,8 @@
 			},
 			{
 				"type": "message",
-				"id": "5fbf2e5f",
-				"parentId": "12b79b33",
+				"id": "a0f01354",
+				"parentId": "2be86ecc",
 				"keys": [
 					"id",
 					"message",
@@ -412,8 +413,8 @@
 			},
 			{
 				"type": "message",
-				"id": "7df782a6",
-				"parentId": "5fbf2e5f",
+				"id": "69f4e553",
+				"parentId": "a0f01354",
 				"keys": [
 					"id",
 					"message",
@@ -441,8 +442,8 @@
 			},
 			{
 				"type": "message",
-				"id": "0ae62407",
-				"parentId": "7df782a6",
+				"id": "452c5519",
+				"parentId": "69f4e553",
 				"keys": [
 					"id",
 					"message",
@@ -454,8 +455,8 @@
 			},
 			{
 				"type": "message",
-				"id": "715c75b9",
-				"parentId": "0ae62407",
+				"id": "7dbcd862",
+				"parentId": "452c5519",
 				"keys": [
 					"id",
 					"message",
@@ -483,8 +484,8 @@
 			},
 			{
 				"type": "custom_message",
-				"id": "f30a3496",
-				"parentId": "715c75b9",
+				"id": "dd0b66d6",
+				"parentId": "7dbcd862",
 				"keys": [
 					"content",
 					"customType",
@@ -498,8 +499,8 @@
 			},
 			{
 				"type": "compaction",
-				"id": "a4b56cd7",
-				"parentId": "f30a3496",
+				"id": "1a6bf3a2",
+				"parentId": "dd0b66d6",
 				"keys": [
 					"details",
 					"firstKeptEntryId",
@@ -514,7 +515,7 @@
 					"type",
 					"usage"
 				],
-				"firstKeptEntryId": "715c75b9",
+				"firstKeptEntryId": "7dbcd862",
 				"usage": {
 					"input": 4000,
 					"output": 240,

@@ -8,18 +8,19 @@
 		"build": "clean-checkout",
 		"mode": "acp",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.14.0",
+		"probeVersion": "0.14.1",
 		"platform": "linux-x64",
 		"node": "v26.10.0",
-		"endophasiaCommit": "08068242aa5e115ea947e996b88b11107eea9a0d",
-		"researchHash": "c6a1e07a7157e554684c30588cf62e3b4c203a79aaae31216684553484811aeb",
+		"endophasiaCommit": "332784e05bf47aad0795f2299a3475f210f48b0a",
+		"endophasiaBuild": "clean-checkout",
+		"researchHash": "d2ab80a4797b149c58bc5f9f18b8d426fdcf7eb2078856ddcdcc3d80123fb204",
 		"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
 		"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
 		"scenario": "token-limit"
 	},
 	"updates": [
 		{
-			"sessionId": "3aae3f90-6b35-4efd-8be6-d7a27d7f5a7d",
+			"sessionId": "7fda9c67-f5dd-40ca-9e4a-a4a22b3884ea",
 			"kind": "agent_message_chunk",
 			"keys": [
 				"_meta",
@@ -38,7 +39,7 @@
 			"messageId": "prime-agent-assistant-1"
 		},
 		{
-			"sessionId": "3aae3f90-6b35-4efd-8be6-d7a27d7f5a7d",
+			"sessionId": "7fda9c67-f5dd-40ca-9e4a-a4a22b3884ea",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -58,7 +59,7 @@
 			"terminalQuiescenceExpected": true
 		},
 		{
-			"sessionId": "3aae3f90-6b35-4efd-8be6-d7a27d7f5a7d",
+			"sessionId": "7fda9c67-f5dd-40ca-9e4a-a4a22b3884ea",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -87,7 +88,7 @@
 			}
 		},
 		{
-			"sessionId": "3aae3f90-6b35-4efd-8be6-d7a27d7f5a7d",
+			"sessionId": "7fda9c67-f5dd-40ca-9e4a-a4a22b3884ea",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -144,7 +145,7 @@
 		}
 	],
 	"sessionIds": [
-		"3aae3f90-6b35-4efd-8be6-d7a27d7f5a7d"
+		"7fda9c67-f5dd-40ca-9e4a-a4a22b3884ea"
 	],
 	"cancelAfter": [],
 	"providerRequests": 1,
@@ -153,7 +154,7 @@
 		[
 			{
 				"type": "session",
-				"id": "01a0eeea-b928-76ef-ab23-ae9e62c3a54c",
+				"id": "01a0f076-84dd-773c-99e8-9db18e90bfef",
 				"keys": [
 					"cwd",
 					"id",
@@ -165,7 +166,7 @@
 			},
 			{
 				"type": "model_change",
-				"id": "23b17a28",
+				"id": "633159db",
 				"parentId": null,
 				"keys": [
 					"id",
@@ -178,8 +179,8 @@
 			},
 			{
 				"type": "thinking_level_change",
-				"id": "94e1f3bd",
-				"parentId": "23b17a28",
+				"id": "0c964ec0",
+				"parentId": "633159db",
 				"keys": [
 					"id",
 					"parentId",
@@ -190,8 +191,8 @@
 			},
 			{
 				"type": "service_tier_change",
-				"id": "d58dd608",
-				"parentId": "94e1f3bd",
+				"id": "4647233b",
+				"parentId": "0c964ec0",
 				"keys": [
 					"id",
 					"parentId",
@@ -202,8 +203,8 @@
 			},
 			{
 				"type": "session_state",
-				"id": "0aa69682",
-				"parentId": "d58dd608",
+				"id": "9e1838d5",
+				"parentId": "4647233b",
 				"keys": [
 					"id",
 					"parentId",
@@ -214,8 +215,8 @@
 			},
 			{
 				"type": "custom_message",
-				"id": "1bcdab3f",
-				"parentId": "0aa69682",
+				"id": "3c946569",
+				"parentId": "9e1838d5",
 				"keys": [
 					"content",
 					"customType",
@@ -229,8 +230,8 @@
 			},
 			{
 				"type": "message",
-				"id": "95082712",
-				"parentId": "1bcdab3f",
+				"id": "02df41e8",
+				"parentId": "3c946569",
 				"keys": [
 					"id",
 					"message",
@@ -242,8 +243,8 @@
 			},
 			{
 				"type": "message",
-				"id": "b786131d",
-				"parentId": "95082712",
+				"id": "96e7c5ea",
+				"parentId": "02df41e8",
 				"keys": [
 					"id",
 					"message",

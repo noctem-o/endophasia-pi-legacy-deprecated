@@ -8,18 +8,19 @@
 		"build": "clean-checkout",
 		"mode": "acp",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.14.0",
+		"probeVersion": "0.14.1",
 		"platform": "linux-x64",
 		"node": "v26.10.0",
-		"endophasiaCommit": "08068242aa5e115ea947e996b88b11107eea9a0d",
-		"researchHash": "c6a1e07a7157e554684c30588cf62e3b4c203a79aaae31216684553484811aeb",
+		"endophasiaCommit": "332784e05bf47aad0795f2299a3475f210f48b0a",
+		"endophasiaBuild": "clean-checkout",
+		"researchHash": "d2ab80a4797b149c58bc5f9f18b8d426fdcf7eb2078856ddcdcc3d80123fb204",
 		"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
 		"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
 		"scenario": "tool-error"
 	},
 	"updates": [
 		{
-			"sessionId": "eb0705b9-c07c-4ab7-a320-83a44c29886a",
+			"sessionId": "7f920ce5-616b-4224-8be7-a2fff1e362fa",
 			"kind": "tool_call",
 			"keys": [
 				"_meta",
@@ -43,7 +44,7 @@
 			"status": "in_progress"
 		},
 		{
-			"sessionId": "eb0705b9-c07c-4ab7-a320-83a44c29886a",
+			"sessionId": "7f920ce5-616b-4224-8be7-a2fff1e362fa",
 			"kind": "tool_call_update",
 			"keys": [
 				"_meta",
@@ -64,7 +65,7 @@
 			"status": "failed"
 		},
 		{
-			"sessionId": "eb0705b9-c07c-4ab7-a320-83a44c29886a",
+			"sessionId": "7f920ce5-616b-4224-8be7-a2fff1e362fa",
 			"kind": "agent_message_chunk",
 			"keys": [
 				"_meta",
@@ -83,7 +84,7 @@
 			"messageId": "prime-agent-assistant-2"
 		},
 		{
-			"sessionId": "eb0705b9-c07c-4ab7-a320-83a44c29886a",
+			"sessionId": "7f920ce5-616b-4224-8be7-a2fff1e362fa",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -103,7 +104,7 @@
 			"terminalQuiescenceExpected": true
 		},
 		{
-			"sessionId": "eb0705b9-c07c-4ab7-a320-83a44c29886a",
+			"sessionId": "7f920ce5-616b-4224-8be7-a2fff1e362fa",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -124,7 +125,7 @@
 			}
 		},
 		{
-			"sessionId": "eb0705b9-c07c-4ab7-a320-83a44c29886a",
+			"sessionId": "7f920ce5-616b-4224-8be7-a2fff1e362fa",
 			"kind": "session_info_update",
 			"keys": [
 				"_meta",
@@ -173,7 +174,7 @@
 		}
 	],
 	"sessionIds": [
-		"eb0705b9-c07c-4ab7-a320-83a44c29886a"
+		"7f920ce5-616b-4224-8be7-a2fff1e362fa"
 	],
 	"cancelAfter": [],
 	"providerRequests": 2,
@@ -182,7 +183,7 @@
 		[
 			{
 				"type": "session",
-				"id": "01a0eeea-0a73-7707-8149-0aafa33a0764",
+				"id": "01a0f075-d6d1-70fc-9a71-a64cb18fbeed",
 				"keys": [
 					"cwd",
 					"id",
@@ -194,7 +195,7 @@
 			},
 			{
 				"type": "model_change",
-				"id": "4c50cb82",
+				"id": "1c3e7ef2",
 				"parentId": null,
 				"keys": [
 					"id",
@@ -207,8 +208,8 @@
 			},
 			{
 				"type": "thinking_level_change",
-				"id": "64379de0",
-				"parentId": "4c50cb82",
+				"id": "e3f99d0d",
+				"parentId": "1c3e7ef2",
 				"keys": [
 					"id",
 					"parentId",
@@ -219,8 +220,8 @@
 			},
 			{
 				"type": "service_tier_change",
-				"id": "65f54fcf",
-				"parentId": "64379de0",
+				"id": "fefa366f",
+				"parentId": "e3f99d0d",
 				"keys": [
 					"id",
 					"parentId",
@@ -231,8 +232,8 @@
 			},
 			{
 				"type": "session_state",
-				"id": "43c45a9d",
-				"parentId": "65f54fcf",
+				"id": "5651ff96",
+				"parentId": "fefa366f",
 				"keys": [
 					"id",
 					"parentId",
@@ -243,8 +244,8 @@
 			},
 			{
 				"type": "custom_message",
-				"id": "5c097962",
-				"parentId": "43c45a9d",
+				"id": "d8566c16",
+				"parentId": "5651ff96",
 				"keys": [
 					"content",
 					"customType",
@@ -258,8 +259,8 @@
 			},
 			{
 				"type": "message",
-				"id": "eeeae89f",
-				"parentId": "5c097962",
+				"id": "5b7ef95c",
+				"parentId": "d8566c16",
 				"keys": [
 					"id",
 					"message",
@@ -271,8 +272,8 @@
 			},
 			{
 				"type": "message",
-				"id": "8f3dc82e",
-				"parentId": "eeeae89f",
+				"id": "42b579ad",
+				"parentId": "5b7ef95c",
 				"keys": [
 					"id",
 					"message",
@@ -300,8 +301,8 @@
 			},
 			{
 				"type": "message",
-				"id": "f1f76c83",
-				"parentId": "8f3dc82e",
+				"id": "caf2e5e6",
+				"parentId": "42b579ad",
 				"keys": [
 					"id",
 					"message",
@@ -313,8 +314,8 @@
 			},
 			{
 				"type": "message",
-				"id": "4f990afe",
-				"parentId": "f1f76c83",
+				"id": "00d0cccc",
+				"parentId": "caf2e5e6",
 				"keys": [
 					"id",
 					"message",
