@@ -637,7 +637,12 @@ export async function runPrimeProbeV0(options: PrimeProbeOptionsV0): Promise<Pri
 			...run,
 		};
 		const violated = scenarioInvariantProblemsV0(evidence);
-		results.push(violated.length === 0 ? evidence : { ...evidence, failures: [...run.failures, ...violated] });
+		// Raw probe/client/decode diagnostics can interpolate hostile wire names. Only closed categories reach disk.
+		results.push({
+			...evidence,
+			protocolErrors: run.protocolErrors.map(() => "RPC protocol failed"),
+			failures: [...run.failures, ...violated].map(() => "RPC scenario failed"),
+		});
 	}
 	return results;
 }

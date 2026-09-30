@@ -100,15 +100,33 @@ export async function runAcpProbe(
 				}
 			},
 		});
-		const request = async (method: string, params: Record<string, unknown>): Promise<unknown> => {
+		const request = async (method: string, params: Record<string, unknown>, ordinal?: number): Promise<unknown> => {
+			const requestedSession =
+				method === "session/new"
+					? sessionId
+					: params.sessionId === undefined
+						? undefined
+						: acpSessionId(params.sessionId);
+			const correlation = {
+				...(requestedSession === undefined ? {} : { sessionId: requestedSession }),
+				...(ordinal === undefined ? {} : { ordinal }),
+			};
 			try {
 				const result = await client.request(method, params);
-				run.commands.push({ method, success: true });
+				run.commands.push({
+					method,
+					success: true,
+					...correlation,
+					...(method === "session/new"
+						? { sessionId: acpSessionId(acpObject(result, "session/new").sessionId) }
+						: {}),
+				});
 				return result;
 			} catch (error) {
 				run.commands.push({
 					method,
 					success: false,
+					...correlation,
 					...(error instanceof AcpRequestError ? { errorCode: error.code } : {}),
 				});
 				throw error;
@@ -127,10 +145,14 @@ export async function runAcpProbe(
 			try {
 				run.prompts.push(
 					decodeAcpPrompt(
-						await request("session/prompt", {
-							sessionId,
-							prompt: [{ type: "text", text: literal ? marker : `SCENARIO:${marker} ${SENTINELS.prompt}` }],
-						}),
+						await request(
+							"session/prompt",
+							{
+								sessionId,
+								prompt: [{ type: "text", text: literal ? marker : `SCENARIO:${marker} ${SENTINELS.prompt}` }],
+							},
+							ordinal,
+						),
 						ordinal,
 					),
 				);
@@ -187,7 +209,7 @@ export async function runAcpProbe(
 			const exit = await client.close();
 			if (exit.code !== 0 || exit.signal !== null || exit.spawnFailed)
 				run.failures.push("ACP abnormal process exit");
-			run.protocolErrors.push(...client.protocolErrors);
+			run.protocolErrors.push(...client.protocolErrors.map(() => "ACP protocol failed"));
 			try {
 				for (const name of readdirSync(environment.sessionDir)
 					.filter((name) => name.endsWith(".jsonl"))

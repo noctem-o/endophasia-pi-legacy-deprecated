@@ -1,5 +1,6 @@
 // Defensive fixture boundary: reject payload slots even when their values do not contain a probe sentinel.
 import type { PrimeScenarioEvidenceV0 } from "./evidence.ts";
+import { assertPrivacyDomains } from "./privacy-domains.ts";
 
 const ENTRY = [
 	"type",
@@ -144,6 +145,7 @@ export function rpcPrivacyShapeProblems(run: PrimeScenarioEvidenceV0): string[] 
 			}
 		};
 		walk(run);
+		assertPrivacyDomains(run, run.provenance.scenario);
 		return [];
 	} catch {
 		return ["RPC evidence contains an unapproved payload field"];

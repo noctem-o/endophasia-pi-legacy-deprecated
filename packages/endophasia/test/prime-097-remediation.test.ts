@@ -3,9 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { AcpScenarioEvidence } from "../research/prime-conformance/acp-evidence.ts";
 import { acpPrivacyShapeProblems, acpUsageScriptMatches } from "../research/prime-conformance/acp-validation.ts";
 import {
 	assessPrime097,
@@ -14,7 +12,6 @@ import {
 	readAcpFixtures,
 } from "../research/prime-conformance/comparison.ts";
 import { writePrime097Diagnostics } from "../research/prime-conformance/diagnostics.ts";
-import { PROBE_VERSION } from "../research/prime-conformance/evidence.ts";
 import { SENTINELS } from "../research/prime-conformance/fake-provider.ts";
 import {
 	assertInstrumentSources,
@@ -22,26 +19,7 @@ import {
 	researchInstrumentHash,
 } from "../research/prime-conformance/instrument.ts";
 import { readPrimeFixturesV0 } from "../research/prime-conformance/report.ts";
-
-const root = fileURLToPath(new URL("./fixtures/prime", import.meta.url));
-const baseline = readPrimeFixturesV0(join(root, "0.9.6"));
-function controls() {
-	const rpc = readPrimeFixturesV0(join(root, "0.9.7", "rpc"));
-	const acp = readdirSync(join(root, "0.9.7", "acp")).map(
-		(name) => JSON.parse(readFileSync(join(root, "0.9.7", "acp", name), "utf8")) as AcpScenarioEvidence,
-	);
-	// Lets mutation tests run before fixture refresh. This is a checker control only, not audited/live provenance.
-	const legacyControl = rpc[0]!.provenance.probeVersion === "0.14.0";
-	for (const run of legacyControl ? [...rpc, ...acp] : [])
-		Object.assign(run.provenance, { probeVersion: PROBE_VERSION, endophasiaBuild: "clean-checkout" });
-	for (const run of legacyControl ? acp : [])
-		for (const command of run.commands.filter((c) => c.method === "session/cancel"))
-			Object.assign(command, {
-				sessionId: run.updates[run.cancelAfter[0]!]!.sessionId,
-				triggerIndex: run.cancelAfter[0],
-			});
-	return { rpc, acp };
-}
+import { baseline, controls } from "./prime-097-controls.ts";
 
 describe("PR #26 diagnostic persistence boundary", () => {
 	it.each(["RPC private field", "ACP private field", "RPC sentinel", "ACP sentinel", "nested ACP private field"])(
@@ -76,7 +54,7 @@ describe("PR #26 diagnostic persistence boundary", () => {
 			const report = writePrime097Diagnostics(output, rpc, acp, baseline);
 			expect(report.assessment.invalid).toContain("ACP simple: ACP provider witness missing");
 			expect(JSON.parse(readFileSync(join(output, "evidence.json"), "utf8"))).toEqual({ rpc, acp });
-			expect(() => publishPrime097(join(temp, "fixtures"), rpc, acp)).toThrow("refused");
+			expect(() => publishPrime097(join(temp, "fixtures"), rpc, acp, baseline)).toThrow("refused");
 			expect(existsSync(join(temp, "fixtures"))).toBe(false);
 		} finally {
 			rmSync(temp, { recursive: true, force: true });
@@ -163,7 +141,7 @@ describe("PR #26 ACP witness mutations", () => {
 		const usage = run.files.flat().find((e) => e.type === "compaction")!.usage!;
 		const record = (field.startsWith("cost.") ? usage.cost : usage) as unknown as Record<string, unknown>;
 		const key = field.split(".").at(-1)!;
-		record[key] = key === "extraKeys" ? ["future_usage"] : (record[key] as number) + 1;
+		record[key] = key === "extraKeys" ? ["reasoning"] : (record[key] as number) + 1;
 		expect(acpUsageScriptMatches(run)).toBe(false);
 		const report = buildPrime097Report(rpc, acp, baseline);
 		expect(report.acp.facts.providerUsageDecodedExactly).toBe(false);

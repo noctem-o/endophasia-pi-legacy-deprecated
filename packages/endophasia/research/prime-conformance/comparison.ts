@@ -101,6 +101,7 @@ export function assessPrime097(
 		);
 		if (scanForSentinelsV0("ACP evidence", run).length) invalid.push("ACP privacy violation");
 	}
+	if (!consistentInitialize(acp)) invalid.push("ACP initialize capabilities/metadata differ across scenarios");
 	const all = [...rpc, ...acp];
 	if (all.length === 0 || all.some((run) => identity(run) !== identity(all[0]!)))
 		unpublishable.push("mixed Prime/probe/research/build/environment provenance across boundaries");
@@ -145,7 +146,8 @@ export function buildPrime097Report(
 	const established = assessment.invalid.length === 0 && assessment.unpublishable.length === 0;
 	const scenario = (name: string) => acp.find((run) => run.provenance.scenario === name);
 	const facts = {
-		initialize: acp[0]?.initialize,
+		initialize: consistentInitialize(acp) ? acp[0]?.initialize : undefined,
+		initializeConsistent: consistentInitialize(acp),
 		providerUsageDecodedExactly: acp.length > 0 && acp.every(acpUsageScriptMatches),
 		lengthStop: scenario("length-stop")?.prompts[0]?.stopReason,
 		providerFailure: scenario("provider-failure")?.prompts[0]?.response,
@@ -217,6 +219,7 @@ export function buildPrime097Report(
 			scenarios: acp.map((run) => ({
 				scenario: run.provenance.scenario,
 				provenance: run.provenance,
+				initialize: run.initialize,
 				prompts: run.prompts,
 				evidenceProblems: acpEvidenceProblems(run),
 			})),
@@ -253,6 +256,23 @@ function canonicalScenarios<T extends { provenance: { scenario: string } }>(
 	});
 }
 
+function consistentInitialize(acp: readonly AcpScenarioEvidence[]): boolean {
+	const canonical = (value: unknown): string => {
+		if (Array.isArray(value)) return JSON.stringify(value.map(canonical).sort());
+		if (value !== null && typeof value === "object")
+			return JSON.stringify(
+				Object.entries(value)
+					.sort(([a], [b]) => a.localeCompare(b))
+					.map(([key, item]) => [key, canonical(item)]),
+			);
+		return JSON.stringify(value) ?? "undefined";
+	};
+	return (
+		acp.length > 0 &&
+		acp.every((run) => run.initialize !== undefined && canonical(run.initialize) === canonical(acp[0]!.initialize))
+	);
+}
+
 export function readAcpFixtures(directory: string): AcpScenarioEvidence[] {
 	return readdirSync(directory)
 		.filter((name) => name.endsWith(".json"))
@@ -271,13 +291,29 @@ export function publishPrime097(
 	root: string,
 	rpc: readonly PrimeScenarioEvidenceV0[],
 	acp: readonly AcpScenarioEvidence[],
-	baseline?: readonly PrimeScenarioEvidenceV0[],
+	baseline: readonly PrimeScenarioEvidenceV0[],
 ): void {
+	// The comparison is part of the indivisible reference. Missing/invalid history must not erase an existing report.
+	if (!Array.isArray(baseline) || baseline.some((run) => run.provenance.version !== "0.9.6"))
+		throw new Error("joint fixture publication refused: baseline required");
+	if (baseline.flatMap(rpcPrivacyShapeProblems).length)
+		throw new Error("joint fixture publication refused: invalid baseline");
+	let baselineAssessment: PrimeEvidenceAssessmentV0;
+	try {
+		baselineAssessment = assessPrimeEvidenceV0({
+			report: buildPrimeConformanceReportV0(baseline),
+			requestedScenarios: SCENARIO_NAMES_WITH_INVARIANTS,
+		});
+	} catch {
+		throw new Error("joint fixture publication refused: invalid baseline");
+	}
+	if (baselineAssessment.invalid.length || baselineAssessment.unpublishable.length)
+		throw new Error("joint fixture publication refused: invalid baseline");
 	const assessment = assessPrime097(rpc, acp);
 	if (assessment.invalid.length || assessment.unpublishable.length)
 		throw new Error("joint fixture publication refused");
-	const report = baseline === undefined ? undefined : buildPrime097Report(rpc, acp, baseline);
-	if (report?.privacyViolations.length) throw new Error("joint report privacy violation");
+	const report = buildPrime097Report(rpc, acp, baseline);
+	if (report.privacyViolations.length) throw new Error("joint report privacy violation");
 	mkdirSync(root, { recursive: true });
 	const target = join(root, PRIME_097.version);
 	const staging = mkdtempSync(join(root, ".prime-097-"));
@@ -293,7 +329,7 @@ export function publishPrime097(
 					`${JSON.stringify(run, null, "\t")}\n`,
 				);
 		}
-		if (report) writeFileSync(join(staging, "report.json"), `${JSON.stringify(report, null, "\t")}\n`);
+		writeFileSync(join(staging, "report.json"), `${JSON.stringify(report, null, "\t")}\n`);
 		const backup = `${staging}-previous`;
 		if (existsSync(target)) renameSync(target, backup);
 		try {

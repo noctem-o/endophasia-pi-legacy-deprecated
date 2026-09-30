@@ -46,7 +46,7 @@ describe("audited historical/current profiles", () => {
 		expect(baseline.every((r) => r.provenance.probeVersion === "0.13.0" && auditedProvenance(r.provenance))).toBe(
 			true,
 		);
-		expect(rpc.every((r) => r.provenance.probeVersion === "0.14.1" && auditedProvenance(r.provenance))).toBe(true);
+		expect(rpc.every((r) => r.provenance.probeVersion === "0.14.2" && auditedProvenance(r.provenance))).toBe(true);
 		for (const set of [baseline, rpc])
 			expect(buildPrimeConformanceReportV0(set).findings.every((f) => f.basis === "established")).toBe(true);
 		expect(buildPrimeConformanceReportV0(rpc, { reference: baseline[0]!.provenance }).drift).toMatchObject({
@@ -347,7 +347,8 @@ describe("ACP publication adversaries", () => {
 	] as const)("rejects cross-boundary %s mismatch", (key) => {
 		const run = fixture("simple");
 		run.provenance = { ...run.provenance, [key]: "different" };
-		expect(assessPrime097(rpc, replace(run)).unpublishable.length).toBeGreaterThan(0);
+		const result = assessPrime097(rpc, replace(run));
+		expect(result.invalid.length + result.unpublishable.length).toBeGreaterThan(0);
 	});
 	it.each(["content", "rawInput", "rawOutput", "summary", "error", "arbitraryMeta"])(
 		"rejects unapproved payload slot %s even without a sentinel",
@@ -368,7 +369,7 @@ describe("ACP publication adversaries", () => {
 		const dir = join(mkdtempSync(join(tmpdir(), "prime-joint-")), "fixtures");
 		try {
 			for (const set of [acp.slice(1), [...acp, acp[0]!]])
-				expect(() => publishPrime097(dir, rpc, set)).toThrow("refused");
+				expect(() => publishPrime097(dir, rpc, set, baseline)).toThrow("refused");
 			expect(existsSync(dir)).toBe(false);
 			expect(() => writePrimeFixturesV0(dir, rpc)).toThrow("joint");
 			expect(existsSync(dir)).toBe(false);

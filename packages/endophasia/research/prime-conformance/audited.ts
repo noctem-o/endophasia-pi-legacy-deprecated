@@ -1,10 +1,17 @@
 // Research coordinates, never a Runtime Profile or production attestation.
 import type { PrimeProvenanceV0 } from "./evidence.ts";
+import { PROBE_VERSION } from "./evidence.ts";
 
 export const PRIME_097 = { version: "0.9.7", commit: "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074" } as const;
 export const AUDITED_PROFILES = [
 	{ version: "0.9.6", commit: "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e", probeVersion: "0.13.0" },
-	{ ...PRIME_097, probeVersion: "0.14.1" },
+	{
+		...PRIME_097,
+		probeVersion: PROBE_VERSION,
+		artifactsHash: "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+		launcherHash: "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+		lockHash: "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+	},
 ] as const;
 
 export function auditedProvenance(provenance: PrimeProvenanceV0 | undefined): boolean {
@@ -21,7 +28,11 @@ export function auditedProvenance(provenance: PrimeProvenanceV0 | undefined): bo
 			(profile) =>
 				profile.version === provenance.version &&
 				profile.commit === provenance.commit &&
-				profile.probeVersion === provenance.probeVersion,
+				profile.probeVersion === provenance.probeVersion &&
+				(!("artifactsHash" in profile) ||
+					(profile.artifactsHash === provenance.artifactsHash &&
+						profile.launcherHash === provenance.launcherHash &&
+						profile.lockHash === provenance.lockHash)),
 		)
 	);
 }

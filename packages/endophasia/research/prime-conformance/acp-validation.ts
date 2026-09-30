@@ -4,6 +4,7 @@ import { ACP_SCENARIOS } from "./acp-probe.ts";
 import { PROBE_MODEL_COST } from "./environment.ts";
 import { entryProblems } from "./evidence.ts";
 import { expectedPrimeUsageV0 } from "./fake-provider.ts";
+import { assertPrivacyDomains } from "./privacy-domains.ts";
 import type { PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 function closed(value: unknown, fields: string[]): Record<string, unknown> {
@@ -123,7 +124,7 @@ export function acpPrivacyShapeProblems(value: unknown): string[] {
 			}
 		}
 		for (const command of run.commands) {
-			closed(command, ["method", "success", "errorCode", "sessionId", "triggerIndex"]);
+			closed(command, ["method", "success", "errorCode", "sessionId", "triggerIndex", "ordinal"]);
 			tag(command.method, [
 				"initialize",
 				"session/new",
@@ -135,6 +136,7 @@ export function acpPrivacyShapeProblems(value: unknown): string[] {
 			boolean(command.success);
 			if (command.sessionId !== undefined) acpSessionId(command.sessionId);
 			if (command.triggerIndex !== undefined) integer(command.triggerIndex);
+			if (command.ordinal !== undefined) integer(command.ordinal);
 			if (command.errorCode !== undefined) {
 				integer(command.errorCode, true);
 				if (command.success) throw new Error("command contradicts error");
@@ -227,6 +229,7 @@ export function acpPrivacyShapeProblems(value: unknown): string[] {
 				for (const u of [entry.usage, entry.childUsage, entry.aggregateUsage]) if (u !== undefined) usage(u);
 			}
 		}
+		assertPrivacyDomains(run, run.provenance.scenario);
 		return [];
 	} catch {
 		return ["ACP evidence is not the closed sanitized schema"];
@@ -257,6 +260,50 @@ export function acpScenarioProblems(run: AcpScenarioEvidence): string[] {
 		run.commands.filter((c) => c.method === "session/close" && c.success).length !== run.sessionIds.length
 	)
 		problems.push("ACP initialization/close lifecycle incomplete");
+	// Match the entire serial request transcript, including slot creation/recreation and each recorded prompt result.
+	const expectedCommands: AcpScenarioEvidence["commands"] = [{ method: "initialize", success: true }];
+	expectedCommands.push({ method: "session/new", success: true, sessionId: run.sessionIds[0] });
+	if (scenario.name === "unsupported-requests") {
+		expectedCommands.push(
+			{ method: "session/new", success: false, sessionId: run.sessionIds[0], errorCode: -32603 },
+			{ method: "session/load", success: false, sessionId: run.sessionIds[0], errorCode: -32601 },
+			{
+				method: "session/prompt",
+				success: false,
+				sessionId: "00000000-0000-0000-0000-000000000000",
+				errorCode: -32603,
+			},
+		);
+	}
+	for (const [i, prompt] of run.prompts.entries()) {
+		const session = run.sessionIds[scenario.name === "close-recreate" ? i : 0];
+		expectedCommands.push({
+			method: "session/prompt",
+			success: prompt.response === "result",
+			sessionId: session,
+			ordinal: prompt.ordinal,
+			...(prompt.errorCode === undefined ? {} : { errorCode: prompt.errorCode }),
+		});
+		if (scenario.name === "close-recreate" && i === 0)
+			expectedCommands.push(
+				{ method: "session/close", success: true, sessionId: session },
+				{ method: "session/new", success: true, sessionId: run.sessionIds[1] },
+			);
+	}
+	expectedCommands.push({ method: "session/close", success: true, sessionId: run.sessionIds.at(-1) });
+	const commandIdentity = (c: AcpScenarioEvidence["commands"][number]) => [
+		c.method,
+		c.success,
+		c.sessionId,
+		c.ordinal,
+		c.errorCode,
+		c.triggerIndex,
+	];
+	if (
+		JSON.stringify(run.commands.filter((c) => c.method !== "session/cancel").map(commandIdentity)) !==
+		JSON.stringify(expectedCommands.map(commandIdentity))
+	)
+		problems.push("ACP request lifecycle/prompt/rejection witnesses incomplete or uncorrelated");
 	const ended = new Set<string>();
 	const sequences = new Map<string, number>();
 	const tools = new Map<string, string>();
@@ -268,8 +315,18 @@ export function acpScenarioProblems(run: AcpScenarioEvidence): string[] {
 		const lifecycle = `${u.sessionId}/${u.promptTurnId}`;
 		if (ended.has(lifecycle)) problems.push("ACP update follows terminal quiescence");
 		if (u.phase === "terminalQuiescence") ended.add(lifecycle);
-		for (const field of ["promptTurnId", "eventSequence", "phase"])
-			if (!u.metaKeys.includes(field)) problems.push("ACP metadata keys contradict recorded fields");
+		for (const field of [
+			"promptTurnId",
+			"eventSequence",
+			"phase",
+			"outcome",
+			"terminalQuiescenceExpected",
+			"autonomous",
+			"quiescence",
+			"compaction",
+		] as const)
+			if (u.metaKeys.includes(field) !== (u[field] !== undefined))
+				problems.push("ACP metadata keys contradict recorded fields");
 		const turns = scenario.name === "close-recreate" ? 1 : expectedPrompts;
 		// This probe retains only prompt-associated updates. No session-level update is used as prompt evidence.
 		if (u.promptTurnId < 1 || u.promptTurnId > turns) problems.push("ACP update names an unknown prompt");
@@ -330,11 +387,6 @@ export function acpScenarioProblems(run: AcpScenarioEvidence): string[] {
 			problems.push("ACP successful local cancellation emission missing or uncorrelated");
 	} else if (run.cancelAfter.length || run.commands.some((c) => c.method === "session/cancel"))
 		problems.push("unexpected ACP cancellation");
-	if (
-		scenario.name === "unsupported-requests" &&
-		run.commands.filter((c) => !c.success && c.errorCode !== undefined).length !== 3
-	)
-		problems.push("ACP rejection coverage incomplete");
 	const expectedRequests =
 		scenario.markers.length + (["tool-run", "tool-error"].includes(scenario.name) ? 1 : 0) + run.summaryRequests;
 	if (run.providerRequests !== expectedRequests) problems.push("ACP provider witness missing");

@@ -4,6 +4,7 @@
 import { auditedProvenance, PRIME_097_SOURCE } from "./audited.ts";
 import { PROBE_MODEL_COST } from "./environment.ts";
 import type { PrimeScenarioEvidenceV0, PrimeSessionEntryEvidenceV0, PrimeStatsEvidenceV0 } from "./evidence.ts";
+import { PROBE_VERSION } from "./evidence.ts";
 import {
 	CHILD_USAGE_SEED,
 	EXPECTED_ASSISTANT_USAGE,
@@ -619,7 +620,10 @@ export function classifyPrimeConformanceV0(
 	const current = evidence[0]?.provenance.version === "0.9.7";
 	const source = current ? PRIME_097_SOURCE : PRIME_SOURCE;
 	const auditedRevision = current
-		? { ...AUDITED_REVISION, fact: "Prime 0.9.7 @ 08ff1b2e (the audited revision), clean checkout and probe 0.14.0" }
+		? {
+				...AUDITED_REVISION,
+				fact: `Prime 0.9.7 @ 08ff1b2e (the audited revision), clean checkout and probe ${PROBE_VERSION}`,
+			}
 		: AUDITED_REVISION;
 	const traces = mapScenarioMissionTracesV0(evidence);
 	const ambiguous = traces.flatMap(({ scenario, mapping }) =>
