@@ -2,151 +2,119 @@
 
 <div align="center">
 
-<p><sub>DEVELOP &nbsp; / &nbsp; EVOLVE &nbsp; · &nbsp; WORK &nbsp; / &nbsp; DREAM &nbsp; · &nbsp; OBSERVE &nbsp; / &nbsp; VERIFY</sub></p>
+<p><sub>DEVELOP / EVOLVE &nbsp; · &nbsp; WORK / DREAM &nbsp; · &nbsp; OBSERVE / VERIFY</sub></p>
 
 <h1>endophasia</h1>
 
 <p><strong>Instrumented cognition for coding agents.</strong></p>
 
 <p>
-An experimental systems workbench for making agent computation<br>
-<strong>visible, steerable, inspectable, and governable.</strong>
+Observe agent runtimes, steer current work, compare experiments,<br>
+and keep evidence separate from permission.
 </p>
 
 <p>
   <a href="#current-state"><img src="https://img.shields.io/badge/status-experimental-637d69?style=flat-square" alt="Status: experimental"></a>
   <a href="https://github.com/earendil-works/pi"><img src="https://img.shields.io/badge/reference%20runtime-Pi-536c85?style=flat-square" alt="Reference runtime: Pi"></a>
-  <a href="#runtime-model"><img src="https://img.shields.io/badge/architecture-adapter--oriented-2f6f4e?style=flat-square" alt="Architecture: adapter-oriented"></a>
+  <a href="#runtime-contracts"><img src="https://img.shields.io/badge/runtime%20contracts-exact-2f6f4e?style=flat-square" alt="Runtime contracts: exact"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-94765e?style=flat-square" alt="License: MIT"></a>
 </p>
 
 <p>
   <a href="#why-endophasia">Why</a> &nbsp; · &nbsp;
-  <a href="#what-exists-today">Today</a> &nbsp; · &nbsp;
-  <a href="#runtime-model">Runtimes</a> &nbsp; · &nbsp;
-  <a href="#work--dream">Work / Dream</a> &nbsp; · &nbsp;
-  <a href="#develop--evolve">Develop / Evolve</a> &nbsp; · &nbsp;
-  <a href="#architecture">Architecture</a> &nbsp; · &nbsp;
-  <a href="#where-this-is-going">Roadmap</a>
+  <a href="#what-works-now">Today</a> &nbsp; · &nbsp;
+  <a href="#develop-and-evolve">Develop / Evolve</a> &nbsp; · &nbsp;
+  <a href="#work-and-dream">Work / Dream</a> &nbsp; · &nbsp;
+  <a href="#profiles">Profiles</a> &nbsp; · &nbsp;
+  <a href="#runtime-contracts">Runtimes</a> &nbsp; · &nbsp;
+  <a href="#evolve-providers">Evolve</a> &nbsp; · &nbsp;
+  <a href="#magpie-and-deadbolt">Evidence</a> &nbsp; · &nbsp;
+  <a href="#roadmap">Roadmap</a>
 </p>
 
 </div>
 
 ---
 
-Most coding-agent interfaces show the prompt, the tools, and the answer.
+Coding agents do more than send a prompt to a model. They select context, compact history, call tools, branch, retry, verify work, spend tokens, accept steering, and sometimes propose actions with real effects.
 
-The interesting system is increasingly everything around the model:
+Endophasia gives those parts explicit contracts and a common place to inspect them.
 
-```text
-context selection
-runtime state
-branching
-compaction
-usage accounting
-verification
-human steering
-permission
-evidence
-presentation
-```
-
-**Endophasia turns that surrounding harness into an instrument panel.**
-
-It is not a chain-of-thought viewer and it is not an agent-swarm dashboard. The goal is to expose what can actually be established about an agent run, preserve the distinctions that matter, and keep cognition separate from truth and authority.
+It does not expose private chain of thought. It does not treat every runtime feature as equivalent. It does not turn a benchmark score into truth or a model proposal into permission.
 
 > [!IMPORTANT]
-> **Endophasia is experimental.** The current production path is still Pi-backed. A runtime-neutral observation boundary now exists, and Prime Agent is being evaluated and integrated behind that boundary without weakening Endophasia semantics to make different runtimes look artificially identical.
+> Endophasia is experimental. The current runnable path uses Pi. Prime has a merged transport layer and an active conformance study, but no Prime capability is admitted as exact. Codex, EVOLVE providers, Magpie integration, Deadbolt integration, and weight training are future work unless a section below says otherwise.
 
 ## Why Endophasia
 
-A capable agent should be allowed to reason flexibly without making its surrounding system vague.
+The project keeps several distinctions explicit.
 
-The project is built around a few recurring separations:
+~~~text
+observation  != inference
+acceptance   != execution
+evidence     != standing
+proposal     != permission
+history      != active context
+configured   != in-flight
+accounting   != context occupancy
+simulation   != real execution
+evaluation   != promotion
+~~~
 
-```text
-observation  ≠ inference
-acceptance   ≠ execution
-evidence     ≠ standing
-proposal     ≠ permission
-history      ≠ active context
-configured   ≠ in-flight
-accounting   ≠ context occupancy
-```
+An observed event can be shown as an observation. A derived value should say how it was derived. A capability should stay unavailable if a runtime cannot meet the contract.
 
-The system should tell the truth about what it knows.
+The related projects have separate jobs.
 
-If an event was observed, expose the event.
+~~~text
+Endophasia  observes, steers, compares
+Pallium     chooses cognition policy
+Magpie      records evidence and standing
+Deadbolt    authorizes consequential action
+~~~
 
-If a value was derived, mark it as a projection.
+None of those jobs grants another one authority.
 
-If a runtime cannot supply a semantic contract exactly, leave the capability unavailable rather than inventing parity.
+## What works now
 
-A short version:
+The merged Pi path has a browser cockpit, remote services, controls, continuity inspection, usage records, runtime accounting, terminal outcomes, and exact capability reporting.
 
-```text
-Endophasia exposes and steers.
-Pallium experiments with cognition.
-Magpie governs epistemic memory.
-Deadbolt governs consequential action.
-```
+<details>
+<summary><strong>Merged v0 features</strong></summary>
 
-Those layers may cooperate later. None silently inherits the authority of another.
-
-## What exists today
-
-Endophasia has moved well beyond the original architecture sketch. The merged Pi path now includes a working runtime, remote services, browser presentation, and a set of deliberately narrow semantic instruments.
-
-| Surface | Current state |
+| Feature | What it reports or controls |
 | :--- | :--- |
-| **Mission Trace v0** | Structural lifecycle projection over real runtime events, with bounded remote observation and a Standard Cockpit instrument. |
-| **Continuity Inspector v0** | Read-only durable ancestry plus Pi's compaction-bounded context-source window. It does not claim to be the provider-visible prompt. |
-| **Steering Controls v0** | Bounded STEER / QUEUE / STOP operations with payload-minimal receipts. Acceptance is not represented as execution or completion. |
-| **Session Overview v0** | Per-lane session state with explicit non-atomic semantics. |
-| **Durable Outcomes v0** | Immutable terminal operation records on the Pi path. |
-| **Runtime Metrics v0** | Explicit cumulative session accounting capture, kept separate from current-context occupancy and provider billing. |
-| **Usage Ledger / Feed v0** | Durable usage paging plus gap-safe live observation with session-global sequence semantics. |
-| **Usage Observation v0** | Bounded live usage state and page access in the Standard Cockpit. |
-| **Runtime Control Deck v0** | Read/write runtime controls while preserving the distinction between configured state and an already captured in-flight operation. |
-| **Endophasia Runtime v0** | Source-only Chord server + Session worker with real multiprocess end-to-end coverage. |
-| **Presentation Client v0** | Headless typed client over the Endophasia service surface. |
-| **Standard Cockpit v0** | Browser UI for Sessions, transcript, Mission Trace, accounting, usage, controls, and degraded-state handling. |
-| **Browser ByteTransport v0** | Browser transport with guarded presentation error handling and a strict bundle boundary. |
-| **Runtime Observation Boundary v0** | Four Pi-free observation capability ports with the Pi implementation moved behind a runtime-specific adapter. |
-| **Runtime Profile v0 / Capability View** | Read-only worker-lifetime attestation of the exact Endophasia v0 capabilities deliberately installed by the composition root. It is display-only, not feature negotiation. |
-| **Prime Runtime Conformance v0** | Research probe that tests whether Prime can satisfy Endophasia contracts without semantic misrepresentation. |
+| Mission Trace | Structural lifecycle events from the runtime. |
+| Continuity Inspector | Durable ancestry and Pi's compaction-bounded context source window. |
+| Steering Controls | STEER, QUEUE, and STOP requests with bounded receipts. |
+| Session Overview | Per-session state with explicit non-atomic semantics. |
+| Operation Outcome | Immutable terminal operation records on the Pi path. |
+| Runtime Metrics | Cumulative session accounting captured separately from context occupancy and billing. |
+| Usage Ledger and Feed | Durable usage paging and a bounded live tail. |
+| Runtime Control Deck | Runtime settings with configured state kept separate from work already in flight. |
+| Endophasia Runtime | Chord server and Session worker with multiprocess tests. |
+| Presentation Client | Typed client for the Endophasia services. |
+| Standard Cockpit | Browser view for sessions, transcript, trace, usage, controls, continuity, and degraded states. |
+| Runtime Observation Boundary | Pi-free contracts for trace, metrics, outcome, and usage. |
+| Runtime Profile v0 | Worker-lifetime statement of the six Endophasia v0 capabilities installed by the composition root. |
+| Prime RPC ingress | Prime-specific process and protocol handling. It installs no Prime semantic capability. |
 
-The current browser/presentation path is intentionally a **projection**, not a second source of truth:
+</details>
 
-```text
-runtime
-  │
-  ▼
-runtime adapter
-  │
-  ▼
-Endophasia semantic services
-  │
-  ├─ Chord replicated state
-  ├─ read-only service calls
-  └─ explicit control calls
-       │
-       ▼
-Presentation Client
-       │
-       ▼
-Standard Cockpit
-```
+The browser is a projection of service state. It does not infer facts from display strings or raw runtime messages.
 
-The UI should not reverse-engineer semantics from display strings or raw runtime payloads.
+~~~mermaid
+flowchart TB
+    A["Runtime"] --> B["Runtime adapter"]
+    B --> C["Endophasia services"]
+    C --> D["Presentation Client"]
+    D --> E["Standard Cockpit"]
+~~~
 
-## Mission Trace
+### Mission Trace
 
-Mission Trace is the normalized observable timeline of a run.
+Mission Trace records structural lifecycle events without exposing hidden reasoning.
 
-It records semantic lifecycle structure without exposing hidden private reasoning:
-
-```text
+~~~text
 mission.started
 turn.started
 model.started
@@ -156,543 +124,362 @@ tool.completed
 mission.completed
 mission.failed
 mission.aborted
-```
+~~~
 
-The exact vocabulary is intentionally small. It is derived only where the runtime supplies enough evidence.
+The Pi implementation is sequence numbered and streaming. The remote worker keeps a bounded window of the latest 1024 events. If the first visible sequence is greater than 1, earlier events fell outside that window. Endophasia does not claim that a durable copy exists elsewhere.
 
-The current Pi implementation is:
+### Continuity
 
-- sequence-numbered;
-- streaming;
-- non-retaining at the observation source;
-- bounded to the latest 1024 events at the remote replicated-state surface;
-- payload-minimal;
-- independent from Usage and Runtime Metrics.
+A transcript and the context used for the next model call are different things.
 
-A sequence beginning above 1 means the bounded worker-lifetime window dropped earlier events. It does **not** imply that some durable Mission Trace history can be fetched elsewhere.
+~~~mermaid
+flowchart TB
+    H["Durable history"] --> C["Compaction and branch state"]
+    C --> W["Active context source window"]
+    W --> N["Next model request"]
+~~~
 
-That distinction is deliberate.
+The current inspector shows durable ancestry and Pi's context source window. It does not claim to reconstruct the exact provider-visible prompt.
 
-## Continuity and context
+### Usage and outcomes
 
-A flat transcript is not enough to describe a long-running agent.
+Mission Trace, Runtime Metrics, Usage, and Operation Outcome answer different questions.
 
-Endophasia distinguishes durable history from the active context projection used to continue work:
+A Usage record does not establish a session lane, operation, model, timestamp, or cause unless the Usage contract contains that field. Runtime Metrics is not rebuilt by summing Usage rows. A STOP receipt records acceptance of the request, not the later terminal result.
 
-```text
-DURABLE HISTORY
-    │
-    ├─ entries
-    ├─ branches
-    ├─ compaction records
-    ├─ summaries
-    └─ runtime changes
-         │
-         ▼
-ACTIVE CONTEXT SOURCE WINDOW
-         │
-         ▼
-next model request
-```
+### Steering
 
-The existing Continuity Inspector exposes durable ancestry and Pi's compaction-bounded context-source window.
+The Pi path currently has three control operations.
 
-It does **not** claim to reconstruct the exact provider-visible prompt.
+~~~text
+STEER  changes the active trajectory through Pi's steering queue
+QUEUE  delivers work at Pi's follow-up boundary
+STOP   requests abort of the observed run
+~~~
 
-Future continuity work should preserve the same discipline: observation before inference, and explicit uncertainty where the runtime does not expose enough information.
+A receipt records runtime acceptance. It does not claim that the runtime consumed the request or completed the requested effect.
 
-## Usage, accounting, and outcomes
+## Develop and Evolve
 
-Endophasia keeps three superficially similar signals separate.
+DEVELOP and EVOLVE describe what the user is doing. They do not select a fixed runtime.
 
-```text
-Mission Trace
-    live structural lifecycle
+### Develop
 
-Runtime Metrics
-    explicit cumulative accounting capture
+DEVELOP covers the current piece of work.
 
-Usage Ledger / Observation
-    durable usage records + bounded live tail
+Its main records are the session, turn, context, tools, changes, verification, usage, outcomes, and human steering. Pi is the reference runtime today. Codex is a future runtime candidate. Prime may also run interactive work if its adapter can state the required semantics exactly.
 
-Operation Outcome
-    immutable terminal operation result
-```
+~~~mermaid
+flowchart TB
+    U["User"] --> C["Cockpit"]
+    C --> E["Endophasia"]
+    E --> A["Exact runtime adapter"]
+    A --> R["Pi now"]
+    A -. "future" .-> X["Codex"]
+    A -. "research" .-> P["Prime"]
+~~~
 
-These are not interchangeable.
+DEVELOP asks what the agent is doing now, what the runtime actually reported, and whether the user wants to intervene.
 
-A Usage row does not establish a lane, operation, provider, model, timestamp, or cause unless that information is actually part of the contract.
+### Evolve
 
-Runtime Metrics is not derived from Usage rows.
+EVOLVE covers repeated experiments over candidate agents, policies, skills, prompts, tools, runtime settings, or models.
 
-An accepted STOP request is not an Operation Outcome until the operation actually settles.
+Its records include scenario identity, candidate identity, environment revision, evaluator revision, repeated episodes, cost, held-out checks, comparison, selection, and promotion history.
 
-This is representative of the wider design: avoid joins that look convenient but create facts the underlying evidence never established.
+~~~mermaid
+flowchart TB
+    P["Experiment profile"] --> C["Isolated candidate"]
+    C --> E["Environment"]
+    E --> V["Evaluator"]
+    V --> R["Recorded result"]
+    R --> K["Compare candidates"]
+    K --> A["Admit or reject"]
+    A --> N["Next experiment"]
+    A -. "separate permission" .-> D["Promotion or deployment"]
+~~~
 
-## Steering
+EVOLVE should follow a visible sequence.
 
-Long-running agents need richer interaction than another chat message.
+~~~text
+observe
+propose
+isolate
+evaluate
+compare
+admit
+promote
+~~~
 
-The current Pi-backed controls preserve three distinct actions:
+Promotion is deliberately last. A candidate can win an evaluation and still lack permission to replace anything.
 
-```text
-STEER   alter the active trajectory using Pi's steering queue
-QUEUE   deliver work at Pi's follow-up boundary
-STOP    request abort of the observed run
-```
+DEVELOP and EVOLVE can use the same runtime. Pi or Codex can be subjects of EVOLVE experiments. Prime can be used in DEVELOP. The mode describes the job, not the software.
 
-Receipts record that the runtime accepted the request. They do not claim the request was consumed or that the operation reached a terminal state.
+## Work and Dream
 
-Possible future controls such as **ANNOTATE** and **CHALLENGE** need their own semantics rather than being aliases for ordinary messages.
+WORK and DREAM are planned cognition policies. They are separate from DEVELOP and EVOLVE.
 
-## WORK / DREAM
+WORK keeps one main trajectory, bounds exploration, runs deterministic checks early, and spends extra compute only when the policy calls for it.
 
-<table>
-<tr>
-<td width="50%" valign="top">
-<sub>WORK</sub><br><br>
-<strong>Convergent execution</strong><br><br>
-One primary trajectory. Bounded exploration. Deterministic checks early. Selective review. Optimized for completing the task without spending compute merely because it is available.
-</td>
-<td width="50%" valign="top">
-<sub>DREAM</sub><br><br>
-<strong>Exploratory cognition</strong><br><br>
-Broader retrieval. More hypotheses retained. Counterfactuals. Stronger falsification. Optional independent challenge. White-box experiments where the runtime actually supports them.
-</td>
-</tr>
-</table>
+DREAM allows broader search, more retained hypotheses, counterfactual tests, stronger falsification, independent challenge, and white-box experiments when the model exposes the required state.
 
-These are planned cognitive policies, not alternate permission levels.
+~~~text
+more cognition != more authority
+more branches  != more truth
+more agreement != more permission
+~~~
 
-```text
-more cognition ≠ more authority
-more branches  ≠ more truth
-more agreement ≠ more permission
-```
+The planned controls are:
 
-The eventual goal is for Work and Dream to change how cognition is budgeted and explored while leaving evidence, authority, and runtime truth intact.
-
-The intended cognitive control vocabulary is richer than a model selector:
-
-| Control | Meaning |
+| Control | Intended meaning |
 | :--- | :--- |
-| **Reasoning** | Provider-native or local reasoning / thinking budget. |
-| **Epistemic Rigour** | Named verification and evidence policy. |
-| **Explore** | Breadth of materially different alternatives considered. |
-| **Verify** | Falsification, deterministic checks, and independent-review budget. |
-| **Compute Appetite** | How readily more tokens, calls, tests, branches, or peers are spent under uncertainty. |
-| **Tool Initiative** | How readily the runtime inspects, retrieves, benchmarks, or proposes actions. |
-| **Latent Deliberation / J-space** | White-box controls or observations only where the model/runtime genuinely exposes them. |
+| Reasoning | Provider-native or local reasoning budget. |
+| Epistemic rigour | Named verification and evidence policy. |
+| Explore | Breadth of materially different alternatives. |
+| Verify | Deterministic checks, falsification, and independent review. |
+| Compute appetite | Token, call, test, and branch budget under uncertainty. |
+| Tool initiative | When the runtime inspects, retrieves, benchmarks, or proposes actions. |
+| Latent deliberation | White-box control only when the model exposes an exact mechanism. |
+| J-space | Experimental local-model observation, never fabricated for API-only models. |
 
-These are **semantic policy controls**, not promises that every runtime has one native knob for each row. A runtime adapter may compile the same Endophasia policy into different substrate mechanisms, or report a control unavailable when the semantics cannot be realized honestly.
+A runtime adapter may implement one policy through several runtime settings. It may also report that a control is unavailable.
 
-## DEVELOP / EVOLVE
+## Profiles
 
-**Work / Dream answers how cognition should be allocated. Develop / Evolve answers what kind of operating regime Endophasia is presenting. The two axes are independent.**
+The current \`RuntimeProfileV0\` is narrow on purpose. It states which exact Endophasia v0 capabilities a Session worker installs. It is not runtime feature negotiation.
 
-<table>
-<tr>
-<td width="50%" valign="top">
-<sub>DEVELOP</sub><br><br>
-<strong>Interactive work on the current task</strong><br><br>
-The primary objects are the task, session, turn, context, plan, diff, tools, verification, usage, and human intervention. The interface asks: <em>what is the agent doing now, what evidence do we have, and should I steer it?</em><br><br>
-Pi is the current reference runtime. Codex is a natural future fit for this regime because it is also a rich interactive coding harness, but no Codex capability is admitted merely because a similar feature exists.
-</td>
-<td width="50%" valign="top">
-<sub>EVOLVE</sub><br><br>
-<strong>Controlled adaptation across attempts</strong><br><br>
-The primary objects become scenarios, episodes, trajectories, candidates, policies, evaluations, budgets, gates, versions, promotion, and rollback. The interface asks: <em>what changed across attempts, did it improve under the stated evaluator, and should this candidate survive?</em><br><br>
-Prime Agent and Reef are a natural future pairing here: Prime provides expressive long-horizon and recursive cognition; Reef provides continual-learning, candidate-evaluation, and version-publication machinery.
-</td>
-</tr>
-</table>
+EVOLVE needs more coordinates, but they should remain separate contracts.
 
-The runtime choices above are **defaults, not restrictions**. Pi or Codex could be the subject of an Evolve experiment. Prime could be used interactively in Develop. Reef is not another runtime family at all: it is better modeled as an **adaptation plane** that may sit around a runtime, harness, model, or cognition policy.
+| Profile | Intended contents |
+| :--- | :--- |
+| Runtime | Pi, Codex, Prime, or another runtime plus exact admitted capabilities. |
+| Model | Hosted or local model identity and the observation level the model permits. |
+| Cognition | WORK, DREAM, or another named policy. |
+| Environment | Task pack, revision, sandbox, reset rules, and whether execution is real or simulated. |
+| Evaluation | Metrics, deterministic checks, graders, judge models, held-out requirements, and selection policy. |
+| Adaptation | Candidate generation and selection method such as Reef or RRSI. |
+| Training | Optional weight update system such as verl, ROLL, or Molt. |
+| Governance | Optional Magpie evidence policy and Deadbolt authority policy. |
 
-~~~text
-                      COGNITION POLICY
-                      WORK       DREAM
-                         \       /
-                          \     /
-                           \   /
-                    OPERATING REGIME
-                    DEVELOP   EVOLVE
-~~~
+Only Runtime Profile v0 is implemented today. The rest describe the intended split for future work.
 
-That permits combinations such as:
+## Runtime contracts
+
+Pi is the current reference runtime. It is not the definition of Endophasia.
+
+Four observation contracts already sit above the Pi adapter.
 
 ~~~text
-DEVELOP + WORK
-    ordinary coding and verification
-
-DEVELOP + DREAM
-    difficult architectural exploration
-
-EVOLVE + WORK
-    tightly bounded harness / policy optimization
-
-EVOLVE + DREAM
-    broader experimental search over policies,
-    skills, harnesses, or models
-~~~
-
-Evolve should not mean "let the system rewrite itself and hope." The intended lifecycle is explicit:
-
-~~~text
-OBSERVE
-   ↓
-PROPOSE
-   ↓
-ISOLATED CANDIDATE
-   ↓
-EVALUATE
-   ↓
-COMPARE
-   ↓
-ADMIT
-   ↓
-PROMOTE
-~~~
-
-A proposal is still not an effect. Evaluation is still not epistemic standing. A candidate that scores well still has no extra authority.
-
-Longer term, a Reef-shaped adaptation plane could manage episodes, candidate lineage, selection, publication, and rollback; Magpie could preserve the evidence and provenance around those claims; and Deadbolt could govern consequential promotion or deployment. Endophasia's job remains to make the process inspectable without pretending those layers are interchangeable.
-
-The architecture should therefore evolve along **orthogonal profiles**, rather than one giant runtime feature blob:
-
-~~~text
-Session / experiment
-├─ Runtime Profile
-│    Pi / Codex / Prime / ...
-├─ Cognition Profile
-│    WORK / DREAM / named policy
-├─ Adaptation Profile
-│    none / Reef-shaped recipe / ...
-├─ Experiment Profile
-│    evaluator / budgets / baselines / gates
-├─ Model Profile
-│    hosted / local / white-box
-└─ Governance Profile
-     Magpie / Deadbolt
-~~~
-
-The current RuntimeProfileV0 is deliberately much narrower than this future composition. It should stay that way until each additional profile has its own evidence-backed semantics.
-
-## Runtime model
-
-Pi is the current reference runtime, but it is no longer the semantic definition of Endophasia.
-
-PR #22 introduced the first runtime-neutral observation boundary:
-
-```text
-                   ENDOPHASIA SERVICES
-                           │
-               exact semantic capability ports
-                  /        |        |        \
-             trace      metrics   outcome    usage
-                  \        |        |        /
-                       Pi adapter
-                           │
-                         Pi APIs
-```
-
-The four ports are deliberately orthogonal:
-
-```text
 RuntimeMissionTraceSourceV0
 RuntimeMetricsSourceV0
 RuntimeOperationOutcomeSourceV0
 RuntimeUsageSourceV0
-```
+~~~
 
-A runtime may truthfully implement one without implementing the others.
+A runtime may implement one contract without implementing the others. Similar data with different semantics does not count as the same capability.
 
-Capability presence means:
+### Pi
 
-> this adapter satisfies the existing Endophasia v0 semantics
+Pi exposes sessions, steering, follow-up work, aborts, lifecycle events, model and thinking settings, compaction, persistence, forks, and resume. Chord supplies typed remote services and replicated state.
 
-not:
+Endophasia uses those APIs where they match the Endophasia contract.
 
-> this runtime has something vaguely similar.
+The repository currently inherits Pi code and Git history. Pi can remain upstream-aware even if Endophasia later moves outside GitHub's fork network. Shared Git ancestry and an explicit Pi remote are enough for reviewed upstream merges.
 
-That is why there is no giant generic `RuntimeV0` interface containing prompts, steering, models, tools, transcripts, branches, metrics, and everything else.
+### Prime
 
-The common layer should grow only from evidence.
+The merged Prime 0.9.6 study found qualified similarities but no capability that was both native and exact.
 
-`RuntimeProfileV0` adds a separate read-only attestation layer. The composition root states which of the six existing Endophasia v0 capabilities one Session worker deliberately installs; the cockpit may display that statement, but it must not infer capabilities from `runtimeFamily`, a version string, RPC/ACP advertisements, or some similar-looking runtime feature. Presence means the exact Endophasia contract is offered. Absence remains deliberately weak.
+PR [#23](https://github.com/noctem-o/endophasia/pull/23) merged the Prime RPC ingress. The ingress owns Prime process and protocol details. It does not install an Endophasia capability.
 
-This distinction becomes more important as additional runtimes arrive. Pi, Codex, and Prime belong on the **runtime** axis. A future Reef integration belongs on an **adaptation** axis. Model observability is another axis again: a local white-box model may expose things that the same harness using a hosted API cannot.
+PR [#26](https://github.com/noctem-o/endophasia/pull/26) audits Prime 0.9.7 at \`08ff1b2e2794ea9e8f4a08d12bc95408a66e1074\` across RPC, ACP, and durable files. The current matrix admits no exact capability and proposes no production capability change.
 
-## Prime Agent
+Prime remains interesting for EVOLVE because it has persistent REPL state, recursive agents, refinement, goals, autonomous budgets, quality gates, and detailed trajectory accounting. Those features do not change the admission rule.
 
-Prime is the first serious test of the runtime boundary.
+### Codex
 
-The merged **Prime Runtime Conformance v0** probe audits Prime Agent 0.9.6 at commit `2d24ad4e6b2d1ee8e6919af6f108e980a14d550e` through `prime-agent --mode rpc`.
+Codex is a future runtime candidate.
 
-The established result is intentionally conservative:
+Its app-server protocol exposes threads, turns, items, steering, interruption, forks, compaction, usage, review, approvals, and runtime settings. Endophasia still needs a pinned conformance study before any of those become Endophasia capabilities.
 
-| Endophasia contract | Prime support | Semantic fit |
-| :--- | :--- | :--- |
-| Mission Trace | adapter-owned state | qualified |
-| Runtime Metrics | adapter-owned state | qualified |
-| Operation Outcome | unavailable | incompatible |
-| Usage | adapter-owned state | qualified |
+The planned order is runtime-specific transport first, conformance evidence second, capability admission last.
 
-No audited Prime contract is currently both native and exact.
+## Evolve providers
 
-That result is useful. It prevents Endophasia from becoming a lowest-common-denominator wrapper.
+EVOLVE should not require one benchmark runner, adaptation framework, sandbox, or trainer.
 
-[PR #23](https://github.com/noctem-o/endophasia/pull/23) has since merged the production-grade Prime RPC ingress beneath the semantic boundary. It handles process ownership, strict JSONL framing, request correlation, runtime identity, bounded shutdown, and hostile transport cases, while deliberately installing **no** Prime semantic capability.
+The provider contracts should let users install only the parts they need.
 
-The newer [PR #26](https://github.com/noctem-o/endophasia/pull/26) separately audits Prime 0.9.7 across RPC, ACP, and durable-file boundaries against all six existing Endophasia capabilities. At the time of writing that PR remains open, its recomputed matrix admits no exact capability, and it proposes no production capability change.
-
-That separation is intentional. Prime is particularly interesting for future **Evolve** work because its current architecture exposes persistent REPL state, recursive/persistent subagents, refinement, goals, autonomous budgets, quality gates, and complete trajectory accounting. Those strengths do not waive the exactness requirements of the ordinary runtime contracts.
-
-## Why Pi still matters
-
-Pi remains an unusually useful reference runtime because it already exposes many of the distinctions Endophasia wants to preserve:
-
-```text
-AgentSession / runtime
-  ├─ prompt
-  ├─ steer
-  ├─ followUp
-  ├─ abort
-  ├─ lifecycle events
-  ├─ model / thinking control
-  ├─ persistent session trees
-  ├─ compaction
-  └─ fork / resume
-
-Chord
-  ├─ typed services
-  ├─ facets
-  ├─ replicated state
-  └─ transport-neutral remote boundaries
-```
-
-Endophasia uses those primitives where they fit.
-
-The point of the adapter boundary is not to erase Pi. It is to stop Pi-specific mechanics from leaking upward into semantics that should remain meaningful if another runtime can satisfy them truthfully.
-
-## Codex as a future runtime candidate
-
-Codex is a promising future **Develop** runtime candidate, not an already-supported backend.
-
-Its app-server architecture exposes a long-lived, structured agent protocol around threads, turns, items, steering, interruption, forks, compaction, usage, review and runtime settings. That shape appears unusually compatible with Endophasia's interest in lifecycle, controls, and instrumented cognition.
-
-The admission rule does not change:
-
-> a Codex feature becomes an Endophasia capability only after a pinned implementation satisfies the exact semantic contract.
-
-The likely integration path is therefore the same pattern used for Prime: runtime-specific ingress first, conformance evidence second, semantic capability admission last.
-
-## Architecture
-
-```mermaid
+~~~mermaid
 flowchart TB
-    H["Human"] --> UI["Standard Cockpit / Presentation Client"]
-    UI --> R{"Operating regime"}
-    R --> DEV["DEVELOP\ncurrent work"]
-    R --> EVO["EVOLVE\ncandidates · evaluation · versions"]
+    E["Endophasia EVOLVE"] --> R["Runtime"]
+    E --> N["Environment"]
+    E --> V["Evaluation"]
+    E --> A["Adaptation"]
+    E --> T["Training, optional"]
+    N --> S["Sandbox"]
+    V --> O["Experiment record"]
+    A --> O
+    T --> O
+~~~
 
-    DEV --> S["Endophasia semantic services"]
-    EVO --> S
+These projects are useful reference points for future adapters. None is bundled with Endophasia today.
 
-    S --> OBS["Exact runtime capability ports"]
-    OBS --> PA["Pi adapter"]
-    PA --> PI["Pi runtime"]
+| Job | Candidate provider |
+| :--- | :--- |
+| Run packaged agent benchmarks | [Harbor](https://github.com/harbor-framework/harbor) |
+| Large optional agent environment pack | [MiMo-V2.6-RL-oss](https://huggingface.co/datasets/XiaomiMiMo/MiMo-V2.6-RL-oss) |
+| Connect existing agents to rollout and training infrastructure | [Uni-Agent](https://github.com/verl-project/uni-agent) and [mimoagent](https://github.com/XiaomiMiMo/mimoagent) |
+| Run isolated environments | Local Docker, [CubeSandbox](https://github.com/TencentCloud/CubeSandbox), or another sandbox provider |
+| Simulate agent environments | [Qwen-AgentWorld](https://github.com/QwenLM/Qwen-AgentWorld) |
+| Generate and select harness candidates | [Reef](https://github.com/Human-Agent-Society/reef), [RRSI](https://github.com/google-research/rrsi), or another adaptation provider |
+| Train model weights | [verl](https://github.com/verl-project/verl), [ROLL](https://github.com/alibaba/ROLL), [Molt](https://github.com/NVIDIA-NeMo/labs-molt), or another training provider |
 
-    OBS -. future conformance .-> CA["Future Codex adapter"]
-    CA --> CODEX["Codex app-server"]
+Large datasets, container images, local models, and training stacks should be optional downloads. Selecting a MiMo experiment should fetch a pinned pack or the required subset. Installing Endophasia should not fetch it.
 
-    OBS -. exact capability only .-> PRA["Prime semantic adapter when admitted"]
-    PRA --> PRI["Prime RPC ingress"]
-    PRI --> PRIME["Prime Agent"]
+A stored experiment should identify the exact inputs needed to understand the result.
 
-    EVO -. future adaptation .-> A["Adaptation plane\nReef-shaped recipes · episodes · candidates"]
-    A -. experiment evidence / version state .-> S
+~~~text
+candidate revision
+runtime and model identity
+cognition policy
+environment pack and revision
+sandbox image or template identity
+evaluator and grader identity
+seeds and run count
+usage and wall time
+result bundle digest
+~~~
 
-    S --> C["Continuity / controls"]
-    S --> MT["Mission Trace"]
-    S --> U["Usage / accounting / outcomes"]
+A simulated environment must say that it was simulated. A world-model result must not appear as a real execution result.
 
-    S -. future cognition policy .-> P["Pallium\nWork · Dream · semantic sensors"]
-    S -. future evidence integration .-> M["Magpie\nprovenance · standing"]
-    S -. future authority integration .-> D["Deadbolt\npermission · promotion · execution receipts"]
-```
+## Magpie and Deadbolt
 
-### Boundary rules
+EVOLVE creates many observations that can be mistaken for conclusions. Magpie can keep that distinction explicit.
 
-| Layer | Owns | Must not silently become |
-| :--- | :--- | :--- |
-| **Endophasia** | Semantic observations, steering surfaces, presentation contracts, continuity views. | Truth or execution authority. |
-| **Runtime adapter** | Mapping one runtime into exact Endophasia capabilities. | A place to hide semantic mismatches. |
-| **Runtime ingress** | Process / transport / runtime-specific mechanics. | A common semantic API. |
-| **Presentation** | Read-only projections and explicit controls. | A source of canonical runtime facts. |
-| **Magpie** | Future evidence, provenance, replay, epistemic standing. | General orchestration. |
-| **Deadbolt** | Future consequential-action authority and receipts. | Cognition or memory. |
-| **Pallium / cognition layer** | Future reasoning, semantic sensors, and Work / Dream policy experiments. | Permission or epistemic authority. |
-| **Adaptation plane** | Future episodes, candidate lineage, evaluation, selection, version publication, and rollback. | A runtime, a source of epistemic standing, or an authority boundary. |
+Endophasia should keep the large operational records in the experiment system. Magpie should receive the claims and evidence that matter, plus immutable identities for the experiment bundles that support them.
+
+For example, these are different statements:
+
+~~~text
+candidate c17 passed 43 of 50 tasks
+candidate c17's result bundle has digest X
+candidate c17 is supported as better under policy P
+candidate c17 may replace the current version
+~~~
+
+The first statement is an evaluation result. The second can be checked mechanically. The third is an epistemic conclusion under a named policy. The fourth is an authority decision.
+
+The intended split is:
+
+~~~mermaid
+flowchart TB
+    R["Experiment run"] --> B["Immutable experiment bundle"]
+    B --> E["Endophasia record"]
+    E --> M["Magpie: claims, evidence, standing"]
+    E --> D["Deadbolt: permission"]
+    M --> C["Cockpit explanation"]
+    D --> X["Authorized effect"]
+~~~
+
+Magpie should not become an RL replay buffer. SPEAR-style self-imitation, Reef history, or trainer replay data belongs with the adaptation or training system.
+
+Deadbolt should not decide what evidence means. It decides whether a consequential action is allowed.
+
+This split also leaves room for disagreement. An in-distribution benchmark can support a candidate while a held-out benchmark supplies counterevidence. Endophasia should show both. Magpie can later apply explicit contradiction, currentness, origin, and standing rules without reducing the record to one score.
 
 ## Plans are not effects
 
-A model proposal should remain inspectable before it becomes consequential.
+A model proposal remains inspectable before any consequential action.
 
-```text
-model intent
-    │
-    ▼
-structured proposal
-    │
-    ▼
-inspectable plan
-    │
-    ▼
-policy / review
-    │
-    ▼
-authority boundary
-    │
-    ▼
-real effect
-    │
-    ▼
-receipt
-```
+~~~mermaid
+flowchart TB
+    I["Model intent"] --> P["Structured proposal"]
+    P --> R["Review and policy"]
+    R --> A["Authority check"]
+    A --> E["Real effect"]
+    E --> C["Receipt"]
+~~~
 
-The intended authority boundary is Deadbolt.
+A valid proposal does not widen the model's permission.
 
-A valid plan is still only a proposal. A model's confidence never widens its permission.
+## Local and white-box work
 
-## Operational state is not epistemic memory
+Local models may expose internal state that hosted APIs do not.
 
-Endophasia already has durable runtime/session state. That does not make it an epistemic memory system.
+Future experiments may include activation probes, local verification models, white-box interventions, context instrumentation, and J-space views. Every such feature needs a concrete model or runtime contract.
 
-The intended separation is:
+If the required state is not available, Endophasia should report \`UNAVAILABLE\`.
 
-```text
-runtime / session state
-    operational continuity
-
-Mission Trace
-    normalized observable execution
-
-Endophasia
-    steering + semantic projections + presentation
-
-Magpie
-    claims + evidence + provenance + standing
-
-Deadbolt
-    authority + permission + effects + receipts
-```
-
-The future Magpie integration should consume explicit evidence and observations rather than treating every runtime record as a belief.
-
-## White-box / local instrumentation
-
-The long-term project also includes a deliberately experimental local-model layer.
-
-Where a local runtime exposes internal state, Endophasia may explore:
-
-- latent readouts;
-- activation-space probes;
-- white-box interventions;
-- local verification models;
-- richer context instrumentation.
-
-This has sometimes been called **J-space**.
-
-It is not the foundation of Endophasia and it should never be faked for API-only models.
-
-```text
-UNAVAILABLE
-```
-
-is a valid and often preferable answer.
-
-## Where this is going
-
-The likely path forward is incremental rather than a giant runtime abstraction.
+## Roadmap
 
 ### Near term
 
-1. **Complete the Prime 0.9.7 conformance work without weakening the contracts.**
-   RPC, ACP, and durable-file evidence remain distinct; qualified similarity does not become capability admission.
+1. Complete the Prime 0.9.7 conformance study without changing the contracts to fit Prime.
+2. Keep Runtime Profile v0 as a read-only statement of installed Endophasia capabilities.
+3. Continue runtime-neutral continuity and control work only where a runtime exposes enough evidence.
+4. Improve the cockpit with clearer provenance and controls.
+5. Specify DEVELOP and EVOLVE records before building an adaptation loop.
+6. Define Environment Profile and Evaluation Profile contracts.
 
-2. **Use Runtime Profile v0 as the truthful presentation boundary.**
-   Keep capability attestation display-only and separate from runtime build identity, negotiation, and feature detection.
+### Next
 
-3. **Continue making Continuity and controls runtime-neutral only where evidence supports it.**
-   Preserve the distinction between durable history, active context projection, provider-visible input, configured state, and in-flight state.
+1. Audit Codex app-server against the existing Endophasia contracts.
+2. Add versioned WORK and DREAM cognition policies.
+3. Add the planned reasoning, rigour, explore, verify, compute, and tool controls.
+4. Define experiment, candidate, episode, comparison, and selection records.
+5. Add a first benchmark provider, with Harbor as a strong candidate.
+6. Add a local sandbox provider, then keep CubeSandbox or another remote provider behind the same contract.
+7. Define an optional Magpie experiment-evidence seam without writing Endophasia-specific semantics into Magpie's log format.
 
-4. **Keep improving the Cockpit as an instrument panel.**
-   More useful projections, richer controls, and clearer provenance; not decorative telemetry.
+### Later
 
-5. **Specify DEVELOP / EVOLVE as presentation and coordination regimes before implementing an Evolve engine.**
-   The regime switch must not silently alter authority, standing, or runtime capability claims.
+1. Add optional adaptation providers such as Reef or RRSI.
+2. Add optional MiMo environment packs and other benchmark packs.
+3. Test simulated environments such as Qwen-AgentWorld, with explicit simulated provenance and real-environment confirmation.
+4. Add optional training providers after the experiment and evaluation contracts are stable.
+5. Add Deadbolt promotion and deployment checks.
+6. Continue local white-box experiments where the model exposes the required state.
 
-### Medium term
+The constraint is simple:
 
-- Codex app-server conformance and, if justified, a runtime-specific ingress / adapter;
-- runtime-managed installation, exact version pinning, and rollback;
-- richer continuity and branch inspection;
-- versioned Work / Dream cognition policies;
-- the planned cognitive controls: Reasoning, Epistemic Rigour, Explore, Verify, Compute Appetite, and Tool Initiative;
-- semantic sensors that clearly distinguish raw observations from derived judgments;
-- independent checker / challenge flows;
-- deterministic instrument surfaces for tests, CI, benchmarks, and Git state;
-- proposal and review surfaces before consequential actions;
-- explicit Adaptation Profile / Experiment Profile design rather than expanding RuntimeProfileV0 into a feature blob.
-
-### Longer term
-
-- an **Evolve** environment for scenarios, episodes, candidates, evaluation, comparison, promotion, and rollback;
-- a Reef-shaped adaptation integration, with Prime as a particularly expressive executor but not a mandatory one;
-- **Magpie** for governed epistemic memory and experiment evidence;
-- **Deadbolt** for governed action and candidate promotion / deployment;
-- local white-box cognition experiments and J-space where the model substrate actually permits them;
-- portable continuity across runtime boundaries;
-- richer experiential/world-state integration where it can remain inspectable.
-
-The project should keep one constraint through all of that:
-
-> **Do not make the system look more certain, more unified, or more capable than the evidence allows.**
+> Do not report more certainty, compatibility, evidence, or authority than the recorded inputs support.
 
 ## Current state
 
-Merged `main` currently includes the Pi-backed runtime and browser presentation path, the v0 observation/control surfaces above, the runtime-neutral observation boundary, the merged Prime RPC ingress, Continuity Remote v0, and Runtime Profile v0 with its cockpit Capability View.
+Merged \`main\` includes the Pi-backed runtime and browser cockpit, Mission Trace, Session Overview, Runtime Metrics, Operation Outcome, Usage, Continuity Remote v0, controls, the runtime-neutral observation contracts, Runtime Profile v0, and the Prime RPC ingress.
 
-Prime 0.9.7 conformance work is currently in [PR #26](https://github.com/noctem-o/endophasia/pull/26). It remains research-only: no Prime production capability is admitted by that work as currently measured.
+Prime 0.9.7 conformance is active in [PR #26](https://github.com/noctem-o/endophasia/pull/26). Its current matrix admits no exact Prime capability.
 
-DEVELOP / EVOLVE, Codex integration, Reef adaptation, Work / Dream policy compilation, semantic sensors, and the broader cognitive control vocabulary described above are architectural direction rather than merged product claims.
+DEVELOP and EVOLVE, Codex support, environment providers, adaptation providers, training providers, Magpie integration, Deadbolt integration, WORK and DREAM policy compilation, semantic sensors, and J-space controls are design work unless stated otherwise.
 
-The repository is suitable for experimentation and architecture work. It is not yet a stable end-user product or a finished multi-runtime agent platform.
+Endophasia is ready for architecture experiments. It is not a stable multi-runtime product.
 
 ## Development
 
-Most Endophasia-specific work lives under:
+Most Endophasia code is under:
 
-```text
+~~~text
 packages/endophasia/
-  src/            semantic contracts, services, Pi adapter
-  runtime/        worker/runtime composition
-  presentation/   headless presentation client
+  src/            contracts, services, Pi adapter
+  runtime/        worker and runtime composition
+  presentation/   typed presentation client
   cockpit/        browser cockpit
-  research/       conformance / architecture experiments
-  test/           semantic, integration, hostile and browser tests
-```
+  research/       conformance experiments
+  test/           unit, integration, hostile, browser tests
+~~~
 
-Useful architecture notes live in `docs/`, including:
+Architecture notes live in \`docs/\`. Current examples include:
 
-- `runtime-observation-boundary-v0.md`
-- `prime-runtime-conformance-v0.md`
+~~~text
+runtime-observation-boundary-v0.md
+prime-runtime-conformance-v0.md
+~~~
 
-The Prime conformance probe is intentionally research-only and does not form a production dependency.
+The Prime conformance code is research-only and is not a production dependency.
 
 ## License
 
 MIT.
 
-Endophasia inherits and builds around upstream Pi components under their applicable licenses. See the repository history and package metadata for component-level details.
+Endophasia inherits and builds around upstream Pi components under their applicable licenses. See the package metadata and repository history for component-specific details.
