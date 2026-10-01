@@ -2,6 +2,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import {
+	chmodSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -273,6 +274,57 @@ describe("Conformance Lab byte references and publication", () => {
 });
 
 describe("Conformance Lab repository identity", () => {
+	it("hashes original commits and blobs despite local replacement refs (PR #27 P1)", () => {
+		const dir = mkdtempSync(join(tmpdir(), "lab-replace-"));
+		const git = (args: string[]) =>
+			execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", stdio: "pipe" }).trim();
+		try {
+			git(["init"]);
+			writeFileSync(join(dir, "probe.ts"), "export const probe = 1;\n");
+			git(["add", "probe.ts"]);
+			git(["-c", "user.name=Lab Test", "-c", "user.email=lab@example.invalid", "commit", "-m", "original"]);
+			const original = cleanRepositoryIdentity(dir);
+			const originalBlob = git(["rev-parse", "HEAD:probe.ts"]);
+			writeFileSync(join(dir, "probe.ts"), "export const probe = 2;\n");
+			git(["add", "probe.ts"]);
+			git(["-c", "user.name=Lab Test", "-c", "user.email=lab@example.invalid", "commit", "-m", "replacement"]);
+			const replacement = cleanRepositoryIdentity(dir);
+			const replacementBlob = git(["rev-parse", "HEAD:probe.ts"]);
+			git(["replace", original.commit, replacement.commit]);
+			// Change only this temporary fixture's ref; retain replacement checkout bytes without resetting any worktree.
+			git(["update-ref", "HEAD", original.commit]);
+			expect(git(["status", "--porcelain"])).toBe("");
+			expect(sourceDigestAtCommit(dir, original.commit)).toBe(original.sourceDigest);
+			expect(() => cleanRepositoryIdentity(dir)).toThrow();
+			git(["replace", "-d", original.commit]);
+			git(["update-ref", "HEAD", replacement.commit]);
+			git(["replace", originalBlob, replacementBlob]);
+			expect(sourceDigestAtCommit(dir, original.commit)).toBe(original.sourceDigest);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+	it.each(["remove", "add"])("detects %s executable bits with core.fileMode=false (PR #27 P1)", (attack) => {
+		const dir = mkdtempSync(join(tmpdir(), "lab-mode-"));
+		const git = (args: string[]) =>
+			execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", stdio: "pipe" }).trim();
+		try {
+			git(["init"]);
+			const path = join(dir, "probe.ts");
+			writeFileSync(path, "export const probe = 1;\n");
+			chmodSync(path, attack === "remove" ? 0o755 : 0o644);
+			git(["add", "probe.ts"]);
+			git(["-c", "user.name=Lab Test", "-c", "user.email=lab@example.invalid", "commit", "-m", "fixture"]);
+			const identity = cleanRepositoryIdentity(dir);
+			git(["config", "core.fileMode", "false"]);
+			chmodSync(path, attack === "remove" ? 0o644 : 0o755);
+			expect(git(["status", "--porcelain"])).toBe("");
+			expect(() => cleanRepositoryIdentity(dir)).toThrow("executable mode");
+			expect(sourceDigestAtCommit(dir, identity.commit)).toBe(identity.sourceDigest);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 	it.each([
 		"tracked edit",
 		"transitive edit",

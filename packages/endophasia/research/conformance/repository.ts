@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { assertPlainPath } from "./files.ts";
 
@@ -10,7 +10,7 @@ function git(root: string, args: string[], input?: string): Buffer {
 		input,
 		timeout: 30_000,
 		maxBuffer: 128 * 1024 * 1024,
-		env: { ...process.env, GIT_ATTR_NOSYSTEM: "1" },
+		env: { ...process.env, GIT_ATTR_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1" },
 	});
 }
 
@@ -76,7 +76,10 @@ export function cleanRepositoryIdentity(root: string): { commit: string; sourceD
 		const [mode, type, oid] = entry.slice(0, tab).split(" ");
 		if (type !== "blob" || !["100644", "100755"].includes(mode!)) throw new Error("plain tracked files required");
 		const name = entry.slice(tab + 1);
-		const bytes = readFileSync(assertPlainPath(join(root, name), "file"));
+		const path = assertPlainPath(join(root, name), "file");
+		if ((lstatSync(path).mode & 0o111) !== (mode === "100755" ? 0o111 : 0))
+			throw new Error(`tracked executable mode differs from commit: ${name}`);
+		const bytes = readFileSync(path);
 		// Compare every tracked file, including configuration and inputs hidden by index flags.
 		if (createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex") !== oid) {
 			// Only tracked text/eol policy permits CRLF checkout bytes; custom filters cannot excuse differences.
