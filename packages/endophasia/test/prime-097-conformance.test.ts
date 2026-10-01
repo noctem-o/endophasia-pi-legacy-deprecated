@@ -46,7 +46,7 @@ describe("audited historical/current profiles", () => {
 		expect(baseline.every((r) => r.provenance.probeVersion === "0.13.0" && auditedProvenance(r.provenance))).toBe(
 			true,
 		);
-		expect(rpc.every((r) => r.provenance.probeVersion === "0.14.5" && auditedProvenance(r.provenance))).toBe(true);
+		expect(rpc.every((r) => r.provenance.probeVersion === "0.14.6" && auditedProvenance(r.provenance))).toBe(true);
 		for (const set of [baseline, rpc])
 			expect(buildPrimeConformanceReportV0(set).findings.every((f) => f.basis === "established")).toBe(true);
 		expect(buildPrimeConformanceReportV0(rpc, { reference: baseline[0]!.provenance }).drift).toMatchObject({
@@ -69,6 +69,7 @@ describe("audited historical/current profiles", () => {
 		["old 0.14.0 instrument", { probeVersion: "0.14.0" }],
 		["old 0.14.2 instrument", { probeVersion: "0.14.2" }],
 		["old 0.14.4 instrument", { probeVersion: "0.14.4" }],
+		["old 0.14.5 instrument", { probeVersion: "0.14.5" }],
 		["dirty checkout", { build: "dirty-checkout" }],
 		["unknown checkout", { build: "unverified-checkout" }],
 		["unverified executable", { build: "binary", commit: undefined }],

@@ -16,6 +16,7 @@ import type {
 	PrimeSessionEntryEvidenceV0,
 	PrimeStatsEvidenceV0,
 } from "./evidence.ts";
+import { unretainedAccountingKeys } from "./evidence.ts";
 import type {
 	PrimeAssistantEvidenceV0,
 	PrimeEvidenceEventV0,
@@ -339,6 +340,8 @@ export function decodePrimeSessionLineV0(raw: string, line: number): PrimeSessio
 	const entry = object(parsed, path);
 	const type = text(entry.type, `${path}.type`);
 	const keys = Object.keys(entry).sort();
+	if (unretainedAccountingKeys(type, keys).length)
+		throw new PrimeDecodeError(`${path} carries unretained accounting fields`);
 	// The header carries the session id; every other entry extends SessionEntryBase (id, parentId).
 	if (type === "session") return { type, id: text(entry.id, `${path}.id`), keys };
 	const id = text(entry.id, `${path}.id`);
@@ -372,15 +375,9 @@ export function decodePrimeSessionLineV0(raw: string, line: number): PrimeSessio
 		default:
 			// An unknown entry is kept for forward compatibility only when it carries no accounting: dropping a usage the
 			// probe cannot decode would silently undercount every usage projection and rebuilt metric.
-			if (ACCOUNTING_KEYS.some((key) => key in entry)) {
-				throw new PrimeDecodeError(`${path} is an unknown entry type carrying accounting fields`);
-			}
 			return base;
 	}
 }
-
-/** Field names that carry usage on any known entry; an unknown entry with one of them cannot be read safely. */
-const ACCOUNTING_KEYS = ["usage", "childUsage", "aggregateUsage", "cost"] as const;
 
 /**
  * Decode a whole session file's text. Only the single empty element after the final newline is skipped: a blank line

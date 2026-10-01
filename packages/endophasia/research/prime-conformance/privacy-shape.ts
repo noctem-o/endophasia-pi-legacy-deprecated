@@ -47,6 +47,8 @@ export function rpcPrivacyShapeProblems(run: PrimeScenarioEvidenceV0): string[] 
 			"protocolErrors",
 			"failures",
 		]);
+		if (!Object.hasOwn(run, "description") || typeof run.description !== "string")
+			throw new Error("required RPC description missing");
 		closed(run.provenance, [
 			"source",
 			"version",

@@ -471,9 +471,7 @@ describe("strict session-file decoding", () => {
 		expectDecodeError(() => decodePrimeSessionFileV0(`${file(header, { ...lines.user, parentId: header.id })}\n`));
 		expectDecodeError(() => decodePrimeSessionLineV0(JSON.stringify(mutate(lines.assistant!, ["parentId"], "")), 2));
 		const accounting = { type: "future_entry", id: "f1", parentId: "a2", timestamp: "t", usage };
-		expect(() => decodePrimeSessionLineV0(JSON.stringify(accounting), 3)).toThrow(
-			"unknown entry type carrying accounting",
-		);
+		expect(() => decodePrimeSessionLineV0(JSON.stringify(accounting), 3)).toThrow("unretained accounting");
 	});
 
 	it("rejects malformed and non-object lines without quoting them", () => {

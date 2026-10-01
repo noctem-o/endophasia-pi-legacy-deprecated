@@ -5,7 +5,7 @@
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.14.5";
+export const PROBE_VERSION = "0.14.6";
 
 /** Required on every sanitized scenario, including diagnostics. Optional build identities remain separate. */
 export function assertRequiredProvenance(value: unknown, mode: "rpc" | "acp"): void {
@@ -320,6 +320,19 @@ export function invalidStatsFieldsV0(stats: PrimeStatsEvidenceV0): string[] {
 	return Object.entries(fields).flatMap(([name, value]) => (isCountV0(value) ? [] : [name]));
 }
 
+/** Outer accounting accepted by the decoder, shared with the persisted inventory check. Assistant usage is nested. */
+export function unretainedAccountingKeys(type: string, keys: readonly string[]): string[] {
+	const retained =
+		type === "compaction" || type === "branch_summary"
+			? ["usage"]
+			: type === "child_usage_attributed"
+				? ["childUsage", "aggregateUsage"]
+				: [];
+	return keys.filter(
+		(key) => ["usage", "cost", "childUsage", "aggregateUsage"].includes(key) && !retained.includes(key),
+	);
+}
+
 export function entryProblems(where: string, entries: readonly PrimeSessionEntryEvidenceV0[]): string[] {
 	const ids = entries.map((entry) => entry.id);
 	const duplicates = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
@@ -345,6 +358,20 @@ export function entryProblems(where: string, entries: readonly PrimeSessionEntry
 				if (entry[field] !== undefined) required.push(field);
 			if (entry.type !== "message" && entry.usage !== undefined) required.push("usage");
 			return [
+				...(unretainedAccountingKeys(entry.type, entry.keys).length
+					? [`${label}: unretained accounting wire fields`]
+					: []),
+				...(entry.usage !== undefined &&
+				!(
+					["compaction", "branch_summary"].includes(entry.type) ||
+					(entry.type === "message" && entry.role === "assistant")
+				)
+					? [`${label}: usage has no decoded accounting source`]
+					: []),
+				...(entry.type !== "child_usage_attributed" &&
+				(entry.childUsage !== undefined || entry.aggregateUsage !== undefined)
+					? [`${label}: child usage has no decoded accounting source`]
+					: []),
 				...(new Set(entry.keys).size !== entry.keys.length || required.some((key) => !entry.keys.includes(key))
 					? [`${label}: durable key inventory contradicts retained wire observations`]
 					: []),

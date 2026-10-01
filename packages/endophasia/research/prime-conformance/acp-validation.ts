@@ -443,6 +443,20 @@ export function acpScenarioProblems(run: AcpScenarioEvidence): string[] {
 		problems.push("ACP compaction witness incomplete");
 	if (scenario.name !== "unsupported-requests" && run.files.length !== 1)
 		problems.push("ACP durable session witness incomplete");
+	// /compact is a command, not a user message. close-recreate reopens the same cwd's durable file; both prompts remain.
+	const expectedRoles = scenario.markers.flatMap(() =>
+		["tool-run", "tool-error"].includes(scenario.name)
+			? ["user", "assistant", "toolResult", "assistant"]
+			: scenario.name === "cancel-tool"
+				? ["user", "assistant", "toolResult"]
+				: ["user", "assistant"],
+	);
+	const durableRoles = run.files
+		.flat()
+		.filter((entry) => entry.type === "message")
+		.map((entry) => entry.role);
+	if (JSON.stringify(durableRoles) !== JSON.stringify(expectedRoles))
+		problems.push("ACP durable message roles do not witness the scripted prompts");
 	if (run.summaryRequests > run.providerRequests)
 		problems.push("ACP summary request count contradicts provider count");
 	return [...new Set(problems)];
@@ -500,6 +514,19 @@ export function acpUsageScriptMatches(run: AcpScenarioEvidence): boolean {
 	if (assistants.length !== expected.length) return false;
 	if (assistants.some((entry, i) => !exactUsage(entry.usage, expected[i]!))) return false;
 	const summaries = run.files.flat().filter((entry) => entry.type === "compaction");
+	// Every retained accounting source must belong to this script. New summary/child rows are accounting drift,
+	// even when the known assistant and compaction rows still match exactly.
+	if (
+		run.files
+			.flat()
+			.some(
+				(entry) =>
+					(entry.usage !== undefined && !assistants.includes(entry) && !summaries.includes(entry)) ||
+					entry.childUsage !== undefined ||
+					entry.aggregateUsage !== undefined,
+			)
+	)
+		return false;
 	if (summaries.length !== (names === "compaction" ? 1 : 0)) return false;
 	if (summaries.length) {
 		if (!exactUsage(summaries[0]!.usage, expectedPrimeUsageV0("summary", PROBE_MODEL_COST), run.summaryRequests))
