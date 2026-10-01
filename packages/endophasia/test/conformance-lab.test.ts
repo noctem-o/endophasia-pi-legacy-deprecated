@@ -279,6 +279,7 @@ describe("Conformance Lab repository identity", () => {
 		"untracked",
 		"hidden tracked edit",
 		"hidden configuration edit",
+		"undeclared CRLF",
 		"linked source",
 		"linked root",
 	])("refuses %s instrumentation", (attack) => {
@@ -309,6 +310,7 @@ describe("Conformance Lab repository identity", () => {
 				writeFileSync(join(dir, "configuration.json"), '{"injected":true}');
 				expect(git(["status", "--porcelain"])).toBe("");
 			}
+			if (attack === "undeclared CRLF") writeFileSync(join(dir, "probe.ts"), "export const probe = 1;\r\n");
 			if (attack === "linked source") {
 				rmSync(join(dir, "probe.ts"));
 				symlinkSync(join(dir, "dependency.ts"), join(dir, "probe.ts"));
@@ -322,6 +324,32 @@ describe("Conformance Lab repository identity", () => {
 			expect(() => cleanRepositoryIdentity(root)).toThrow();
 			expect(sourceDigestAtCommit(dir, identity.commit)).toBe(identity.sourceDigest); // Working changes cannot retag historical objects.
 			if (root !== dir) rmSync(root);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+	it("accepts only explicitly declared CRLF checkout normalization while retaining hidden-edit checks", () => {
+		const dir = mkdtempSync(join(tmpdir(), "lab-eol-"));
+		const git = (args: string[]) =>
+			execFileSync("git", ["-C", dir, ...args], { stdio: "pipe", encoding: "utf8" }).trim();
+		try {
+			git(["init"]);
+			writeFileSync(join(dir, "probe.ts"), "export const probe = 1;\n");
+			writeFileSync(join(dir, ".gitattributes"), "*.bat text eol=crlf\n");
+			writeFileSync(join(dir, "run.bat"), "echo example\r\n");
+			git(["add", "probe.ts", ".gitattributes", "run.bat"]);
+			git(["-c", "user.name=Lab Test", "-c", "user.email=lab@example.invalid", "commit", "-m", "fixture"]);
+			const identity = cleanRepositoryIdentity(dir);
+			writeFileSync(join(dir, "run.bat"), "echo example\r\n");
+			expect(git(["status", "--porcelain"])).toBe("");
+			expect(cleanRepositoryIdentity(dir)).toEqual(identity);
+			git(["update-index", "--skip-worktree", "run.bat"]);
+			writeFileSync(join(dir, "run.bat"), "echo changed\r\n");
+			expect(git(["status", "--porcelain"])).toBe("");
+			expect(() => cleanRepositoryIdentity(dir)).toThrow("tracked execution differs");
+			writeFileSync(join(dir, "run.bat"), "echo example\r\n");
+			writeFileSync(join(dir, ".git/info/attributes"), "*.bat text eol=crlf\n");
+			expect(() => cleanRepositoryIdentity(dir)).toThrow("unbound local attributes");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
