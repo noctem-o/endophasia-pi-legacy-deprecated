@@ -14,12 +14,24 @@ function git(root: string, args: string[], input?: string): Buffer {
 	});
 }
 
+/** Object IDs use the repository's hash: 40 hex digits for SHA-1, 64 for SHA-256. */
+const objectIdLength = { sha1: 40, sha256: 64 } as const;
+function objectFormat(root: string): keyof typeof objectIdLength {
+	const format = git(root, ["rev-parse", "--show-object-format"]).toString().trim();
+	if (format !== "sha1" && format !== "sha256") throw new Error("unsupported object format");
+	return format;
+}
+function blobId(format: keyof typeof objectIdLength, bytes: Buffer): string {
+	return createHash(format).update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+}
+
 /** Hash tracked JS/TS source names/NUL/bytes/NUL at an exact commit, without checking out or executing it.
  * This is a JS/TS fingerprint. The exact commit binds all tracked content; studies must bind other execution inputs.
  */
 export function sourceDigestAtCommit(root: string, commit: string): string {
 	assertPlainPath(root, "directory");
-	if (!/^[0-9a-f]{40}$/.test(commit) || commit.length !== 40) throw new Error("exact commit required");
+	const length = objectIdLength[objectFormat(root)];
+	if (!/^[0-9a-f]+$/.test(commit) || commit.length !== length) throw new Error("exact commit required");
 	if (
 		git(root, ["rev-parse", `${commit}^{commit}`])
 			.toString()
@@ -71,17 +83,20 @@ export function cleanRepositoryIdentity(root: string): { commit: string; sourceD
 	if (git(root, ["status", "--porcelain", "--untracked-files=all"]).length) throw new Error("dirty instrument");
 	const commit = git(root, ["rev-parse", "HEAD"]).toString().trim();
 	const sourceDigest = sourceDigestAtCommit(root, commit);
+	const format = objectFormat(root);
 	for (const entry of git(root, ["ls-tree", "-r", "-z", commit]).toString().split("\0").filter(Boolean)) {
 		const tab = entry.indexOf("\t");
 		const [mode, type, oid] = entry.slice(0, tab).split(" ");
 		if (type !== "blob" || !["100644", "100755"].includes(mode!)) throw new Error("plain tracked files required");
 		const name = entry.slice(tab + 1);
 		const path = assertPlainPath(join(root, name), "file");
-		if ((lstatSync(path).mode & 0o111) !== (mode === "100755" ? 0o111 : 0))
+		// 100755 requires the owner execute bit (Git's own rule); 100644 permits no execute bit at all.
+		const permissions = lstatSync(path).mode;
+		if (mode === "100755" ? (permissions & 0o100) === 0 : (permissions & 0o111) !== 0)
 			throw new Error(`tracked executable mode differs from commit: ${name}`);
 		const bytes = readFileSync(path);
 		// Compare every tracked file, including configuration and inputs hidden by index flags.
-		if (createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex") !== oid) {
+		if (blobId(format, bytes) !== oid) {
 			// Only tracked text/eol policy permits CRLF checkout bytes; custom filters cannot excuse differences.
 			const localAttributes = resolve(
 				root,
@@ -102,11 +117,7 @@ export function cleanRepositoryIdentity(root: string): { commit: string; sourceD
 				.toString()
 				.split("\0");
 			const normalized = Buffer.from(bytes.toString("latin1").replace(/\r\n/g, "\n"), "latin1");
-			if (
-				attrs[2] !== "set" ||
-				attrs[5] !== "crlf" ||
-				createHash("sha1").update(`blob ${normalized.length}\0`).update(normalized).digest("hex") !== oid
-			)
+			if (attrs[2] !== "set" || attrs[5] !== "crlf" || blobId(format, normalized) !== oid)
 				throw new Error(`tracked execution differs from commit: ${name}`);
 		}
 	}

@@ -26,6 +26,8 @@ const input = [
 	{ path: "runs/a.json", bytes: "{}\n" },
 ];
 const manifest = input.map((m) => ({ path: m.path, sha256: sha256(m.bytes) }));
+// publishReference installs only on Linux (atomic rename exchange); elsewhere it must refuse.
+const LINUX = process.platform === "linux";
 
 describe("Conformance Lab plain JSON boundary", () => {
 	it.each([
@@ -129,7 +131,16 @@ describe("Conformance Lab complete deterministic scenario sets", () => {
 });
 
 describe("Conformance Lab byte references and publication", () => {
-	it("publishes complete bytes and verifies independently of manifest/capture order", () => {
+	it.skipIf(LINUX)("refuses publication off Linux without staging", () => {
+		const dir = mkdtempSync(join(tmpdir(), "lab-platform-"));
+		try {
+			expect(() => publishReference(dir, "reference", manifest, input)).toThrow("requires Linux");
+			expect(readdirSync(dir)).toEqual([]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+	it.runIf(LINUX)("publishes complete bytes and verifies independently of manifest/capture order", () => {
 		const dir = mkdtempSync(join(tmpdir(), "lab-reference-"));
 		try {
 			publishReference(dir, "reference", manifest, [...input].reverse());
@@ -142,16 +153,18 @@ describe("Conformance Lab byte references and publication", () => {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
-	it.each([
-		"partial",
-		"duplicate",
-		"digest",
-		"changed report",
-		"missing member",
-		"extra member",
-		"metadata",
-		"oversize",
-	])("refuses %s, preserving the installed complete bundle", (attack) => {
+	it
+		.runIf(LINUX)
+		.each([
+			"partial",
+			"duplicate",
+			"digest",
+			"changed report",
+			"missing member",
+			"extra member",
+			"metadata",
+			"oversize",
+		])("refuses %s, preserving the installed complete bundle", (attack) => {
 		const dir = mkdtempSync(join(tmpdir(), "lab-invalid-"));
 		try {
 			publishReference(dir, "reference", manifest, input);
@@ -176,16 +189,18 @@ describe("Conformance Lab byte references and publication", () => {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
-	it.each([
-		"report bytes",
-		"missing",
-		"extra",
-		"extra empty directory",
-		"linked file",
-		"linked directory",
-		"linked root",
-		"linked ancestor",
-	])("detects on-disk %s", (attack) => {
+	it
+		.runIf(LINUX)
+		.each([
+			"report bytes",
+			"missing",
+			"extra",
+			"extra empty directory",
+			"linked file",
+			"linked directory",
+			"linked root",
+			"linked ancestor",
+		])("detects on-disk %s", (attack) => {
 		const dir = mkdtempSync(join(tmpdir(), "lab-tamper-"));
 		try {
 			publishReference(dir, "reference", manifest, input);
@@ -326,6 +341,57 @@ describe("Conformance Lab repository identity", () => {
 		}
 	});
 	it.each([
+		{ committed: "755", worktree: "700", accepted: true },
+		{ committed: "755", worktree: "744", accepted: true },
+		{ committed: "755", worktree: "655", accepted: false },
+		{ committed: "644", worktree: "654", accepted: false },
+	])(
+		"follows Git's owner execute bit for committed $committed checked out as $worktree (PR #27 P2)",
+		({ committed, worktree, accepted }) => {
+			const dir = mkdtempSync(join(tmpdir(), "lab-owner-mode-"));
+			const git = (args: string[]) =>
+				execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", stdio: "pipe" }).trim();
+			try {
+				git(["init"]);
+				const path = join(dir, "probe.ts");
+				writeFileSync(path, "export const probe = 1;\n");
+				chmodSync(path, Number.parseInt(committed, 8));
+				git(["add", "probe.ts"]);
+				git(["-c", "user.name=Lab Test", "-c", "user.email=lab@example.invalid", "commit", "-m", "fixture"]);
+				const identity = cleanRepositoryIdentity(dir);
+				git(["config", "core.fileMode", "false"]);
+				chmodSync(path, Number.parseInt(worktree, 8));
+				if (accepted) expect(cleanRepositoryIdentity(dir)).toEqual(identity);
+				else expect(() => cleanRepositoryIdentity(dir)).toThrow("executable mode");
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		},
+	);
+	it("binds SHA-256 repositories with 64-digit commits and SHA-256 blob IDs (PR #27 P2)", () => {
+		const dir = mkdtempSync(join(tmpdir(), "lab-sha256-"));
+		const git = (args: string[]) =>
+			execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", stdio: "pipe" }).trim();
+		try {
+			git(["init", "--object-format=sha256"]);
+			writeFileSync(join(dir, "probe.ts"), "export const probe = 1;\n");
+			writeFileSync(join(dir, "configuration.json"), "{}\n");
+			git(["add", "probe.ts", "configuration.json"]);
+			git(["-c", "user.name=Lab Test", "-c", "user.email=lab@example.invalid", "commit", "-m", "fixture"]);
+			const identity = cleanRepositoryIdentity(dir);
+			expect(identity.commit).toMatch(/^[0-9a-f]{64}$/);
+			expect(identity.commit).toBe(git(["rev-parse", "HEAD"]));
+			expect(sourceDigestAtCommit(dir, identity.commit)).toBe(identity.sourceDigest);
+			expect(() => sourceDigestAtCommit(dir, identity.commit.slice(0, 40))).toThrow("exact commit");
+			git(["update-index", "--skip-worktree", "configuration.json"]);
+			writeFileSync(join(dir, "configuration.json"), '{"injected":true}\n');
+			expect(git(["status", "--porcelain"])).toBe("");
+			expect(() => cleanRepositoryIdentity(dir)).toThrow("tracked execution differs");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+	it.each([
 		"tracked edit",
 		"transitive edit",
 		"untracked",
@@ -409,7 +475,7 @@ describe("Conformance Lab repository identity", () => {
 });
 
 const childPath = fileURLToPath(new URL("./fixtures/conformance/publication-child.mjs", import.meta.url));
-describe("Conformance Lab publication interruption", () => {
+describe.runIf(LINUX)("Conformance Lab publication interruption", () => {
 	it.each(["before", "after", "failed-before", "failed-after"])(
 		"%s exchange retains a complete visible target",
 		async (mode) => {
