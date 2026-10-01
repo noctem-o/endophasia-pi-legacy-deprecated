@@ -5,7 +5,7 @@
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.14.4";
+export const PROBE_VERSION = "0.14.5";
 
 /** Required on every sanitized scenario, including diagnostics. Optional build identities remain separate. */
 export function assertRequiredProvenance(value: unknown, mode: "rpc" | "acp"): void {
@@ -337,7 +337,21 @@ export function entryProblems(where: string, entries: readonly PrimeSessionEntry
 		),
 		...entries.flatMap((entry, index) => {
 			const label = `${where} entry ${index} (${entry.type})`;
+			// These are outer wire keys; role/assistant usage live inside the message key, not beside it.
+			const required = ["type", "id", ...(entry.type === "session" ? [] : ["parentId"])];
+			if (entry.type === "message") required.push("message");
+			if (entry.type === "compaction") required.push("firstKeptEntryId");
+			for (const field of ["targetId", "childUsage", "aggregateUsage"] as const)
+				if (entry[field] !== undefined) required.push(field);
+			if (entry.type !== "message" && entry.usage !== undefined) required.push("usage");
 			return [
+				...(new Set(entry.keys).size !== entry.keys.length || required.some((key) => !entry.keys.includes(key))
+					? [`${label}: durable key inventory contradicts retained wire observations`]
+					: []),
+				...(["compaction", "branch_summary"].includes(entry.type) &&
+				entry.keys.includes("usage") !== (entry.usage !== undefined)
+					? [`${label}: durable usage key contradicts retained wire observations`]
+					: []),
 				...(missingText(entry.type) || missingText(entry.id) ? [`${label}: entry without type or id`] : []),
 				...(entry.type !== "session" && entry.parentId !== null && missingText(entry.parentId)
 					? [`${label}: parentId is neither a non-empty string nor null`]

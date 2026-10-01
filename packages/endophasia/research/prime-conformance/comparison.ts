@@ -1,14 +1,5 @@
 // Research report and the joint 0.9.7 publication gate. Never consumed by Runtime Profile or production ports.
-import {
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readdirSync,
-	readFileSync,
-	renameSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AcpScenarioEvidence } from "./acp-evidence.ts";
 import { ACP_SCENARIOS } from "./acp-probe.ts";
@@ -17,8 +8,10 @@ import { auditedProvenance, PRIME_097 } from "./audited.ts";
 import type { PrimeScenarioEvidenceV0 } from "./evidence.ts";
 import { PROBE_NAME, PROBE_VERSION } from "./evidence.ts";
 import { SCENARIO_NAMES_WITH_INVARIANTS } from "./invariants.ts";
+import { assertPlainEvidence } from "./plain-data.ts";
 import { rpcPrivacyShapeProblems } from "./privacy-shape.ts";
 import { assessPrimeEvidenceV0, type PrimeEvidenceAssessmentV0 } from "./publication.ts";
+import { installReferenceDirectory } from "./reference-swap.ts";
 import { buildPrimeConformanceReportV0, scanForSentinelsV0 } from "./report.ts";
 
 export const CAPABILITIES = [
@@ -74,6 +67,11 @@ export function assessPrime097(
 	rpc: readonly PrimeScenarioEvidenceV0[],
 	acp: readonly AcpScenarioEvidence[],
 ): PrimeEvidenceAssessmentV0 {
+	try {
+		assertPlainEvidence({ rpc, acp });
+	} catch {
+		return { invalid: ["evidence is not plain data"], unpublishable: [] };
+	}
 	const invalid: string[] = rpc.flatMap(rpcPrivacyShapeProblems);
 	const unpublishable: string[] = [];
 	invalid.push(...acp.flatMap(acpPrivacyShapeProblems));
@@ -293,6 +291,11 @@ export function publishPrime097(
 	acp: readonly AcpScenarioEvidence[],
 	baseline: readonly PrimeScenarioEvidenceV0[],
 ): void {
+	try {
+		assertPlainEvidence({ rpc, acp, baseline });
+	} catch {
+		throw new Error("joint fixture publication refused: nonplain evidence");
+	}
 	// The comparison is part of the indivisible reference. Missing/invalid history must not erase an existing report.
 	if (!Array.isArray(baseline) || baseline.some((run) => run.provenance.version !== "0.9.6"))
 		throw new Error("joint fixture publication refused: baseline required");
@@ -330,15 +333,7 @@ export function publishPrime097(
 				);
 		}
 		writeFileSync(join(staging, "report.json"), `${JSON.stringify(report, null, "\t")}\n`);
-		const backup = `${staging}-previous`;
-		if (existsSync(target)) renameSync(target, backup);
-		try {
-			renameSync(staging, target);
-		} catch (error) {
-			if (existsSync(backup)) renameSync(backup, target);
-			throw error;
-		}
-		rmSync(backup, { recursive: true, force: true });
+		installReferenceDirectory(staging, target);
 	} finally {
 		rmSync(staging, { recursive: true, force: true });
 	}

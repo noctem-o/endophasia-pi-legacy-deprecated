@@ -20,6 +20,7 @@ export function controls() {
 		Object.assign(run.provenance, {
 			probeVersion: PROBE_VERSION,
 			researchHash: AUDITED_INSTRUMENT_097.researchHash,
+			endophasiaCommit: AUDITED_INSTRUMENT_097.endophasiaCommit,
 			endophasiaBuild: "clean-checkout",
 		});
 	for (const run of legacy ? acp : []) {

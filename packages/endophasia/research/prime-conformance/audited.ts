@@ -6,7 +6,7 @@ import { PROBE_VERSION } from "./evidence.ts";
 
 // Expected identity is audit data, separate from the executable source it identifies (avoids a self-hash).
 // The clean Endophasia commit binds this tracked registry as well as all executable source.
-function readAuditedInstrument(): { probeVersion: string; researchHash: string } {
+function readAuditedInstrument(): { probeVersion: string; researchHash: string; endophasiaCommit: string } {
 	try {
 		const path = fileURLToPath(new URL("./audited-instrument-097.json", import.meta.url));
 		if (realpathSync(path) !== path) throw new Error("linked registry");
@@ -14,13 +14,20 @@ function readAuditedInstrument(): { probeVersion: string; researchHash: string }
 		if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("registry shape");
 		const record = value as Record<string, unknown>;
 		if (
-			Object.keys(record).length !== 2 ||
+			Object.keys(record).length !== 3 ||
 			record.probeVersion !== PROBE_VERSION ||
 			typeof record.researchHash !== "string" ||
-			!/^[0-9a-f]{64}$/.test(record.researchHash)
+			!/^[0-9a-f]{64}$/.test(record.researchHash) ||
+			typeof record.endophasiaCommit !== "string" ||
+			!/^[0-9a-f]{40}$/.test(record.endophasiaCommit) ||
+			record.endophasiaCommit === "0".repeat(40)
 		)
 			throw new Error("registry coordinates");
-		return { probeVersion: PROBE_VERSION, researchHash: record.researchHash };
+		return {
+			probeVersion: PROBE_VERSION,
+			researchHash: record.researchHash,
+			endophasiaCommit: record.endophasiaCommit,
+		};
 	} catch {
 		throw new Error("invalid audited instrument registry");
 	}
@@ -34,6 +41,7 @@ export const AUDITED_PROFILES = [
 		...PRIME_097,
 		probeVersion: PROBE_VERSION,
 		researchHash: AUDITED_INSTRUMENT_097.researchHash,
+		endophasiaCommit: AUDITED_INSTRUMENT_097.endophasiaCommit,
 		artifactsHash: "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
 		launcherHash: "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
 		lockHash: "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
@@ -59,7 +67,8 @@ export function auditedProvenance(provenance: PrimeProvenanceV0 | undefined): bo
 					(profile.artifactsHash === provenance.artifactsHash &&
 						profile.launcherHash === provenance.launcherHash &&
 						profile.lockHash === provenance.lockHash &&
-						profile.researchHash === provenance.researchHash)),
+						profile.researchHash === provenance.researchHash &&
+						profile.endophasiaCommit === provenance.endophasiaCommit)),
 		)
 	);
 }

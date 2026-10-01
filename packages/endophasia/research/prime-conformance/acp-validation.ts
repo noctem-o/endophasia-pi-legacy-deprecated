@@ -4,6 +4,7 @@ import { ACP_SCENARIOS } from "./acp-probe.ts";
 import { PROBE_MODEL_COST } from "./environment.ts";
 import { assertRequiredProvenance, entryProblems } from "./evidence.ts";
 import { expectedPrimeUsageV0 } from "./fake-provider.ts";
+import { assertPlainEvidence } from "./plain-data.ts";
 import { assertPrivacyDomains } from "./privacy-domains.ts";
 import type { PrimeUsageEvidenceV0 } from "./protocol.ts";
 
@@ -39,6 +40,7 @@ function usage(value: unknown): void {
 /** Privacy/closed shape only: failed or incomplete experiments remain safe diagnostic material. */
 export function acpPrivacyShapeProblems(value: unknown): string[] {
 	try {
+		assertPlainEvidence(value);
 		const v = closed(value, [
 			"schemaVersion",
 			"provenance",

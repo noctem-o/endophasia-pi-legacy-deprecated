@@ -5,6 +5,7 @@ import type { AcpScenarioEvidence } from "./acp-evidence.ts";
 import { acpPrivacyShapeProblems } from "./acp-validation.ts";
 import { buildPrime097Report } from "./comparison.ts";
 import type { PrimeScenarioEvidenceV0 } from "./evidence.ts";
+import { assertPlainEvidence } from "./plain-data.ts";
 import { rpcPrivacyShapeProblems } from "./privacy-shape.ts";
 import { scanForSentinelsV0 } from "./report.ts";
 
@@ -14,6 +15,11 @@ export function writePrime097Diagnostics(
 	acp: readonly AcpScenarioEvidence[],
 	baseline: readonly PrimeScenarioEvidenceV0[],
 ) {
+	try {
+		assertPlainEvidence({ rpc, acp, baseline });
+	} catch {
+		throw new Error("privacy/shape violation; nothing written");
+	}
 	if (
 		rpc.flatMap(rpcPrivacyShapeProblems).length ||
 		acp.flatMap(acpPrivacyShapeProblems).length ||
