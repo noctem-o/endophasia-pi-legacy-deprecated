@@ -17,6 +17,7 @@ import {
 	type PrimeObservationsV0,
 	type PrimeProvenanceV0,
 	type PrimeScenarioEvidenceV0,
+	RPC_EVIDENCE_ARRAYS,
 } from "./evidence.ts";
 import { SENTINEL_PATTERN } from "./fake-provider.ts";
 import { scenarioInvariantProblemsV0 } from "./invariants.ts";
@@ -252,18 +253,6 @@ export function writePrimeFixturesV0(
 	}
 }
 
-const EVIDENCE_ARRAYS = [
-	"events",
-	"abortRequestedAfter",
-	"commands",
-	"stats",
-	"sessionEntries",
-	"entrySnapshots",
-	"stateKeys",
-	"protocolErrors",
-	"failures",
-] as const;
-
 /** Read committed fixtures. The envelope is validated here; the contents are re-checked by the report. */
 export function readPrimeFixturesV0(directory: string): PrimeScenarioEvidenceV0[] {
 	return readdirSync(directory)
@@ -284,7 +273,7 @@ export function readPrimeFixturesV0(directory: string): PrimeScenarioEvidenceV0[
 				typeof fixture.description === "string" &&
 				fixture.observations !== null &&
 				typeof fixture.observations === "object" &&
-				EVIDENCE_ARRAYS.every((key) => Array.isArray(fixture[key]));
+				RPC_EVIDENCE_ARRAYS.every((key) => Array.isArray(fixture[key]));
 			if (!valid) throw new Error(`Invalid Prime fixture ${name}`);
 			return value as PrimeScenarioEvidenceV0;
 		});

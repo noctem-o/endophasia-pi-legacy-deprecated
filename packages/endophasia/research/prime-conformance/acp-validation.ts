@@ -457,6 +457,26 @@ export function acpScenarioProblems(run: AcpScenarioEvidence): string[] {
 		.map((entry) => entry.role);
 	if (JSON.stringify(durableRoles) !== JSON.stringify(expectedRoles))
 		problems.push("ACP durable message roles do not witness the scripted prompts");
+	// File order alone can describe disconnected branches. Each scripted message must continue the prior
+	// message's parent path, permitting configuration/custom records between them without treating them as prompts.
+	for (const file of run.files) {
+		const earlier = new Map<string, (typeof file)[number]>();
+		let previousMessage: string | undefined;
+		for (const entry of file) {
+			if (entry.type === "message") {
+				let parent = typeof entry.parentId === "string" ? earlier.get(entry.parentId) : undefined;
+				const visited = new Set<string>();
+				while (parent && parent.type !== "message" && !visited.has(parent.id)) {
+					visited.add(parent.id);
+					parent = typeof parent.parentId === "string" ? earlier.get(parent.parentId) : undefined;
+				}
+				if ((parent?.type === "message" ? parent.id : undefined) !== previousMessage)
+					problems.push("ACP durable messages do not follow the scripted parent path");
+				previousMessage = entry.id;
+			}
+			earlier.set(entry.id, entry);
+		}
+	}
 	if (run.summaryRequests > run.providerRequests)
 		problems.push("ACP summary request count contradicts provider count");
 	return [...new Set(problems)];

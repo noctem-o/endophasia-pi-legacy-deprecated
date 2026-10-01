@@ -5,7 +5,20 @@
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.14.6";
+export const PROBE_VERSION = "0.14.7";
+
+/** Mandatory RPC envelope lists, shared by fixture reading and the pre-persistence shape gate. */
+export const RPC_EVIDENCE_ARRAYS = [
+	"events",
+	"abortRequestedAfter",
+	"commands",
+	"stats",
+	"sessionEntries",
+	"entrySnapshots",
+	"stateKeys",
+	"protocolErrors",
+	"failures",
+] as const;
 
 /** Required on every sanitized scenario, including diagnostics. Optional build identities remain separate. */
 export function assertRequiredProvenance(value: unknown, mode: "rpc" | "acp"): void {

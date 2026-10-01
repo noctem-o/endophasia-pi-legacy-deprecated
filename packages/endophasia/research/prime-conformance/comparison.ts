@@ -186,13 +186,12 @@ export function buildPrime097Report(
 				semanticFit: ["RuntimeMetricsV0", "UsageLedgerRowV0", "ContinuitySnapshotV0"].includes(contract)
 					? "qualified"
 					: "incompatible",
-				basis:
-					(contract === "RuntimeMetricsV0" || contract === "UsageLedgerRowV0") &&
-					!facts.providerUsageDecodedExactly
+				basis: !established
+					? "unverified"
+					: (contract === "RuntimeMetricsV0" || contract === "UsageLedgerRowV0") &&
+							!facts.providerUsageDecodedExactly
 						? "contradicted"
-						: established
-							? "established"
-							: "unverified",
+						: "established",
 				exactProjection: "unverified",
 				boundary: "durable-session-files, separately observed",
 			},

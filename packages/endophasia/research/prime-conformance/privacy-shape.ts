@@ -1,6 +1,6 @@
 // Defensive fixture boundary: reject payload slots even when their values do not contain a probe sentinel.
 import type { PrimeScenarioEvidenceV0 } from "./evidence.ts";
-import { assertRequiredProvenance } from "./evidence.ts";
+import { assertRequiredProvenance, RPC_EVIDENCE_ARRAYS } from "./evidence.ts";
 import { assertPlainEvidence } from "./plain-data.ts";
 import { assertPrivacyDomains } from "./privacy-domains.ts";
 
@@ -49,6 +49,8 @@ export function rpcPrivacyShapeProblems(run: PrimeScenarioEvidenceV0): string[] 
 		]);
 		if (!Object.hasOwn(run, "description") || typeof run.description !== "string")
 			throw new Error("required RPC description missing");
+		for (const key of RPC_EVIDENCE_ARRAYS)
+			if (!Object.hasOwn(run, key) || !Array.isArray(run[key])) throw new Error("required RPC list missing");
 		closed(run.provenance, [
 			"source",
 			"version",
