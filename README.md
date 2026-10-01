@@ -43,7 +43,7 @@ Endophasia gives those parts explicit contracts and a common place to inspect th
 It does not expose private chain of thought. It does not treat every runtime feature as equivalent. It does not turn a benchmark score into truth or a model proposal into permission.
 
 > [!IMPORTANT]
-> Endophasia is experimental. The current runnable path uses Pi. Prime has a merged transport layer and an active conformance study, but no Prime capability is admitted as exact. Codex, EVOLVE providers, Magpie integration, Deadbolt integration, and weight training are future work unless a section below says otherwise.
+> Endophasia is experimental. The current runnable path uses Pi. Prime has a merged transport layer and a completed, sealed 0.9.7 study; no Prime capability is admitted. Its runtime-admission line is dormant. Codex, EVOLVE providers, Magpie integration, Deadbolt integration, and weight training are future work unless a section below says otherwise.
 
 ## Why Endophasia
 
@@ -182,7 +182,7 @@ The EVOLVE lines above describe the intended experiment space, not a claim that 
 
 DEVELOP covers the current piece of work.
 
-Its main records are the session, turn, context, tools, changes, verification, usage, outcomes, and human steering. Pi is the reference runtime today. Codex is a future runtime candidate. Prime may also run interactive work if its adapter can state the required semantics exactly.
+Its main records are the session, turn, context, tools, changes, verification, usage, outcomes, and human steering. Pi is the reference runtime today. Codex is a future runtime candidate. Prime is primarily an EVOLVE/research subject; its runtime-admission line is dormant after the sealed 0.9.7 result.
 
 ~~~mermaid
 flowchart TB
@@ -191,7 +191,6 @@ flowchart TB
     E --> A["Exact runtime adapter"]
     A --> R["Pi now"]
     A -. "future" .-> X["Codex"]
-    A -. "research" .-> P["Prime"]
 ~~~
 
 DEVELOP asks what the agent is doing now, what the runtime actually reported, and whether the user wants to intervene.
@@ -228,7 +227,7 @@ promote
 
 Promotion is deliberately last. A candidate can win an evaluation and still lack permission to replace anything.
 
-DEVELOP and EVOLVE can use the same runtime. Pi or Codex can be subjects of EVOLVE experiments. Prime can be used in DEVELOP. The mode describes the job, not the software.
+DEVELOP and EVOLVE can use the same runtime. Pi or Codex can be subjects of EVOLVE experiments. Prime remains available for experiments through its transport substrate; it has no admitted Endophasia runtime composition. The mode describes the job, not the software.
 
 ## Work and Dream
 
@@ -267,7 +266,7 @@ EVOLVE needs more coordinates, but they should remain separate contracts.
 
 | Profile | Intended contents |
 | :--- | :--- |
-| Runtime | Pi, Codex, Prime, or another runtime plus exact admitted capabilities. |
+| Runtime | Pi today. Future subjects require deliberate capability admission; Prime admission is dormant. |
 | Model | Hosted or local model identity and the observation level the model permits. |
 | Cognition | WORK, DREAM, or another named policy. |
 | Environment | Task pack, revision, sandbox, reset rules, and whether execution is real or simulated. |
@@ -299,7 +298,7 @@ Pi exposes sessions, steering, follow-up work, aborts, lifecycle events, model a
 
 Endophasia uses those APIs where they match the Endophasia contract.
 
-The repository currently inherits Pi code and Git history. Pi can remain upstream-aware even if Endophasia later moves outside GitHub's fork network. Shared Git ancestry and an explicit Pi remote are enough for reviewed upstream merges.
+The repository currently inherits Pi code and Git history. Pi can remain upstream-aware even if Endophasia later moves outside GitHub's fork network. Shared Git ancestry and an explicit Pi remote are enough for reviewed upstream merges. See [Pi upstream and migration readiness](docs/pi-upstream.md).
 
 ### Prime
 
@@ -307,9 +306,11 @@ The merged Prime 0.9.6 study found qualified similarities but no capability that
 
 PR [#23](https://github.com/noctem-o/endophasia/pull/23) merged the Prime RPC ingress. The ingress owns Prime process and protocol details. It does not install an Endophasia capability.
 
-PR [#26](https://github.com/noctem-o/endophasia/pull/26) audits Prime 0.9.7 at \`08ff1b2e2794ea9e8f4a08d12bc95408a66e1074\` across RPC, ACP, and durable files. The current matrix admits no exact capability and proposes no production capability change.
+Merged PR [#26](https://github.com/noctem-o/endophasia/pull/26) sealed Prime 0.9.7 at `08ff1b2e2794ea9e8f4a08d12bc95408a66e1074` across 12 RPC scenarios, 15 ACP scenarios and durable files with probe `0.14.7`. The [completed audit](docs/prime-runtime-conformance-0.9.7.md) admits no exact capability; `candidateForPR27=[]` is a research result.
 
-Prime remains interesting for EVOLVE because it has persistent REPL state, recursive agents, refinement, goals, autonomous budgets, quality gates, and detailed trajectory accounting. Those features do not change the admission rule.
+Prime runtime admission is dormant. Reopen only when a material upstream semantic change closes a recorded blocker, such as durable operation/outcome identity, complete lifecycle semantics, committed Usage allocation/paging, or matching continuity/context semantics. A version bump alone is insufficient.
+
+Prime remains interesting for EVOLVE because it has persistent REPL state, recursive agents, refinement, goals, autonomous budgets, quality gates, and detailed trajectory accounting. Those features are experimental subjects, not Endophasia capabilities. The process/RPC ingress remains useful for research, EVOLVE experiments and future conformance checks; transport ingress does not imply an admitted runtime.
 
 ### Codex
 
@@ -428,24 +429,22 @@ If the required state is not available, Endophasia should report \`UNAVAILABLE\`
 
 ## Roadmap
 
-### Near term
+### Immediate sequence
 
-1. Complete the Prime 0.9.7 conformance study without changing the contracts to fit Prime.
-2. Keep Runtime Profile v0 as a read-only statement of installed Endophasia capabilities.
-3. Continue runtime-neutral continuity and control work only where a runtime exposes enough evidence.
-4. Improve the cockpit with clearer provenance and controls.
-5. Specify DEVELOP and EVOLVE records before building an adaptation loop.
-6. Define Environment Profile and Evaluation Profile contracts.
+~~~text
+#27  Conformance Lab v0 / post-Prime consolidation
+      ↓
+standalone repository migration (separate owner action)
+      ↓
+#28  Evolution Trace + Experiment Bundle v0
+#29  Environment + Evaluation Profiles / Resource Envelope
+#30  Harbor EVOLVE provider
+#31  Codex app-server conformance
+~~~
 
-### Next
+[Conformance Lab v0](docs/conformance-lab-v0.md) generalizes trustworthy experiment mechanics, not runtime meaning. Each subject keeps its own scenarios, decoder, predicates, classifications and citations. A study can establish nothing exact and still be successful. Prime is the first full adversarial specimen and primarily an EVOLVE/research subject. Codex remains a candidate until its own pinned study exists.
 
-1. Audit Codex app-server against the existing Endophasia contracts.
-2. Add versioned WORK and DREAM cognition policies.
-3. Add the planned reasoning, rigour, explore, verify, compute, and tool controls.
-4. Define experiment, candidate, episode, comparison, and selection records.
-5. Add a first benchmark provider, with Harbor as a strong candidate.
-6. Add a local sandbox provider, then keep CubeSandbox or another remote provider behind the same contract.
-7. Define an optional Magpie experiment-evidence seam without writing Endophasia-specific semantics into Magpie's log format.
+Runtime Profile v0 remains composition root → profile → presentation. Research classifications never generate profiles or install capabilities. Evolution Trace, experiment semantics, providers, profiles and the Codex study are subsequent work.
 
 ### Later
 
@@ -464,7 +463,7 @@ The constraint is simple:
 
 Merged \`main\` includes the Pi-backed runtime and browser cockpit, Mission Trace, Session Overview, Runtime Metrics, Operation Outcome, Usage, Continuity Remote v0, controls, the runtime-neutral observation contracts, Runtime Profile v0, and the Prime RPC ingress.
 
-Prime 0.9.7 conformance is active in [PR #26](https://github.com/noctem-o/endophasia/pull/26). Its current matrix admits no exact Prime capability.
+Prime 0.9.7 conformance is completed and sealed by [PR #26](https://github.com/noctem-o/endophasia/pull/26). Its final matrix admits no exact Prime capability. Runtime admission is dormant; [Conformance Lab v0](docs/conformance-lab-v0.md) retains its result as historical evidence.
 
 DEVELOP and EVOLVE, Codex support, environment providers, adaptation providers, training providers, Magpie integration, Deadbolt integration, WORK and DREAM policy compilation, semantic sensors, and J-space controls are design work unless stated otherwise.
 
@@ -480,7 +479,9 @@ packages/endophasia/
   runtime/        worker and runtime composition
   presentation/   typed presentation client
   cockpit/        browser cockpit
-  research/       conformance experiments
+  research/
+    conformance/  subject-neutral experiment mechanics
+    prime-conformance/  sealed study and subject-specific checker
   test/           unit, integration, hostile, browser tests
 ~~~
 
@@ -489,6 +490,9 @@ Architecture notes live in \`docs/\`. Current examples include:
 ~~~text
 runtime-observation-boundary-v0.md
 prime-runtime-conformance-v0.md
+prime-runtime-conformance-0.9.7.md
+conformance-lab-v0.md
+pi-upstream.md
 ~~~
 
 The Prime conformance code is research-only and is not a production dependency.

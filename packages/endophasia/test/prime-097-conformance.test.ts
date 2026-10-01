@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { sourceDigestAtCommit } from "../research/conformance/repository.ts";
 import type { AcpScenarioEvidence } from "../research/prime-conformance/acp-evidence.ts";
 import { ACP_SCENARIOS } from "../research/prime-conformance/acp-probe.ts";
 import { acpEvidenceProblems, acpUsageScriptMatches } from "../research/prime-conformance/acp-validation.ts";
@@ -18,7 +19,6 @@ import {
 } from "../research/prime-conformance/comparison.ts";
 import type { PrimeProvenanceV0, PrimeScenarioEvidenceV0 } from "../research/prime-conformance/evidence.ts";
 import { SENTINELS } from "../research/prime-conformance/fake-provider.ts";
-import { researchInstrumentHash } from "../research/prime-conformance/instrument.ts";
 import { scenarioInvariantProblemsV0 } from "../research/prime-conformance/invariants.ts";
 import {
 	buildPrimeConformanceReportV0,
@@ -55,8 +55,13 @@ describe("audited historical/current profiles", () => {
 			environment: "different",
 		});
 	});
-	it("binds the captured research build to the committed probe source", () => {
-		expect(rpc[0]!.provenance.researchHash).toBe(researchInstrumentHash());
+	it("binds the historical instrument to source at its recorded capture commit", () => {
+		expect(rpc[0]!.provenance.researchHash).toBe(
+			sourceDigestAtCommit(
+				fileURLToPath(new URL("../../../", import.meta.url)),
+				rpc[0]!.provenance.endophasiaCommit!,
+			),
+		);
 	});
 	it.each([
 		["same version, wrong commit", { commit: "0".repeat(40) }],

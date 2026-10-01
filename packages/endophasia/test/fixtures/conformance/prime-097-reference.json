@@ -1,0 +1,114 @@
+[
+	{
+		"path": "acp/cancel-stream.json",
+		"sha256": "4882540ddfc79b4699c1e2a01edff2f46496f1debfd5a7bc17e917d08015725b"
+	},
+	{
+		"path": "acp/cancel-tool.json",
+		"sha256": "2ea3378c592faf6c0dd568184a438ff51e64a3f151db73141cfad32fcad3cbf4"
+	},
+	{
+		"path": "acp/close-recreate.json",
+		"sha256": "7c39b02cb7905fbf9d56528f84ccf8387f18e96f5b1a0b04f25e76d416e813f0"
+	},
+	{
+		"path": "acp/compaction.json",
+		"sha256": "cf46285d194c376dc2808e6d2627941cde9c4b3acadffd9f1bca1e1a39d66fd3"
+	},
+	{
+		"path": "acp/gate-failure.json",
+		"sha256": "5b7d670b3b5219484e7c5cf2087199cde09ac709f3c538aef4b130d460b85db1"
+	},
+	{
+		"path": "acp/length-stop.json",
+		"sha256": "78671775fcdd5c454c007827ef1a02a02a81b9cda0efc4f226f298aaf00e820d"
+	},
+	{
+		"path": "acp/multi-prompt.json",
+		"sha256": "79a7568ec8ad8e443253d0151de7649f6b6add5c506887bed0b0f1aedc66b38d"
+	},
+	{
+		"path": "acp/provider-failure.json",
+		"sha256": "10305bc581e36c1824c5aab0d25b1408a8483fb7ed87b8872d6ebfa3bab81ba2"
+	},
+	{
+		"path": "acp/reasoning-usage.json",
+		"sha256": "d3be5a56ecfe603d7f91b7c57b0a5009c23d93a9304ea15ffa6d5f5a544bd3ac"
+	},
+	{
+		"path": "acp/simple.json",
+		"sha256": "a659ebf01f6d0250c1d5741930fb9f700f843c3940e90d6783d544f11de49bc3"
+	},
+	{
+		"path": "acp/token-limit.json",
+		"sha256": "d4564045629f47875faae678abf78e66f2ca7e9ddd8a17b5b9d6c4497bc7101a"
+	},
+	{
+		"path": "acp/tool-error.json",
+		"sha256": "d740fcd684a776aade128df95acd16ddc545af3b1882debf0be8410aec1458a4"
+	},
+	{
+		"path": "acp/tool-run.json",
+		"sha256": "cddbad3ea3a0d122ff76217e9b72c8f6808d140ff532530bd889a95fde2f83d6"
+	},
+	{
+		"path": "acp/turn-limit.json",
+		"sha256": "df96e88aa93847debd3cc5966cd729d5fb522391f41864601f462f7044ffa6f0"
+	},
+	{
+		"path": "acp/unsupported-requests.json",
+		"sha256": "7e1dcc15ec7aeb525e864fc34bfc32915325a627c0fac69b960db2b338e22d85"
+	},
+	{
+		"path": "report.json",
+		"sha256": "d61a8b298954880068b954872d9ea6c110a49fc60d815856d6da344fb2299a53"
+	},
+	{
+		"path": "rpc/abort-stream.json",
+		"sha256": "fb31caeb53fca61461c41dea36a1457a8eb8412647ed47c0ac91a9e7af33f253"
+	},
+	{
+		"path": "rpc/abort-tool.json",
+		"sha256": "fad77ab19bce43d1754d9f6d9c633607da1725e6815dc22ba86318f9d170f18d"
+	},
+	{
+		"path": "rpc/child-usage-replay.json",
+		"sha256": "d21ff08ea819368430eff2f5181192a871db89252bb22d33193153f6f3e72665"
+	},
+	{
+		"path": "rpc/compaction.json",
+		"sha256": "5c912b3f4e0da3124ac47b1965760c2995be451d22aacd11d819cc0a3e627488"
+	},
+	{
+		"path": "rpc/fork.json",
+		"sha256": "5700c2a75ce1c22b85b08493af8fae2981df7009f687cd30ae592716f9e1aa77"
+	},
+	{
+		"path": "rpc/length-stop.json",
+		"sha256": "a56c284e7b1b90b87ef4697880feb613b589186d48533b35f86353f237c4e15a"
+	},
+	{
+		"path": "rpc/multi-turn-reopen.json",
+		"sha256": "fd40c3a92c72f632ea3f97490071722402327961df5b214bcdea4790656a2991"
+	},
+	{
+		"path": "rpc/provider-failure.json",
+		"sha256": "265519f9f46bce051bd8f2914e60b6ea88c010ad573fb2dfbabb0693c172dcaa"
+	},
+	{
+		"path": "rpc/reasoning-usage.json",
+		"sha256": "69a25cd4fc278c951e1846de8ca1571985043658d4c713e8a81025ac2c75591a"
+	},
+	{
+		"path": "rpc/simple.json",
+		"sha256": "ad880f7d175e94ea2380bbb007a2d5709572fd63a7bba5338f17627f60de7d14"
+	},
+	{
+		"path": "rpc/tool-error.json",
+		"sha256": "30c3175fcb11b1721cb7fb1f3087d301885a0914a55dda595d29b02639667243"
+	},
+	{
+		"path": "rpc/tool-run.json",
+		"sha256": "698c299634d52cb818abd8bc76c6452e7b306e77af57665e9a149a5424a08d34"
+	}
+]
