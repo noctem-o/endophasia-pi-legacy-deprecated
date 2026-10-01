@@ -15,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { assertDigest, canonicalJson, sha256 } from "../research/conformance/json.ts";
 import { orderScenarios } from "../research/conformance/order.ts";
 import { publishReference, verifyReference } from "../research/conformance/reference.ts";
@@ -28,6 +28,8 @@ const input = [
 const manifest = input.map((m) => ({ path: m.path, sha256: sha256(m.bytes) }));
 // publishReference installs only on Linux (atomic rename exchange); elsewhere it must refuse.
 const LINUX = process.platform === "linux";
+// Windows exposes no POSIX executable bits to toggle.
+const POSIX = process.platform !== "win32";
 
 describe("Conformance Lab plain JSON boundary", () => {
 	it.each([
@@ -319,28 +321,31 @@ describe("Conformance Lab repository identity", () => {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
-	it.each(["remove", "add"])("detects %s executable bits with core.fileMode=false (PR #27 P1)", (attack) => {
-		const dir = mkdtempSync(join(tmpdir(), "lab-mode-"));
-		const git = (args: string[]) =>
-			execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", stdio: "pipe" }).trim();
-		try {
-			git(["init"]);
-			const path = join(dir, "probe.ts");
-			writeFileSync(path, "export const probe = 1;\n");
-			chmodSync(path, attack === "remove" ? 0o755 : 0o644);
-			git(["add", "probe.ts"]);
-			git(["-c", "user.name=Lab Test", "-c", "user.email=lab@example.invalid", "commit", "-m", "fixture"]);
-			const identity = cleanRepositoryIdentity(dir);
-			git(["config", "core.fileMode", "false"]);
-			chmodSync(path, attack === "remove" ? 0o644 : 0o755);
-			expect(git(["status", "--porcelain"])).toBe("");
-			expect(() => cleanRepositoryIdentity(dir)).toThrow("executable mode");
-			expect(sourceDigestAtCommit(dir, identity.commit)).toBe(identity.sourceDigest);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
-	it.each([
+	it.runIf(POSIX).each(["remove", "add"])(
+		"detects %s executable bits with core.fileMode=false (PR #27 P1)",
+		(attack) => {
+			const dir = mkdtempSync(join(tmpdir(), "lab-mode-"));
+			const git = (args: string[]) =>
+				execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", stdio: "pipe" }).trim();
+			try {
+				git(["init"]);
+				const path = join(dir, "probe.ts");
+				writeFileSync(path, "export const probe = 1;\n");
+				chmodSync(path, attack === "remove" ? 0o755 : 0o644);
+				git(["add", "probe.ts"]);
+				git(["-c", "user.name=Lab Test", "-c", "user.email=lab@example.invalid", "commit", "-m", "fixture"]);
+				const identity = cleanRepositoryIdentity(dir);
+				git(["config", "core.fileMode", "false"]);
+				chmodSync(path, attack === "remove" ? 0o644 : 0o755);
+				expect(git(["status", "--porcelain"])).toBe("");
+				expect(() => cleanRepositoryIdentity(dir)).toThrow("executable mode");
+				expect(sourceDigestAtCommit(dir, identity.commit)).toBe(identity.sourceDigest);
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		},
+	);
+	it.runIf(POSIX).each([
 		{ committed: "755", worktree: "700", accepted: true },
 		{ committed: "755", worktree: "744", accepted: true },
 		{ committed: "755", worktree: "655", accepted: false },
@@ -368,6 +373,85 @@ describe("Conformance Lab repository identity", () => {
 			}
 		},
 	);
+	it("ignores inherited GIT_DIR/GIT_WORK_TREE redirection to another repository (PR #27 P1)", () => {
+		const own = mkdtempSync(join(tmpdir(), "lab-own-"));
+		const other = mkdtempSync(join(tmpdir(), "lab-other-"));
+		const commitIn = (dir: string, message: string) => {
+			const git = (args: string[]) =>
+				execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", stdio: "pipe" }).trim();
+			git(["init"]);
+			writeFileSync(join(dir, "probe.ts"), "export const probe = 1;\n");
+			git(["add", "probe.ts"]);
+			git(["-c", "user.name=Lab Test", "-c", "user.email=lab@example.invalid", "commit", "-m", message]);
+			return git(["rev-parse", "HEAD"]);
+		};
+		try {
+			const ownCommit = commitIn(own, "own");
+			const otherCommit = commitIn(other, "other");
+			expect(otherCommit).not.toBe(ownCommit);
+			const identity = cleanRepositoryIdentity(own);
+			vi.stubEnv("GIT_DIR", join(other, ".git"));
+			vi.stubEnv("GIT_WORK_TREE", own);
+			try {
+				expect(cleanRepositoryIdentity(own)).toEqual(identity);
+				expect(identity.commit).toBe(ownCommit);
+				expect(() => sourceDigestAtCommit(own, otherCommit)).toThrow();
+			} finally {
+				vi.unstubAllEnvs();
+			}
+		} finally {
+			rmSync(own, { recursive: true, force: true });
+			rmSync(other, { recursive: true, force: true });
+		}
+	});
+	it("refuses a subdirectory that would bind an ancestor repository", () => {
+		const dir = mkdtempSync(join(tmpdir(), "lab-subdir-"));
+		const git = (args: string[]) =>
+			execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", stdio: "pipe" }).trim();
+		try {
+			git(["init"]);
+			mkdirSync(join(dir, "sub"));
+			writeFileSync(join(dir, "sub", "probe.ts"), "export const probe = 1;\n");
+			git(["add", "sub/probe.ts"]);
+			git(["-c", "user.name=Lab Test", "-c", "user.email=lab@example.invalid", "commit", "-m", "fixture"]);
+			const identity = cleanRepositoryIdentity(dir);
+			expect(() => cleanRepositoryIdentity(join(dir, "sub"))).toThrow("top level");
+			expect(() => sourceDigestAtCommit(join(dir, "sub"), identity.commit)).toThrow("top level");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+	it("refuses tracked paths that are not valid UTF-8 instead of digesting them lossily (PR #27 P2)", () => {
+		const dir = mkdtempSync(join(tmpdir(), "lab-raw-path-"));
+		const git = (args: string[], input?: Buffer | string) =>
+			execFileSync("git", ["-C", dir, ...args], { input, stdio: "pipe" })
+				.toString()
+				.trim();
+		try {
+			git(["init"]);
+			const blob = git(["hash-object", "-w", "--stdin"], "export const probe = 1;\n");
+			// Raw names \x80.ts and \x81.ts would both decode to U+FFFD.ts and share one lossy digest.
+			const commits = [0x80, 0x81].map((byte) => {
+				const tree = git(
+					["mktree", "-z"],
+					Buffer.concat([Buffer.from(`100644 blob ${blob}\t`), Buffer.from([byte]), Buffer.from(".ts\0")]),
+				);
+				return git([
+					"-c",
+					"user.name=Lab Test",
+					"-c",
+					"user.email=lab@example.invalid",
+					"commit-tree",
+					tree,
+					"-m",
+					"raw",
+				]);
+			});
+			for (const commit of commits) expect(() => sourceDigestAtCommit(dir, commit)).toThrow("valid UTF-8");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 	it("binds SHA-256 repositories with 64-digit commits and SHA-256 blob IDs (PR #27 P2)", () => {
 		const dir = mkdtempSync(join(tmpdir(), "lab-sha256-"));
 		const git = (args: string[]) =>

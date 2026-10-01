@@ -1,17 +1,60 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { devNull } from "node:os";
 import { join, resolve } from "node:path";
 import { assertPlainPath } from "./files.ts";
 
 const sourceName = /\.(?:[cm]?js|[cm]?ts|jsx|tsx)$/;
+// Built from scratch: inherited GIT_* variables (GIT_DIR, GIT_WORK_TREE, ...) select another repository despite -C, and
+// system/global configuration could install an fsmonitor that reports files as unchanged. Only the checkout's own
+// configuration applies, replacement objects are disabled and fsmonitor is off on every call.
+const gitEnv: Record<string, string> = {
+	PATH: process.env.PATH ?? "",
+	GIT_CONFIG_NOSYSTEM: "1",
+	GIT_CONFIG_GLOBAL: devNull,
+	GIT_ATTR_NOSYSTEM: "1",
+	GIT_NO_REPLACE_OBJECTS: "1",
+	LC_ALL: "C",
+};
 function git(root: string, args: string[], input?: string): Buffer {
-	return execFileSync("git", ["-C", root, ...args], {
+	return execFileSync("git", ["-C", root, "-c", "core.fsmonitor=false", ...args], {
 		input,
 		timeout: 30_000,
 		maxBuffer: 128 * 1024 * 1024,
-		env: { ...process.env, GIT_ATTR_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1" },
+		env: gitEnv,
 	});
+}
+
+/** Git walks up from a subdirectory; only the repository's own top level may supply an identity. */
+function assertRepositoryRoot(root: string): void {
+	const absolute = assertPlainPath(root, "directory");
+	if (resolve(git(absolute, ["rev-parse", "--show-toplevel"]).toString().trim()) !== absolute)
+		throw new Error("repository top level required");
+}
+
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true });
+/** Raw `ls-tree -z` records. Paths must be valid UTF-8: lossy decoding would let distinct raw paths share a digest. */
+function treeEntries(root: string, commit: string): { mode: string; type: string; oid: string; name: string }[] {
+	const output = git(root, ["ls-tree", "-r", "-z", commit]);
+	const entries = [];
+	for (let start = 0; start < output.length; ) {
+		const end = output.indexOf(0, start);
+		if (end < 0) throw new Error("invalid tree listing");
+		const record = output.subarray(start, end);
+		const tab = record.indexOf(9);
+		if (tab < 0) throw new Error("invalid tree listing");
+		const [mode, type, oid] = record.subarray(0, tab).toString("latin1").split(" ");
+		let name: string;
+		try {
+			name = strictUtf8.decode(record.subarray(tab + 1));
+		} catch {
+			throw new Error("tracked paths must be valid UTF-8");
+		}
+		entries.push({ mode: mode!, type: type!, oid: oid!, name });
+		start = end + 1;
+	}
+	return entries;
 }
 
 /** Object IDs use the repository's hash: 40 hex digits for SHA-1, 64 for SHA-256. */
@@ -29,7 +72,7 @@ function blobId(format: keyof typeof objectIdLength, bytes: Buffer): string {
  * This is a JS/TS fingerprint. The exact commit binds all tracked content; studies must bind other execution inputs.
  */
 export function sourceDigestAtCommit(root: string, commit: string): string {
-	assertPlainPath(root, "directory");
+	assertRepositoryRoot(root);
 	const length = objectIdLength[objectFormat(root)];
 	if (!/^[0-9a-f]+$/.test(commit) || commit.length !== length) throw new Error("exact commit required");
 	if (
@@ -38,18 +81,10 @@ export function sourceDigestAtCommit(root: string, commit: string): string {
 			.trim() !== commit
 	)
 		throw new Error("commit required");
-	const entries = git(root, ["ls-tree", "-r", "-z", commit])
-		.toString()
-		.split("\0")
-		.filter(Boolean)
-		.map((entry) => {
-			const tab = entry.indexOf("\t");
-			const [mode, type, oid] = entry.slice(0, tab).split(" ");
-			return { mode, type, oid, name: entry.slice(tab + 1) };
-		})
+	const entries = treeEntries(root, commit)
 		.filter((entry) => sourceName.test(entry.name))
 		.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-	if (!entries.length || entries.some((e) => e.type !== "blob" || !["100644", "100755"].includes(e.mode!)))
+	if (!entries.length || entries.some((e) => e.type !== "blob" || !["100644", "100755"].includes(e.mode)))
 		throw new Error("plain tracked source required");
 	const blobs = git(root, ["cat-file", "--batch"], `${entries.map((entry) => entry.oid).join("\n")}\n`);
 	const hash = createHash("sha256");
@@ -79,16 +114,13 @@ export function sourceDigestAtCommit(root: string, commit: string): string {
 
 /** Call before and after capture and require identical results. Ignored execution inputs need study-specific guards. */
 export function cleanRepositoryIdentity(root: string): { commit: string; sourceDigest: string } {
-	assertPlainPath(root, "directory");
+	assertRepositoryRoot(root);
 	if (git(root, ["status", "--porcelain", "--untracked-files=all"]).length) throw new Error("dirty instrument");
 	const commit = git(root, ["rev-parse", "HEAD"]).toString().trim();
 	const sourceDigest = sourceDigestAtCommit(root, commit);
 	const format = objectFormat(root);
-	for (const entry of git(root, ["ls-tree", "-r", "-z", commit]).toString().split("\0").filter(Boolean)) {
-		const tab = entry.indexOf("\t");
-		const [mode, type, oid] = entry.slice(0, tab).split(" ");
-		if (type !== "blob" || !["100644", "100755"].includes(mode!)) throw new Error("plain tracked files required");
-		const name = entry.slice(tab + 1);
+	for (const { mode, type, oid, name } of treeEntries(root, commit)) {
+		if (type !== "blob" || !["100644", "100755"].includes(mode)) throw new Error("plain tracked files required");
 		const path = assertPlainPath(join(root, name), "file");
 		// 100755 requires the owner execute bit (Git's own rule); 100644 permits no execute bit at all.
 		const permissions = lstatSync(path).mode;
