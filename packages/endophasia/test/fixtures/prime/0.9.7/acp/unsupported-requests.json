@@ -8,12 +8,12 @@
 		"build": "clean-checkout",
 		"mode": "acp",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.14.3",
+		"probeVersion": "0.14.4",
 		"platform": "linux-x64",
 		"node": "v26.10.0",
-		"endophasiaCommit": "0bb8ec243eafaf292b16ad0025fb4b17b56b25d4",
+		"endophasiaCommit": "4dd9916ace190a5b1e7c83504032051ab347b393",
 		"endophasiaBuild": "clean-checkout",
-		"researchHash": "1f445bc42feab3de623dc7e179973109fb5ef1fedfe47c35978626b5f2619376",
+		"researchHash": "7856d769634bfbb041ef97f431c59c21be08fe7343d7be4344fa9206c2d65389",
 		"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
 		"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
 		"scenario": "unsupported-requests"
@@ -28,18 +28,18 @@
 		{
 			"method": "session/new",
 			"success": true,
-			"sessionId": "0a0ed23f-7017-4d89-8e37-af3208946a55"
+			"sessionId": "285fc148-c0c8-4113-b7a9-52a206af8101"
 		},
 		{
 			"method": "session/new",
 			"success": false,
-			"sessionId": "0a0ed23f-7017-4d89-8e37-af3208946a55",
+			"sessionId": "285fc148-c0c8-4113-b7a9-52a206af8101",
 			"errorCode": -32603
 		},
 		{
 			"method": "session/load",
 			"success": false,
-			"sessionId": "0a0ed23f-7017-4d89-8e37-af3208946a55",
+			"sessionId": "285fc148-c0c8-4113-b7a9-52a206af8101",
 			"errorCode": -32601
 		},
 		{
@@ -51,11 +51,11 @@
 		{
 			"method": "session/close",
 			"success": true,
-			"sessionId": "0a0ed23f-7017-4d89-8e37-af3208946a55"
+			"sessionId": "285fc148-c0c8-4113-b7a9-52a206af8101"
 		}
 	],
 	"sessionIds": [
-		"0a0ed23f-7017-4d89-8e37-af3208946a55"
+		"285fc148-c0c8-4113-b7a9-52a206af8101"
 	],
 	"cancelAfter": [],
 	"providerRequests": 0,
@@ -64,7 +64,7 @@
 		[
 			{
 				"type": "session",
-				"id": "01a0f0cf-82b3-7419-89a7-e4e5fc427b42",
+				"id": "01a0f68e-20f1-73c4-bef7-2bd941ec8400",
 				"keys": [
 					"cwd",
 					"id",
@@ -76,7 +76,7 @@
 			},
 			{
 				"type": "model_change",
-				"id": "963d4177",
+				"id": "e122c691",
 				"parentId": null,
 				"keys": [
 					"id",
@@ -89,8 +89,8 @@
 			},
 			{
 				"type": "thinking_level_change",
-				"id": "6fd5b13e",
-				"parentId": "963d4177",
+				"id": "20cc1b3a",
+				"parentId": "e122c691",
 				"keys": [
 					"id",
 					"parentId",
@@ -101,8 +101,8 @@
 			},
 			{
 				"type": "service_tier_change",
-				"id": "87686b19",
-				"parentId": "6fd5b13e",
+				"id": "2780baff",
+				"parentId": "20cc1b3a",
 				"keys": [
 					"id",
 					"parentId",
@@ -113,8 +113,8 @@
 			},
 			{
 				"type": "session_state",
-				"id": "8268e2c2",
-				"parentId": "87686b19",
+				"id": "b8318d8f",
+				"parentId": "2780baff",
 				"keys": [
 					"id",
 					"parentId",
