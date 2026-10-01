@@ -4,6 +4,8 @@
 // - The probe cannot establish what happened (failures, protocol errors, invalid structure, privacy leak): invalid.
 // - Provenance is uncertain (a binary, a dirty checkout, another probe revision, a mixed fixture set): the run may be
 //   inspected, but it cannot certify or refresh the reference.
+
+import { AUDITED_PROFILES } from "./audited.ts";
 import { PROBE_NAME, PROBE_VERSION, type PrimeProvenanceV0, type PrimeScenarioEvidenceV0 } from "./evidence.ts";
 import { SCENARIO_NAMES_WITH_INVARIANTS } from "./invariants.ts";
 import { buildPrimeConformanceReportV0, isVerifiedProvenanceV0, type PrimeConformanceReportV0 } from "./report.ts";
@@ -35,7 +37,13 @@ function sameProvenance(a: PrimeProvenanceV0, b: PrimeProvenanceV0): boolean {
 		a.generatedBy === b.generatedBy &&
 		a.probeVersion === b.probeVersion &&
 		a.platform === b.platform &&
-		a.node === b.node
+		a.node === b.node &&
+		a.researchHash === b.researchHash &&
+		a.mode === b.mode &&
+		a.endophasiaCommit === b.endophasiaCommit &&
+		a.endophasiaBuild === b.endophasiaBuild &&
+		a.launcherHash === b.launcherHash &&
+		a.lockHash === b.lockHash
 	);
 }
 
@@ -66,7 +74,10 @@ export function assessPrimeEvidenceV0(input: PrimeEvidenceAssessmentInputV0): Pr
 			: [
 					"evidence is not from the audited Prime revision: re-audit Prime and update AUDITED_PRIME before refreshing fixtures",
 				]),
-		...(provenance.generatedBy === PROBE_NAME && provenance.probeVersion === PROBE_VERSION
+		...(provenance.generatedBy === PROBE_NAME &&
+		AUDITED_PROFILES.some(
+			(profile) => profile.version === provenance.version && profile.probeVersion === provenance.probeVersion,
+		)
 			? []
 			: [`evidence was produced by probe ${provenance.probeVersion}, not the current ${PROBE_VERSION}`]),
 		...retainedProblems(input.retainedFixtures ?? [], provenance),

@@ -17,6 +17,7 @@ import {
 	type PrimeObservationsV0,
 	type PrimeProvenanceV0,
 	type PrimeScenarioEvidenceV0,
+	RPC_EVIDENCE_ARRAYS,
 } from "./evidence.ts";
 import { SENTINEL_PATTERN } from "./fake-provider.ts";
 import { scenarioInvariantProblemsV0 } from "./invariants.ts";
@@ -143,6 +144,15 @@ function assertHomogeneous(evidence: readonly PrimeScenarioEvidenceV0[]): PrimeP
 	const { scenario: _scenario, ...provenance } = first.provenance;
 	for (const item of evidence) {
 		const other = item.provenance;
+		if (other.mode !== "rpc") throw new Error("RPC report requires RPC evidence");
+		if (
+			other.researchHash !== provenance.researchHash ||
+			other.endophasiaCommit !== provenance.endophasiaCommit ||
+			other.endophasiaBuild !== provenance.endophasiaBuild ||
+			other.launcherHash !== provenance.launcherHash ||
+			other.lockHash !== provenance.lockHash
+		)
+			throw new Error("Evidence mixes research or build provenance");
 		if (
 			other.version !== provenance.version ||
 			other.commit !== provenance.commit ||
@@ -229,6 +239,8 @@ export function writePrimeFixturesV0(
 	evidence: readonly PrimeScenarioEvidenceV0[],
 	options: { readonly prune?: boolean } = {},
 ): void {
+	if (evidence.some((run) => run.provenance.version === "0.9.7"))
+		throw new Error("0.9.7 fixtures require the joint RPC + ACP publication gate");
 	mkdirSync(directory, { recursive: true });
 	if (options.prune === true) {
 		const produced = new Set(evidence.map((item) => `${item.provenance.scenario}.json`));
@@ -240,18 +252,6 @@ export function writePrimeFixturesV0(
 		writeFileSync(join(directory, `${item.provenance.scenario}.json`), `${JSON.stringify(item, null, "\t")}\n`);
 	}
 }
-
-const EVIDENCE_ARRAYS = [
-	"events",
-	"abortRequestedAfter",
-	"commands",
-	"stats",
-	"sessionEntries",
-	"entrySnapshots",
-	"stateKeys",
-	"protocolErrors",
-	"failures",
-] as const;
 
 /** Read committed fixtures. The envelope is validated here; the contents are re-checked by the report. */
 export function readPrimeFixturesV0(directory: string): PrimeScenarioEvidenceV0[] {
@@ -273,7 +273,7 @@ export function readPrimeFixturesV0(directory: string): PrimeScenarioEvidenceV0[
 				typeof fixture.description === "string" &&
 				fixture.observations !== null &&
 				typeof fixture.observations === "object" &&
-				EVIDENCE_ARRAYS.every((key) => Array.isArray(fixture[key]));
+				RPC_EVIDENCE_ARRAYS.every((key) => Array.isArray(fixture[key]));
 			if (!valid) throw new Error(`Invalid Prime fixture ${name}`);
 			return value as PrimeScenarioEvidenceV0;
 		});

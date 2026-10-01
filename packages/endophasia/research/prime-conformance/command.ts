@@ -85,6 +85,8 @@ export async function runPrimeConformanceCommandV0(
 	if (isAbsolute(binary.command) && !existsSync(binary.command))
 		return fail(`Prime Agent not found at ${binary.command}`);
 	const provenance = deps.describe(binary);
+	if (writeFixtures && provenance.version === "0.9.7")
+		return fail("use check:prime-conformance:097 for the joint RPC + ACP fixture publication gate");
 	if (provenance.version === "unknown") return fail(`could not read a version from ${binary.description} --version`);
 	// The version names the fixture directory: it must be one safe path component that stays under fixtureRoot.
 	const fixtureDir = resolve(deps.fixtureRoot, provenance.version);

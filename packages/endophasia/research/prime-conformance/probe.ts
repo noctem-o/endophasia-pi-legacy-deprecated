@@ -11,6 +11,7 @@ import {
 	closeSync,
 	constants,
 	existsSync,
+	lstatSync,
 	openSync,
 	readdirSync,
 	readFileSync,
@@ -45,6 +46,7 @@ import {
 	type PrimeStatsEvidenceV0,
 } from "./evidence.ts";
 import { CHILD_USAGE_SEED, type FakeProviderV0, SENTINELS, startFakeProviderV0 } from "./fake-provider.ts";
+import { describeResearchInstrument } from "./instrument.ts";
 import { scenarioInvariantProblemsV0 } from "./invariants.ts";
 import type { PrimeEvidenceEventV0, PrimeRpcResponseV0 } from "./protocol.ts";
 import { PrimeRpcClientV0, PrimeRpcError, type PrimeRpcExitV0 } from "./rpc-client.ts";
@@ -636,7 +638,12 @@ export async function runPrimeProbeV0(options: PrimeProbeOptionsV0): Promise<Pri
 			...run,
 		};
 		const violated = scenarioInvariantProblemsV0(evidence);
-		results.push(violated.length === 0 ? evidence : { ...evidence, failures: [...run.failures, ...violated] });
+		// Raw probe/client/decode diagnostics can interpolate hostile wire names. Only closed categories reach disk.
+		results.push({
+			...evidence,
+			protocolErrors: run.protocolErrors.map(() => "RPC protocol failed"),
+			failures: [...run.failures, ...violated].map(() => "RPC scenario failed"),
+		});
 	}
 	return results;
 }
@@ -647,29 +654,45 @@ export async function runPrimeProbeV0(options: PrimeProbeOptionsV0): Promise<Pri
  * target is not hashed, so the build it loads is unverifiable.
  */
 export function hashBuildOutputV0(checkout: string): string | undefined {
-	const hash = createHash("sha256");
-	let files = 0;
-	let symlinks = 0;
-	const walk = (directory: string): void => {
-		for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
-			a.name.localeCompare(b.name),
-		)) {
-			const path = join(directory, entry.name);
-			// Node follows a symlink to code this walk would not hash, so any link makes the build output unverifiable.
-			if (entry.isSymbolicLink()) symlinks++;
-			else if (entry.isDirectory()) walk(path);
-			else if (entry.isFile()) {
-				hash.update(relative(checkout, path)).update("\0").update(readFileSync(path)).update("\0");
-				files++;
+	try {
+		if (realpathSync(checkout) !== resolve(checkout)) return undefined;
+		const hash = createHash("sha256");
+		let files = 0;
+		let symlinks = 0;
+		const walk = (directory: string): void => {
+			if (!lstatSync(directory).isDirectory()) {
+				symlinks++;
+				return;
+			}
+			for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
+				a.name.localeCompare(b.name),
+			)) {
+				const path = join(directory, entry.name);
+				// Node follows a symlink to code this walk would not hash, so any link makes the build output unverifiable.
+				if (entry.isSymbolicLink()) symlinks++;
+				else if (entry.isDirectory()) walk(path);
+				else if (entry.isFile()) {
+					hash.update(relative(checkout, path)).update("\0").update(readFileSync(path)).update("\0");
+					files++;
+				}
+			}
+		};
+		const packages = join(checkout, "packages");
+		if (!lstatSync(packages).isDirectory()) return undefined;
+		for (const name of readdirSync(packages).sort()) {
+			const packageRoot = join(packages, name);
+			if (!lstatSync(packageRoot).isDirectory()) return undefined;
+			const dist = join(packageRoot, "dist");
+			const stat = lstatSync(dist, { throwIfNoEntry: false });
+			if (stat) {
+				if (!stat.isDirectory()) return undefined;
+				walk(dist);
 			}
 		}
-	};
-	const packages = join(checkout, "packages");
-	for (const name of existsSync(packages) ? readdirSync(packages).sort() : []) {
-		const dist = join(packages, name, "dist");
-		if (existsSync(dist)) walk(dist);
+		return files === 0 || symlinks > 0 ? undefined : hash.digest("hex");
+	} catch {
+		return undefined;
 	}
-	return files === 0 || symlinks > 0 ? undefined : hash.digest("hex");
 }
 
 function git(checkout: string, args: readonly string[]): string {
@@ -726,5 +749,16 @@ export function describePrimeV0(binary: PrimeBinaryV0): PrimeProvenanceV0 {
 		probeVersion: PROBE_VERSION,
 		platform: `${process.platform}-${process.arch}`,
 		node: process.version,
+		...describeResearchInstrument(),
+		...(binary.checkout === undefined ||
+		!existsSync(binary.command) ||
+		!existsSync(join(binary.checkout, "package-lock.json"))
+			? {}
+			: {
+					launcherHash: createHash("sha256").update(readFileSync(binary.command)).digest("hex"),
+					lockHash: createHash("sha256")
+						.update(readFileSync(join(binary.checkout, "package-lock.json")))
+						.digest("hex"),
+				}),
 	};
 }

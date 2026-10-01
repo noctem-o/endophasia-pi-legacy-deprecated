@@ -1,0 +1,2293 @@
+{
+	"schemaVersion": "prime-097-comparison.v0",
+	"assessment": {
+		"invalid": [],
+		"unpublishable": []
+	},
+	"rpc": {
+		"schemaVersion": "prime-conformance-report.v0",
+		"generatedBy": "prime-conformance-v0",
+		"provenance": {
+			"source": "prime-agent",
+			"version": "0.9.7",
+			"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+			"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+			"build": "clean-checkout",
+			"mode": "rpc",
+			"generatedBy": "prime-conformance-v0",
+			"probeVersion": "0.14.7",
+			"platform": "linux-x64",
+			"node": "v26.10.0",
+			"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+			"endophasiaBuild": "clean-checkout",
+			"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+			"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+			"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51"
+		},
+		"drift": {
+			"runtime": "different",
+			"probe": "different",
+			"environment": "different",
+			"provenanceVerified": true,
+			"evidence": {
+				"version": "0.9.7",
+				"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+				"probeVersion": "0.14.7"
+			},
+			"reference": {
+				"version": "0.9.6",
+				"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
+				"probeVersion": "0.13.0"
+			}
+		},
+		"scenarios": [
+			{
+				"scenario": "simple",
+				"description": "One prompt, one assistant completion with known usage.",
+				"eventTypes": [
+					"agent_end",
+					"agent_start",
+					"message_end",
+					"message_start",
+					"turn_end",
+					"turn_start"
+				],
+				"missionTraceKinds": [
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.completed"
+				],
+				"terminals": [
+					{
+						"runId": "adapter:run-1",
+						"status": "completed",
+						"basis": "native-stop-reason",
+						"finalStopReason": "stop"
+					}
+				],
+				"unmapped": [],
+				"observations": {
+					"providerRequests": 1,
+					"summaryRequests": 0
+				},
+				"failures": [],
+				"identityProblems": [],
+				"evidenceProblems": [],
+				"protocolErrors": []
+			},
+			{
+				"scenario": "tool-run",
+				"description": "Assistant tool call, successful tool execution, second assistant completion.",
+				"eventTypes": [
+					"agent_end",
+					"agent_start",
+					"message_end",
+					"message_start",
+					"tool_execution_end",
+					"tool_execution_start",
+					"turn_end",
+					"turn_start"
+				],
+				"missionTraceKinds": [
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"tool.started",
+					"tool.finished",
+					"turn.finished",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.completed"
+				],
+				"terminals": [
+					{
+						"runId": "adapter:run-1",
+						"status": "completed",
+						"basis": "native-stop-reason",
+						"finalStopReason": "stop"
+					}
+				],
+				"unmapped": [],
+				"observations": {
+					"providerRequests": 2,
+					"summaryRequests": 0
+				},
+				"failures": [],
+				"identityProblems": [],
+				"evidenceProblems": [],
+				"protocolErrors": []
+			},
+			{
+				"scenario": "tool-error",
+				"description": "The tool throws; the model recovers with a final answer.",
+				"eventTypes": [
+					"agent_end",
+					"agent_start",
+					"message_end",
+					"message_start",
+					"tool_execution_end",
+					"tool_execution_start",
+					"turn_end",
+					"turn_start"
+				],
+				"missionTraceKinds": [
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"tool.started",
+					"tool.finished",
+					"turn.finished",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.completed"
+				],
+				"terminals": [
+					{
+						"runId": "adapter:run-1",
+						"status": "completed",
+						"basis": "native-stop-reason",
+						"finalStopReason": "stop"
+					}
+				],
+				"unmapped": [],
+				"observations": {
+					"providerRequests": 2,
+					"summaryRequests": 0
+				},
+				"failures": [],
+				"identityProblems": [],
+				"evidenceProblems": [],
+				"protocolErrors": []
+			},
+			{
+				"scenario": "provider-failure",
+				"description": "The provider rejects the request with a non-retryable error.",
+				"eventTypes": [
+					"agent_end",
+					"agent_start",
+					"message_end",
+					"message_start",
+					"turn_end",
+					"turn_start"
+				],
+				"missionTraceKinds": [
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.failed"
+				],
+				"terminals": [
+					{
+						"runId": "adapter:run-1",
+						"status": "failed",
+						"basis": "native-stop-reason",
+						"finalStopReason": "error"
+					}
+				],
+				"unmapped": [],
+				"observations": {
+					"providerRequests": 1,
+					"summaryRequests": 0
+				},
+				"failures": [],
+				"identityProblems": [],
+				"evidenceProblems": [],
+				"protocolErrors": []
+			},
+			{
+				"scenario": "abort-stream",
+				"description": "RPC abort while the assistant response is streaming.",
+				"eventTypes": [
+					"agent_end",
+					"agent_start",
+					"message_end",
+					"message_start",
+					"turn_end",
+					"turn_start"
+				],
+				"missionTraceKinds": [
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.aborted",
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.completed"
+				],
+				"terminals": [
+					{
+						"runId": "adapter:run-1",
+						"status": "aborted",
+						"basis": "native-stop-reason",
+						"finalStopReason": "aborted"
+					},
+					{
+						"runId": "adapter:run-2",
+						"status": "completed",
+						"basis": "native-stop-reason",
+						"finalStopReason": "stop"
+					}
+				],
+				"unmapped": [],
+				"observations": {
+					"plainPromptAfterAbortAdmitted": false,
+					"followUpAfterAbortAdmitted": true,
+					"providerRequests": 2,
+					"summaryRequests": 0
+				},
+				"failures": [],
+				"identityProblems": [],
+				"evidenceProblems": [],
+				"protocolErrors": []
+			},
+			{
+				"scenario": "abort-tool",
+				"description": "RPC abort while a tool is executing.",
+				"eventTypes": [
+					"agent_end",
+					"agent_start",
+					"message_end",
+					"message_start",
+					"tool_execution_end",
+					"tool_execution_start",
+					"turn_end",
+					"turn_start"
+				],
+				"missionTraceKinds": [
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"tool.started",
+					"tool.finished",
+					"turn.finished",
+					"mission.aborted"
+				],
+				"terminals": [
+					{
+						"runId": "adapter:run-1",
+						"status": "aborted",
+						"basis": "adapter-abort-request",
+						"finalStopReason": "toolUse"
+					}
+				],
+				"unmapped": [],
+				"observations": {
+					"providerRequests": 1,
+					"summaryRequests": 0
+				},
+				"failures": [],
+				"identityProblems": [],
+				"evidenceProblems": [],
+				"protocolErrors": []
+			},
+			{
+				"scenario": "length-stop",
+				"description": "The assistant stops on the output-length limit.",
+				"eventTypes": [
+					"agent_end",
+					"agent_start",
+					"message_end",
+					"message_start",
+					"turn_end",
+					"turn_start"
+				],
+				"missionTraceKinds": [
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"turn.finished"
+				],
+				"terminals": [
+					{
+						"runId": "adapter:run-1",
+						"basis": "ambiguous",
+						"finalStopReason": "length",
+						"note": "output-length stop: the run ended without the model finishing"
+					}
+				],
+				"unmapped": [],
+				"observations": {
+					"providerRequests": 1,
+					"summaryRequests": 0
+				},
+				"failures": [],
+				"identityProblems": [],
+				"evidenceProblems": [],
+				"protocolErrors": []
+			},
+			{
+				"scenario": "reasoning-usage",
+				"description": "The provider reports reasoning tokens and reasoning content.",
+				"eventTypes": [
+					"agent_end",
+					"agent_start",
+					"message_end",
+					"message_start",
+					"turn_end",
+					"turn_start"
+				],
+				"missionTraceKinds": [
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.completed"
+				],
+				"terminals": [
+					{
+						"runId": "adapter:run-1",
+						"status": "completed",
+						"basis": "native-stop-reason",
+						"finalStopReason": "stop"
+					}
+				],
+				"unmapped": [],
+				"observations": {
+					"providerRequests": 1,
+					"summaryRequests": 0
+				},
+				"failures": [],
+				"identityProblems": [],
+				"evidenceProblems": [],
+				"protocolErrors": []
+			},
+			{
+				"scenario": "multi-turn-reopen",
+				"description": "Three prompts with known usage, then the process exits and a new process reopens the session file.",
+				"eventTypes": [
+					"agent_end",
+					"agent_start",
+					"message_end",
+					"message_start",
+					"turn_end",
+					"turn_start"
+				],
+				"missionTraceKinds": [
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.completed",
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.completed",
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.completed"
+				],
+				"terminals": [
+					{
+						"runId": "adapter:run-1",
+						"status": "completed",
+						"basis": "native-stop-reason",
+						"finalStopReason": "stop"
+					},
+					{
+						"runId": "adapter:run-2",
+						"status": "completed",
+						"basis": "native-stop-reason",
+						"finalStopReason": "stop"
+					},
+					{
+						"runId": "adapter:run-3",
+						"status": "completed",
+						"basis": "native-stop-reason",
+						"finalStopReason": "stop"
+					}
+				],
+				"unmapped": [],
+				"observations": {
+					"messagesAfterReopen": 7,
+					"reopenedIntendedSession": true,
+					"entryIdsStableAcrossReopen": true,
+					"providerRequests": 3,
+					"summaryRequests": 0
+				},
+				"failures": [],
+				"identityProblems": [],
+				"evidenceProblems": [],
+				"protocolErrors": []
+			},
+			{
+				"scenario": "compaction",
+				"description": "Two prompts, then a manual compaction whose summary also reports usage.",
+				"eventTypes": [
+					"agent_end",
+					"agent_start",
+					"compaction_end",
+					"compaction_start",
+					"message_end",
+					"message_start",
+					"turn_end",
+					"turn_start"
+				],
+				"missionTraceKinds": [
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.completed",
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.completed",
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.completed"
+				],
+				"terminals": [
+					{
+						"runId": "adapter:run-1",
+						"status": "completed",
+						"basis": "native-stop-reason",
+						"finalStopReason": "stop"
+					},
+					{
+						"runId": "adapter:run-2",
+						"status": "completed",
+						"basis": "native-stop-reason",
+						"finalStopReason": "stop"
+					},
+					{
+						"runId": "adapter:run-3",
+						"status": "completed",
+						"basis": "native-stop-reason",
+						"finalStopReason": "stop"
+					}
+				],
+				"unmapped": [],
+				"observations": {
+					"compactFirstKeptEntryId": "03bc9456",
+					"plainPromptAfterCompactionAdmitted": false,
+					"followUpAfterCompactionAdmitted": true,
+					"providerRequests": 5,
+					"summaryRequests": 2
+				},
+				"failures": [],
+				"identityProblems": [],
+				"evidenceProblems": [],
+				"protocolErrors": []
+			},
+			{
+				"scenario": "fork",
+				"description": "Two prompts, then a fork from the second user message, then one more prompt on the fork.",
+				"eventTypes": [
+					"agent_end",
+					"agent_start",
+					"message_end",
+					"message_start",
+					"turn_end",
+					"turn_start"
+				],
+				"missionTraceKinds": [
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.completed",
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.completed",
+					"mission.started",
+					"turn.started",
+					"model.completed",
+					"turn.finished",
+					"mission.completed"
+				],
+				"terminals": [
+					{
+						"runId": "adapter:run-1",
+						"status": "completed",
+						"basis": "native-stop-reason",
+						"finalStopReason": "stop"
+					},
+					{
+						"runId": "adapter:run-2",
+						"status": "completed",
+						"basis": "native-stop-reason",
+						"finalStopReason": "stop"
+					},
+					{
+						"runId": "adapter:run-3",
+						"status": "completed",
+						"basis": "native-stop-reason",
+						"finalStopReason": "stop"
+					}
+				],
+				"unmapped": [],
+				"observations": {
+					"forkTargets": 2,
+					"forkCreatedNewFile": true,
+					"originalEntriesAfterFork": 10,
+					"forkOriginalUnchanged": true,
+					"forkSharedEntryIds": 7,
+					"forkSharedEntriesIdentical": true,
+					"forkParentLinked": true,
+					"providerRequests": 3,
+					"summaryRequests": 0
+				},
+				"failures": [],
+				"identityProblems": [],
+				"evidenceProblems": [],
+				"protocolErrors": []
+			},
+			{
+				"scenario": "child-usage-replay",
+				"description": "A crafted durable session holding one child_usage_attributed entry, reopened by a real Prime process (no live RLM child).",
+				"eventTypes": [],
+				"missionTraceKinds": [],
+				"terminals": [],
+				"unmapped": [],
+				"observations": {
+					"reopenedIntendedSession": true,
+					"providerRequests": 0,
+					"summaryRequests": 0
+				},
+				"failures": [],
+				"identityProblems": [],
+				"evidenceProblems": [],
+				"protocolErrors": []
+			}
+		],
+		"facts": {
+			"auditedRevision": true,
+			"forkSharedEntriesIdentical": true,
+			"forkParentLinked": true,
+			"providerUsageDecodedExactly": true,
+			"toolCallIdentityNative": true,
+			"toolErrorRecovered": true,
+			"providerFailureStop": "error",
+			"abortStreamStop": "aborted",
+			"abortToolStop": "toolUse",
+			"lengthStop": "length",
+			"plainPromptAfterAbortAdmitted": false,
+			"plainPromptAfterCompactionAdmitted": false,
+			"reasoningFieldReported": false,
+			"statsTotalRecomputed": true,
+			"statsDropAfterCompaction": true,
+			"compactionUsageDurable": true,
+			"compactionUsageInStats": false,
+			"statsDropAfterFork": true,
+			"forkNewFile": true,
+			"forkSharedEntryIds": 7,
+			"reopenStatsEqual": true,
+			"reopenEntryIdsStable": true,
+			"rebuildMatchesStatsOnSinglePath": true,
+			"rebuildIncludesCompactionUsage": true,
+			"childUsageFoldedIntoStats": true,
+			"childFoldTotals": {
+				"statsTokensTotal": 1470,
+				"aggregateTotalTokens": 1050
+			},
+			"childUsageRewritesEarlierRow": true,
+			"undocumentedEventTypes": [],
+			"protocolErrors": 0
+		},
+		"findings": [
+			{
+				"contract": "MissionTraceEventV0",
+				"evidence": [
+					"probe:tool-run, probe:tool-error, probe:abort-tool: tool_execution_* (toolCallId, toolName) pairs are Prime's own and match the assistant tool calls: true",
+					"probe:tool-error: tool_execution_end isError=true and the run recovers to stop: true",
+					"probe:provider-failure: final stop reason error",
+					"probe:abort-stream: final stop reason aborted",
+					"probe:abort-tool: final stop reason toolUse; agent_end alone does not say the run was aborted",
+					"probe:length-stop: final stop reason length",
+					"probe:*: adapter identity problems: none",
+					"prime@08ff1b2e:packages/agent/src/types.ts:390-433 (AgentEvent; no operation/run/turn IDs)",
+					"prime@08ff1b2e:packages/agent/src/agent-loop.ts:310-449,751-756 (loop, tool termination, stops)"
+				],
+				"adapterState": [
+					"lane: an adapter label for the one root session an RPC process drives (prime:root); Prime names no lane",
+					"runId: adapter counter opened at agent_start and closed at agent_end; lives only for one observation",
+					"turnId: adapter counter per turn_start within the run",
+					"abort requests the adapter sent, to classify runs whose final stop reason is toolUse",
+					"mission sequence: adapter counter; restarts with each observation"
+				],
+				"qualifications": [
+					"Terminal status comes from the final assistant stop reason, not from agent_end: stop→completed, error→failed, aborted→aborted",
+					"A run aborted during tool execution ends with stop reason toolUse; it maps to mission.aborted only because the adapter itself sent the abort (abort-tool)",
+					"Runs with no truthful terminal kind emit none (length stop, or toolUse without an adapter abort): length-stop",
+					"mission.resumed and mission.suspended are never emitted: Prime has no suspended-run concept in RPC",
+					"model.completed is emitted per assistant message_end, including aborted and errored assistant messages",
+					"Run and turn IDs do not survive a process restart or reconnect: Prime's events carry nothing to rebuild them",
+					"After an abort (or a manual compaction, which aborts first), a plain prompt is refused until a prompt with streamingBehavior resumes the queue (admitted after abort: false; after compaction: false)",
+					"Prime emits event types beyond its documented table: none observed; they are ignored, not mapped"
+				],
+				"unavailable": [
+					"A native run identity (Pi runId)",
+					"A native turn identity (Pi turnId)",
+					"A native lane",
+					"A native run terminal status"
+				],
+				"support": "adapter-state",
+				"semanticFit": "qualified",
+				"basis": "established",
+				"baseline": {
+					"support": "adapter-state",
+					"semanticFit": "qualified"
+				},
+				"missing": [],
+				"contradictions": []
+			},
+			{
+				"contract": "RuntimeMetricsV0",
+				"evidence": [
+					"probe:*: every assistant usage equals the fake provider's scripted usage through Prime's documented mapping, in every field: true",
+					"probe:compaction: get_session_stats totals decrease after compaction: true",
+					"probe:fork: get_session_stats totals decrease after fork: true; fork writes a new session file: true",
+					"probe:*: tokens.total equals input+output+cacheRead+cacheWrite in every stats read: true",
+					"probe:compaction: summary usage persisted on the compaction entry: true; included in stats cost: false",
+					"probe:reasoning-usage: a reasoning count is reported: false",
+					"probe:child-usage-replay: child usage folded into stats (input, output, cacheRead, cacheWrite, cost): true",
+					"probe:child-usage-replay: after folding, stats tokens.total 1470 vs aggregate totalTokens 1050 (different definitions; not compared as a match)",
+					"probe:multi-turn-reopen: stats identical after reopen in every stable field (message counts, tokens, cost; contextUsage excluded): true",
+					"probe:multi-turn-reopen: adapter rebuild from the session file equals get_session_stats on a single path: true",
+					"probe:compaction: adapter rebuild, from snapshots immediately before and after compaction, equals the pre-compaction rows plus the summary usage in every dimension: true",
+					"prime@08ff1b2e:packages/coding-agent/src/core/agent-session.ts:14776-14824 (current messages, recomputed total)",
+					"prime@08ff1b2e:packages/coding-agent/src/core/agent-session.ts:13434-13444 (failed message removed)",
+					"prime@08ff1b2e:packages/coding-agent/src/core/agent-session.ts:1507-1516 (parent context total retained)",
+					"prime@08ff1b2e:packages/ai/src/providers/openai-completions.ts:1110-1178 (usage mapping)",
+					"prime@08ff1b2e:packages/coding-agent/src/core/settings-manager.ts:1030-1045;core/agent-session.ts:3398-3428 (default-on review)"
+				],
+				"adapterState": [
+					"A cumulative accounting sum rebuilt from every durable session file of the tree (assistant, compaction and branch_summary usage, and child_usage_attributed rows), because get_session_stats is scoped to the current context path",
+					"The set of session files belonging to one logical session (forks write new files linked by parentSession)",
+					"De-duplication by entry id across that file set: a fork copies the path's entries, ids included, into its new file"
+				],
+				"qualifications": [
+					"The native get_session_stats projection is incompatible with RuntimeMetricsV0; only the adapter rebuild from durable session entries is qualified",
+					"The rebuild reads Prime's documented session-file format directly, outside the RPC boundary",
+					"get_session_stats sums assistant usage over the current context path only: totals decrease after compaction and fork, so it is not cumulative accounting",
+					"get_session_stats tokens.total is recomputed from the four components; RuntimeMetricsV0.totalTokens is the sum of reported totalTokens",
+					"Compaction and branch-summary usage is durable on its entry but never counted by get_session_stats",
+					"A failed attempt that is auto-retried is removed from the context path (source only; not exercised live), so its usage leaves get_session_stats",
+					"Prime's default auto-refine runs a review model call after compaction; the probe disables it, so where that call's usage is recorded is not examined",
+					"RLM child usage is folded into the parent assistant usage (input/output/cost) while that message's totalTokens stays at the parent's own context tokens",
+					"messageCount has no equivalent: totalMessages counts current-path messages, not persisted message entries",
+					"contextUsage is a context-window estimate and is deliberately not mapped",
+					"get_session_stats reports only a total cost; per-component cost exists only on durable entries"
+				],
+				"unavailable": [
+					"reasoning: Prime's openai-completions usage carries no reasoning count (it is included in output)",
+					"cacheWrite1h: not reported",
+					"Caller usage adjustments: Prime has no recordUsage equivalent"
+				],
+				"support": "adapter-state",
+				"semanticFit": "qualified",
+				"basis": "established",
+				"baseline": {
+					"support": "adapter-state",
+					"semanticFit": "qualified"
+				},
+				"missing": [],
+				"contradictions": []
+			},
+			{
+				"contract": "OperationOutcomeV0",
+				"evidence": [
+					"prime@08ff1b2e:packages/coding-agent/src/modes/daemon/daemon-protocol.ts:19-238 (command table)",
+					"prime@08ff1b2e:packages/agent/src/types.ts:390-433 (AgentEvent; no operation/run/turn IDs)",
+					"probe:multi-turn-reopen: entry ids stable across reopen: true",
+					"probe:abort-tool: final stop reason toolUse"
+				],
+				"adapterState": [
+					"An adapter-assigned operation ID per prompt command, correlated to the agent_start/agent_end pair it caused",
+					"A durable adapter record of {operationId, status, basis, fromTipId, tipId, startedAt, endedAt} written at agent_end, since Prime keeps none",
+					"fromTipId/tipId from the session leaf entry id before and after the run (via get_state/session file), accepting that fork moves the leaf into a new file"
+				],
+				"qualifications": [
+					"The prompt response acknowledges admission only; the outcome arrives later as events with no operation identity",
+					"An adapter-held outcome is lost if the adapter was detached when agent_end fired: Prime offers no lookup to recover it"
+				],
+				"unavailable": [
+					"Lookup of a terminal result by a stable operation ID, after completion, abort, detach or reopen",
+					"A machine-readable error code for failed runs (only a free-text errorMessage on the assistant message)",
+					"Run start and end timestamps as part of a result record"
+				],
+				"support": "unavailable",
+				"semanticFit": "incompatible",
+				"basis": "established",
+				"baseline": {
+					"support": "unavailable",
+					"semanticFit": "incompatible"
+				},
+				"missing": [],
+				"contradictions": []
+			},
+			{
+				"contract": "UsageLedgerRowV0",
+				"evidence": [
+					"probe:multi-turn-reopen: entry ids stable across reopen: true",
+					"probe:compaction: compaction entry carries usage: true",
+					"probe:child-usage-replay: a later child_usage_attributed entry changes the reported usage of an earlier assistant entry on reload: true",
+					"probe:fork: fork writes a new session file: true; entries copied with the original ids: 7; copies identical to the originals: true; header links to the original (parentSession): true",
+					"prime@08ff1b2e:packages/coding-agent/src/core/session-manager.ts:54-167,418-433 (tree and child attribution)",
+					"prime@08ff1b2e:packages/coding-agent/src/core/compaction/compaction.ts:108-116,829-866 (summary accounting)",
+					"prime@08ff1b2e:packages/coding-agent/src/core/session-manager.ts:1780-1794,1893-1911,2544-2615 (rewrite/fork)"
+				],
+				"adapterState": [
+					"Row id: the session entry id (8 hex, stable across reopen); a fork copies path entries with the same ids into its new file, so the id names one durable row across the file set only after de-duplication",
+					"Row sequence: a durable adapter-owned sequence across the whole fork family; Prime has none, and a file's line ordinal is not session-global (the original and a fork file reuse the same ordinals)",
+					"Paging: the adapter reads the session file itself (Prime has no usage scan command)",
+					"Fork: rows of a forked session live in a new file whose copied prefix repeats the original's rows; the adapter must track the file set and de-duplicate"
+				],
+				"qualifications": [
+					"Rows are session entries (assistant messages, compaction, branch_summary, child_usage_attributed), not Pi usage rows",
+					"child_usage_attributed is a separate durable row, but on reload Prime also rewrites the target assistant's in-memory usage; an adapter must read the file's original row, never the replayed message",
+					"A child row's association (targetId) names the parent assistant entry, not the child session that spent it",
+					"adjustment is always false: Prime has no caller adjustments",
+					"Prime rewrites the whole session file on format migration and session moves; a line ordinal is a stable cursor only while a rewrite preserves entry order, and the adapter must detect rewrites (inode or size shrink) to re-validate it",
+					"Live observation needs the adapter to watch message_end/compaction_end and re-read the file for the durable row; events carry no sequence"
+				],
+				"unavailable": [
+					"A native durable monotonic usage sequence or cursor, and any session-global one: line ordinals are per file",
+					"A native usage paging command",
+					"reasoning and cacheWrite1h counts"
+				],
+				"support": "adapter-state",
+				"semanticFit": "qualified",
+				"basis": "established",
+				"baseline": {
+					"support": "adapter-state",
+					"semanticFit": "qualified"
+				},
+				"missing": [],
+				"contradictions": []
+			}
+		],
+		"privacyViolations": []
+	},
+	"baseline": {
+		"provenance": {
+			"source": "prime-agent",
+			"version": "0.9.6",
+			"commit": "2d24ad4e6b2d1ee8e6919af6f108e980a14d550e",
+			"artifactsHash": "376c327e06c7523ed5ea7eb16232d4f166d711fcf6a05474d6472b514107bc09",
+			"build": "clean-checkout",
+			"mode": "rpc",
+			"generatedBy": "prime-conformance-v0",
+			"probeVersion": "0.13.0",
+			"platform": "linux-x64",
+			"node": "v22.22.2"
+		},
+		"findings": [
+			{
+				"contract": "MissionTraceEventV0",
+				"evidence": [
+					"probe:tool-run, probe:tool-error, probe:abort-tool: tool_execution_* (toolCallId, toolName) pairs are Prime's own and match the assistant tool calls: true",
+					"probe:tool-error: tool_execution_end isError=true and the run recovers to stop: true",
+					"probe:provider-failure: final stop reason error",
+					"probe:abort-stream: final stop reason aborted",
+					"probe:abort-tool: final stop reason toolUse; agent_end alone does not say the run was aborted",
+					"probe:length-stop: final stop reason length",
+					"probe:*: adapter identity problems: none",
+					"prime:packages/coding-agent/docs/rpc.md:793-808 (event table: no run, turn or operation identity)",
+					"prime:packages/agent/src/agent-loop.ts:345-436 (agent_end emitted on stop, error, abort and tool-batch abort paths)"
+				],
+				"adapterState": [
+					"lane: an adapter label for the one root session an RPC process drives (prime:root); Prime names no lane",
+					"runId: adapter counter opened at agent_start and closed at agent_end; lives only for one observation",
+					"turnId: adapter counter per turn_start within the run",
+					"abort requests the adapter sent, to classify runs whose final stop reason is toolUse",
+					"mission sequence: adapter counter; restarts with each observation"
+				],
+				"qualifications": [
+					"Terminal status comes from the final assistant stop reason, not from agent_end: stop→completed, error→failed, aborted→aborted",
+					"A run aborted during tool execution ends with stop reason toolUse; it maps to mission.aborted only because the adapter itself sent the abort (abort-tool)",
+					"Runs with no truthful terminal kind emit none (length stop, or toolUse without an adapter abort): length-stop",
+					"mission.resumed and mission.suspended are never emitted: Prime has no suspended-run concept in RPC",
+					"model.completed is emitted per assistant message_end, including aborted and errored assistant messages",
+					"Run and turn IDs do not survive a process restart or reconnect: Prime's events carry nothing to rebuild them",
+					"After an abort (or a manual compaction, which aborts first), a plain prompt is refused until a prompt with streamingBehavior resumes the queue (admitted after abort: false; after compaction: false)",
+					"Prime emits event types beyond its documented table: none observed; they are ignored, not mapped"
+				],
+				"unavailable": [
+					"A native run identity (Pi runId)",
+					"A native turn identity (Pi turnId)",
+					"A native lane",
+					"A native run terminal status"
+				],
+				"support": "adapter-state",
+				"semanticFit": "qualified",
+				"basis": "established",
+				"baseline": {
+					"support": "adapter-state",
+					"semanticFit": "qualified"
+				},
+				"missing": [],
+				"contradictions": []
+			},
+			{
+				"contract": "RuntimeMetricsV0",
+				"evidence": [
+					"probe:*: every assistant usage equals the fake provider's scripted usage through Prime's documented mapping, in every field: true",
+					"probe:compaction: get_session_stats totals decrease after compaction: true",
+					"probe:fork: get_session_stats totals decrease after fork: true; fork writes a new session file: true",
+					"probe:*: tokens.total equals input+output+cacheRead+cacheWrite in every stats read: true",
+					"probe:compaction: summary usage persisted on the compaction entry: true; included in stats cost: false",
+					"probe:reasoning-usage: a reasoning count is reported: false",
+					"probe:child-usage-replay: child usage folded into stats (input, output, cacheRead, cacheWrite, cost): true",
+					"probe:child-usage-replay: after folding, stats tokens.total 1470 vs aggregate totalTokens 1050 (different definitions; not compared as a match)",
+					"probe:multi-turn-reopen: stats identical after reopen in every stable field (message counts, tokens, cost; contextUsage excluded): true",
+					"probe:multi-turn-reopen: adapter rebuild from the session file equals get_session_stats on a single path: true",
+					"probe:compaction: adapter rebuild, from snapshots immediately before and after compaction, equals the pre-compaction rows plus the summary usage in every dimension: true",
+					"prime:packages/coding-agent/src/core/agent-session.ts:14776-14815 (getSessionStats sums state.messages; total recomputed)",
+					"prime:packages/coding-agent/src/core/agent-session.ts:13442-13444 (retry removes the failed assistant from context)",
+					"prime:packages/coding-agent/src/core/agent-session.ts:1507-1516 (attributeChildUsage keeps parent totalTokens)",
+					"prime:packages/ai/src/providers/openai-completions.ts:1110 (usage parser: no reasoning field)",
+					"prime:packages/coding-agent/src/core/settings-manager.ts:1030-1045 and core/agent-session.ts:3398-3428 (auto-refine, on by default, runs a review model call after compaction)"
+				],
+				"adapterState": [
+					"A cumulative accounting sum rebuilt from every durable session file of the tree (assistant, compaction and branch_summary usage, and child_usage_attributed rows), because get_session_stats is scoped to the current context path",
+					"The set of session files belonging to one logical session (forks write new files linked by parentSession)",
+					"De-duplication by entry id across that file set: a fork copies the path's entries, ids included, into its new file"
+				],
+				"qualifications": [
+					"The native get_session_stats projection is incompatible with RuntimeMetricsV0; only the adapter rebuild from durable session entries is qualified",
+					"The rebuild reads Prime's documented session-file format directly, outside the RPC boundary",
+					"get_session_stats sums assistant usage over the current context path only: totals decrease after compaction and fork, so it is not cumulative accounting",
+					"get_session_stats tokens.total is recomputed from the four components; RuntimeMetricsV0.totalTokens is the sum of reported totalTokens",
+					"Compaction and branch-summary usage is durable on its entry but never counted by get_session_stats",
+					"A failed attempt that is auto-retried is removed from the context path (source only; not exercised live), so its usage leaves get_session_stats",
+					"Prime's default auto-refine runs a review model call after compaction; the probe disables it, so where that call's usage is recorded is not examined",
+					"RLM child usage is folded into the parent assistant usage (input/output/cost) while that message's totalTokens stays at the parent's own context tokens",
+					"messageCount has no equivalent: totalMessages counts current-path messages, not persisted message entries",
+					"contextUsage is a context-window estimate and is deliberately not mapped",
+					"get_session_stats reports only a total cost; per-component cost exists only on durable entries"
+				],
+				"unavailable": [
+					"reasoning: Prime's openai-completions usage carries no reasoning count (it is included in output)",
+					"cacheWrite1h: not reported",
+					"Caller usage adjustments: Prime has no recordUsage equivalent"
+				],
+				"support": "adapter-state",
+				"semanticFit": "qualified",
+				"basis": "established",
+				"baseline": {
+					"support": "adapter-state",
+					"semanticFit": "qualified"
+				},
+				"missing": [],
+				"contradictions": []
+			},
+			{
+				"contract": "OperationOutcomeV0",
+				"evidence": [
+					"prime:packages/coding-agent/docs/rpc.md:225-256 (command table, observe/observed_session_event)",
+					"prime:packages/coding-agent/docs/rpc.md:793-808 (event table: no run, turn or operation identity)",
+					"probe:multi-turn-reopen: entry ids stable across reopen: true",
+					"probe:abort-tool: final stop reason toolUse"
+				],
+				"adapterState": [
+					"An adapter-assigned operation ID per prompt command, correlated to the agent_start/agent_end pair it caused",
+					"A durable adapter record of {operationId, status, basis, fromTipId, tipId, startedAt, endedAt} written at agent_end, since Prime keeps none",
+					"fromTipId/tipId from the session leaf entry id before and after the run (via get_state/session file), accepting that fork moves the leaf into a new file"
+				],
+				"qualifications": [
+					"The prompt response acknowledges admission only; the outcome arrives later as events with no operation identity",
+					"An adapter-held outcome is lost if the adapter was detached when agent_end fired: Prime offers no lookup to recover it"
+				],
+				"unavailable": [
+					"Lookup of a terminal result by a stable operation ID, after completion, abort, detach or reopen",
+					"A machine-readable error code for failed runs (only a free-text errorMessage on the assistant message)",
+					"Run start and end timestamps as part of a result record"
+				],
+				"support": "unavailable",
+				"semanticFit": "incompatible",
+				"basis": "established",
+				"baseline": {
+					"support": "unavailable",
+					"semanticFit": "incompatible"
+				},
+				"missing": [],
+				"contradictions": []
+			},
+			{
+				"contract": "UsageLedgerRowV0",
+				"evidence": [
+					"probe:multi-turn-reopen: entry ids stable across reopen: true",
+					"probe:compaction: compaction entry carries usage: true",
+					"probe:child-usage-replay: a later child_usage_attributed entry changes the reported usage of an earlier assistant entry on reload: true",
+					"probe:fork: fork writes a new session file: true; entries copied with the original ids: 7; copies identical to the originals: true; header links to the original (parentSession): true",
+					"prime:packages/coding-agent/docs/session-format.md:265-280 (child_usage_attributed)",
+					"prime:packages/coding-agent/src/core/compaction/compaction.ts:108-116 (summary usage persisted on the entry)",
+					"prime:packages/coding-agent/src/core/session-manager.ts:1812-1818,1917-1930 (whole-file atomic rewrite on migration and moves)"
+				],
+				"adapterState": [
+					"Row id: the session entry id (8 hex, stable across reopen); a fork copies path entries with the same ids into its new file, so the id names one durable row across the file set only after de-duplication",
+					"Row sequence: a durable adapter-owned sequence across the whole fork family; Prime has none, and a file's line ordinal is not session-global (the original and a fork file reuse the same ordinals)",
+					"Paging: the adapter reads the session file itself (Prime has no usage scan command)",
+					"Fork: rows of a forked session live in a new file whose copied prefix repeats the original's rows; the adapter must track the file set and de-duplicate"
+				],
+				"qualifications": [
+					"Rows are session entries (assistant messages, compaction, branch_summary, child_usage_attributed), not Pi usage rows",
+					"child_usage_attributed is a separate durable row, but on reload Prime also rewrites the target assistant's in-memory usage; an adapter must read the file's original row, never the replayed message",
+					"A child row's association (targetId) names the parent assistant entry, not the child session that spent it",
+					"adjustment is always false: Prime has no caller adjustments",
+					"Prime rewrites the whole session file on format migration and session moves; a line ordinal is a stable cursor only while a rewrite preserves entry order, and the adapter must detect rewrites (inode or size shrink) to re-validate it",
+					"Live observation needs the adapter to watch message_end/compaction_end and re-read the file for the durable row; events carry no sequence"
+				],
+				"unavailable": [
+					"A native durable monotonic usage sequence or cursor, and any session-global one: line ordinals are per file",
+					"A native usage paging command",
+					"reasoning and cacheWrite1h counts"
+				],
+				"support": "adapter-state",
+				"semanticFit": "qualified",
+				"basis": "established",
+				"baseline": {
+					"support": "adapter-state",
+					"semanticFit": "qualified"
+				},
+				"missing": [],
+				"contradictions": []
+			}
+		]
+	},
+	"acp": {
+		"facts": {
+			"initialize": {
+				"protocolVersion": 1,
+				"agentName": "prime-agent",
+				"agentVersion": "0.9.7",
+				"agentInfoKeys": [
+					"name",
+					"title",
+					"version"
+				],
+				"capabilityFields": [
+					"loadSession",
+					"mcpCapabilities",
+					"mcpCapabilities.http",
+					"promptCapabilities",
+					"promptCapabilities.embeddedContext",
+					"promptCapabilities.image",
+					"sessionCapabilities",
+					"sessionCapabilities.close"
+				],
+				"capabilityFlags": {
+					"loadSession": false,
+					"promptCapabilities.image": true,
+					"promptCapabilities.embeddedContext": true,
+					"mcpCapabilities.http": true
+				},
+				"metaNamespaces": [
+					"ai.primeintellect.prime-agent"
+				],
+				"primeMetaKeys": []
+			},
+			"initializeConsistent": true,
+			"providerUsageDecodedExactly": true,
+			"lengthStop": "end_turn",
+			"providerFailure": "error",
+			"cancelStreamStop": "cancelled",
+			"cancelToolStop": "cancelled",
+			"tokenLimitStop": "max_tokens",
+			"turnLimitStop": "max_turn_requests",
+			"gateFailureObserved": true,
+			"closeRecreate": {
+				"acpSessions": 2,
+				"durableSessions": 1,
+				"promptTurnIds": [
+					1,
+					1,
+					1,
+					1,
+					1,
+					1,
+					1,
+					1
+				],
+				"eventSequences": [
+					1,
+					2,
+					3,
+					4,
+					1,
+					2,
+					3,
+					4
+				]
+			},
+			"updateKinds": [
+				"agent_message_chunk",
+				"agent_thought_chunk",
+				"session_info_update",
+				"tool_call",
+				"tool_call_update"
+			],
+			"metaFields": [
+				"autonomous",
+				"compaction",
+				"eventSequence",
+				"outcome",
+				"phase",
+				"promptTurnId",
+				"quiescence",
+				"terminalQuiescenceExpected"
+			]
+		},
+		"scenarios": [
+			{
+				"scenario": "simple",
+				"provenance": {
+					"source": "prime-agent",
+					"version": "0.9.7",
+					"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+					"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+					"build": "clean-checkout",
+					"mode": "acp",
+					"generatedBy": "prime-conformance-v0",
+					"probeVersion": "0.14.7",
+					"platform": "linux-x64",
+					"node": "v26.10.0",
+					"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+					"endophasiaBuild": "clean-checkout",
+					"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+					"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+					"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+					"scenario": "simple"
+				},
+				"initialize": {
+					"protocolVersion": 1,
+					"agentName": "prime-agent",
+					"agentVersion": "0.9.7",
+					"agentInfoKeys": [
+						"name",
+						"title",
+						"version"
+					],
+					"capabilityFields": [
+						"loadSession",
+						"mcpCapabilities",
+						"mcpCapabilities.http",
+						"promptCapabilities",
+						"promptCapabilities.embeddedContext",
+						"promptCapabilities.image",
+						"sessionCapabilities",
+						"sessionCapabilities.close"
+					],
+					"capabilityFlags": {
+						"loadSession": false,
+						"promptCapabilities.image": true,
+						"promptCapabilities.embeddedContext": true,
+						"mcpCapabilities.http": true
+					},
+					"metaNamespaces": [
+						"ai.primeintellect.prime-agent"
+					],
+					"primeMetaKeys": []
+				},
+				"prompts": [
+					{
+						"ordinal": 1,
+						"response": "result",
+						"stopReason": "end_turn"
+					}
+				],
+				"evidenceProblems": []
+			},
+			{
+				"scenario": "tool-run",
+				"provenance": {
+					"source": "prime-agent",
+					"version": "0.9.7",
+					"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+					"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+					"build": "clean-checkout",
+					"mode": "acp",
+					"generatedBy": "prime-conformance-v0",
+					"probeVersion": "0.14.7",
+					"platform": "linux-x64",
+					"node": "v26.10.0",
+					"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+					"endophasiaBuild": "clean-checkout",
+					"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+					"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+					"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+					"scenario": "tool-run"
+				},
+				"initialize": {
+					"protocolVersion": 1,
+					"agentName": "prime-agent",
+					"agentVersion": "0.9.7",
+					"agentInfoKeys": [
+						"name",
+						"title",
+						"version"
+					],
+					"capabilityFields": [
+						"loadSession",
+						"mcpCapabilities",
+						"mcpCapabilities.http",
+						"promptCapabilities",
+						"promptCapabilities.embeddedContext",
+						"promptCapabilities.image",
+						"sessionCapabilities",
+						"sessionCapabilities.close"
+					],
+					"capabilityFlags": {
+						"loadSession": false,
+						"promptCapabilities.image": true,
+						"promptCapabilities.embeddedContext": true,
+						"mcpCapabilities.http": true
+					},
+					"metaNamespaces": [
+						"ai.primeintellect.prime-agent"
+					],
+					"primeMetaKeys": []
+				},
+				"prompts": [
+					{
+						"ordinal": 1,
+						"response": "result",
+						"stopReason": "end_turn"
+					}
+				],
+				"evidenceProblems": []
+			},
+			{
+				"scenario": "tool-error",
+				"provenance": {
+					"source": "prime-agent",
+					"version": "0.9.7",
+					"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+					"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+					"build": "clean-checkout",
+					"mode": "acp",
+					"generatedBy": "prime-conformance-v0",
+					"probeVersion": "0.14.7",
+					"platform": "linux-x64",
+					"node": "v26.10.0",
+					"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+					"endophasiaBuild": "clean-checkout",
+					"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+					"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+					"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+					"scenario": "tool-error"
+				},
+				"initialize": {
+					"protocolVersion": 1,
+					"agentName": "prime-agent",
+					"agentVersion": "0.9.7",
+					"agentInfoKeys": [
+						"name",
+						"title",
+						"version"
+					],
+					"capabilityFields": [
+						"loadSession",
+						"mcpCapabilities",
+						"mcpCapabilities.http",
+						"promptCapabilities",
+						"promptCapabilities.embeddedContext",
+						"promptCapabilities.image",
+						"sessionCapabilities",
+						"sessionCapabilities.close"
+					],
+					"capabilityFlags": {
+						"loadSession": false,
+						"promptCapabilities.image": true,
+						"promptCapabilities.embeddedContext": true,
+						"mcpCapabilities.http": true
+					},
+					"metaNamespaces": [
+						"ai.primeintellect.prime-agent"
+					],
+					"primeMetaKeys": []
+				},
+				"prompts": [
+					{
+						"ordinal": 1,
+						"response": "result",
+						"stopReason": "end_turn"
+					}
+				],
+				"evidenceProblems": []
+			},
+			{
+				"scenario": "provider-failure",
+				"provenance": {
+					"source": "prime-agent",
+					"version": "0.9.7",
+					"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+					"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+					"build": "clean-checkout",
+					"mode": "acp",
+					"generatedBy": "prime-conformance-v0",
+					"probeVersion": "0.14.7",
+					"platform": "linux-x64",
+					"node": "v26.10.0",
+					"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+					"endophasiaBuild": "clean-checkout",
+					"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+					"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+					"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+					"scenario": "provider-failure"
+				},
+				"initialize": {
+					"protocolVersion": 1,
+					"agentName": "prime-agent",
+					"agentVersion": "0.9.7",
+					"agentInfoKeys": [
+						"name",
+						"title",
+						"version"
+					],
+					"capabilityFields": [
+						"loadSession",
+						"mcpCapabilities",
+						"mcpCapabilities.http",
+						"promptCapabilities",
+						"promptCapabilities.embeddedContext",
+						"promptCapabilities.image",
+						"sessionCapabilities",
+						"sessionCapabilities.close"
+					],
+					"capabilityFlags": {
+						"loadSession": false,
+						"promptCapabilities.image": true,
+						"promptCapabilities.embeddedContext": true,
+						"mcpCapabilities.http": true
+					},
+					"metaNamespaces": [
+						"ai.primeintellect.prime-agent"
+					],
+					"primeMetaKeys": []
+				},
+				"prompts": [
+					{
+						"ordinal": 1,
+						"response": "error",
+						"errorCode": -32603
+					}
+				],
+				"evidenceProblems": []
+			},
+			{
+				"scenario": "cancel-stream",
+				"provenance": {
+					"source": "prime-agent",
+					"version": "0.9.7",
+					"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+					"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+					"build": "clean-checkout",
+					"mode": "acp",
+					"generatedBy": "prime-conformance-v0",
+					"probeVersion": "0.14.7",
+					"platform": "linux-x64",
+					"node": "v26.10.0",
+					"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+					"endophasiaBuild": "clean-checkout",
+					"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+					"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+					"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+					"scenario": "cancel-stream"
+				},
+				"initialize": {
+					"protocolVersion": 1,
+					"agentName": "prime-agent",
+					"agentVersion": "0.9.7",
+					"agentInfoKeys": [
+						"name",
+						"title",
+						"version"
+					],
+					"capabilityFields": [
+						"loadSession",
+						"mcpCapabilities",
+						"mcpCapabilities.http",
+						"promptCapabilities",
+						"promptCapabilities.embeddedContext",
+						"promptCapabilities.image",
+						"sessionCapabilities",
+						"sessionCapabilities.close"
+					],
+					"capabilityFlags": {
+						"loadSession": false,
+						"promptCapabilities.image": true,
+						"promptCapabilities.embeddedContext": true,
+						"mcpCapabilities.http": true
+					},
+					"metaNamespaces": [
+						"ai.primeintellect.prime-agent"
+					],
+					"primeMetaKeys": []
+				},
+				"prompts": [
+					{
+						"ordinal": 1,
+						"response": "result",
+						"stopReason": "cancelled"
+					}
+				],
+				"evidenceProblems": []
+			},
+			{
+				"scenario": "cancel-tool",
+				"provenance": {
+					"source": "prime-agent",
+					"version": "0.9.7",
+					"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+					"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+					"build": "clean-checkout",
+					"mode": "acp",
+					"generatedBy": "prime-conformance-v0",
+					"probeVersion": "0.14.7",
+					"platform": "linux-x64",
+					"node": "v26.10.0",
+					"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+					"endophasiaBuild": "clean-checkout",
+					"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+					"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+					"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+					"scenario": "cancel-tool"
+				},
+				"initialize": {
+					"protocolVersion": 1,
+					"agentName": "prime-agent",
+					"agentVersion": "0.9.7",
+					"agentInfoKeys": [
+						"name",
+						"title",
+						"version"
+					],
+					"capabilityFields": [
+						"loadSession",
+						"mcpCapabilities",
+						"mcpCapabilities.http",
+						"promptCapabilities",
+						"promptCapabilities.embeddedContext",
+						"promptCapabilities.image",
+						"sessionCapabilities",
+						"sessionCapabilities.close"
+					],
+					"capabilityFlags": {
+						"loadSession": false,
+						"promptCapabilities.image": true,
+						"promptCapabilities.embeddedContext": true,
+						"mcpCapabilities.http": true
+					},
+					"metaNamespaces": [
+						"ai.primeintellect.prime-agent"
+					],
+					"primeMetaKeys": []
+				},
+				"prompts": [
+					{
+						"ordinal": 1,
+						"response": "result",
+						"stopReason": "cancelled"
+					}
+				],
+				"evidenceProblems": []
+			},
+			{
+				"scenario": "length-stop",
+				"provenance": {
+					"source": "prime-agent",
+					"version": "0.9.7",
+					"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+					"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+					"build": "clean-checkout",
+					"mode": "acp",
+					"generatedBy": "prime-conformance-v0",
+					"probeVersion": "0.14.7",
+					"platform": "linux-x64",
+					"node": "v26.10.0",
+					"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+					"endophasiaBuild": "clean-checkout",
+					"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+					"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+					"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+					"scenario": "length-stop"
+				},
+				"initialize": {
+					"protocolVersion": 1,
+					"agentName": "prime-agent",
+					"agentVersion": "0.9.7",
+					"agentInfoKeys": [
+						"name",
+						"title",
+						"version"
+					],
+					"capabilityFields": [
+						"loadSession",
+						"mcpCapabilities",
+						"mcpCapabilities.http",
+						"promptCapabilities",
+						"promptCapabilities.embeddedContext",
+						"promptCapabilities.image",
+						"sessionCapabilities",
+						"sessionCapabilities.close"
+					],
+					"capabilityFlags": {
+						"loadSession": false,
+						"promptCapabilities.image": true,
+						"promptCapabilities.embeddedContext": true,
+						"mcpCapabilities.http": true
+					},
+					"metaNamespaces": [
+						"ai.primeintellect.prime-agent"
+					],
+					"primeMetaKeys": []
+				},
+				"prompts": [
+					{
+						"ordinal": 1,
+						"response": "result",
+						"stopReason": "end_turn"
+					}
+				],
+				"evidenceProblems": []
+			},
+			{
+				"scenario": "reasoning-usage",
+				"provenance": {
+					"source": "prime-agent",
+					"version": "0.9.7",
+					"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+					"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+					"build": "clean-checkout",
+					"mode": "acp",
+					"generatedBy": "prime-conformance-v0",
+					"probeVersion": "0.14.7",
+					"platform": "linux-x64",
+					"node": "v26.10.0",
+					"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+					"endophasiaBuild": "clean-checkout",
+					"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+					"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+					"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+					"scenario": "reasoning-usage"
+				},
+				"initialize": {
+					"protocolVersion": 1,
+					"agentName": "prime-agent",
+					"agentVersion": "0.9.7",
+					"agentInfoKeys": [
+						"name",
+						"title",
+						"version"
+					],
+					"capabilityFields": [
+						"loadSession",
+						"mcpCapabilities",
+						"mcpCapabilities.http",
+						"promptCapabilities",
+						"promptCapabilities.embeddedContext",
+						"promptCapabilities.image",
+						"sessionCapabilities",
+						"sessionCapabilities.close"
+					],
+					"capabilityFlags": {
+						"loadSession": false,
+						"promptCapabilities.image": true,
+						"promptCapabilities.embeddedContext": true,
+						"mcpCapabilities.http": true
+					},
+					"metaNamespaces": [
+						"ai.primeintellect.prime-agent"
+					],
+					"primeMetaKeys": []
+				},
+				"prompts": [
+					{
+						"ordinal": 1,
+						"response": "result",
+						"stopReason": "end_turn"
+					}
+				],
+				"evidenceProblems": []
+			},
+			{
+				"scenario": "token-limit",
+				"provenance": {
+					"source": "prime-agent",
+					"version": "0.9.7",
+					"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+					"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+					"build": "clean-checkout",
+					"mode": "acp",
+					"generatedBy": "prime-conformance-v0",
+					"probeVersion": "0.14.7",
+					"platform": "linux-x64",
+					"node": "v26.10.0",
+					"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+					"endophasiaBuild": "clean-checkout",
+					"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+					"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+					"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+					"scenario": "token-limit"
+				},
+				"initialize": {
+					"protocolVersion": 1,
+					"agentName": "prime-agent",
+					"agentVersion": "0.9.7",
+					"agentInfoKeys": [
+						"name",
+						"title",
+						"version"
+					],
+					"capabilityFields": [
+						"loadSession",
+						"mcpCapabilities",
+						"mcpCapabilities.http",
+						"promptCapabilities",
+						"promptCapabilities.embeddedContext",
+						"promptCapabilities.image",
+						"sessionCapabilities",
+						"sessionCapabilities.close"
+					],
+					"capabilityFlags": {
+						"loadSession": false,
+						"promptCapabilities.image": true,
+						"promptCapabilities.embeddedContext": true,
+						"mcpCapabilities.http": true
+					},
+					"metaNamespaces": [
+						"ai.primeintellect.prime-agent"
+					],
+					"primeMetaKeys": []
+				},
+				"prompts": [
+					{
+						"ordinal": 1,
+						"response": "result",
+						"stopReason": "max_tokens"
+					}
+				],
+				"evidenceProblems": []
+			},
+			{
+				"scenario": "turn-limit",
+				"provenance": {
+					"source": "prime-agent",
+					"version": "0.9.7",
+					"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+					"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+					"build": "clean-checkout",
+					"mode": "acp",
+					"generatedBy": "prime-conformance-v0",
+					"probeVersion": "0.14.7",
+					"platform": "linux-x64",
+					"node": "v26.10.0",
+					"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+					"endophasiaBuild": "clean-checkout",
+					"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+					"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+					"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+					"scenario": "turn-limit"
+				},
+				"initialize": {
+					"protocolVersion": 1,
+					"agentName": "prime-agent",
+					"agentVersion": "0.9.7",
+					"agentInfoKeys": [
+						"name",
+						"title",
+						"version"
+					],
+					"capabilityFields": [
+						"loadSession",
+						"mcpCapabilities",
+						"mcpCapabilities.http",
+						"promptCapabilities",
+						"promptCapabilities.embeddedContext",
+						"promptCapabilities.image",
+						"sessionCapabilities",
+						"sessionCapabilities.close"
+					],
+					"capabilityFlags": {
+						"loadSession": false,
+						"promptCapabilities.image": true,
+						"promptCapabilities.embeddedContext": true,
+						"mcpCapabilities.http": true
+					},
+					"metaNamespaces": [
+						"ai.primeintellect.prime-agent"
+					],
+					"primeMetaKeys": []
+				},
+				"prompts": [
+					{
+						"ordinal": 1,
+						"response": "result",
+						"stopReason": "max_turn_requests"
+					}
+				],
+				"evidenceProblems": []
+			},
+			{
+				"scenario": "compaction",
+				"provenance": {
+					"source": "prime-agent",
+					"version": "0.9.7",
+					"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+					"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+					"build": "clean-checkout",
+					"mode": "acp",
+					"generatedBy": "prime-conformance-v0",
+					"probeVersion": "0.14.7",
+					"platform": "linux-x64",
+					"node": "v26.10.0",
+					"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+					"endophasiaBuild": "clean-checkout",
+					"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+					"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+					"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+					"scenario": "compaction"
+				},
+				"initialize": {
+					"protocolVersion": 1,
+					"agentName": "prime-agent",
+					"agentVersion": "0.9.7",
+					"agentInfoKeys": [
+						"name",
+						"title",
+						"version"
+					],
+					"capabilityFields": [
+						"loadSession",
+						"mcpCapabilities",
+						"mcpCapabilities.http",
+						"promptCapabilities",
+						"promptCapabilities.embeddedContext",
+						"promptCapabilities.image",
+						"sessionCapabilities",
+						"sessionCapabilities.close"
+					],
+					"capabilityFlags": {
+						"loadSession": false,
+						"promptCapabilities.image": true,
+						"promptCapabilities.embeddedContext": true,
+						"mcpCapabilities.http": true
+					},
+					"metaNamespaces": [
+						"ai.primeintellect.prime-agent"
+					],
+					"primeMetaKeys": []
+				},
+				"prompts": [
+					{
+						"ordinal": 1,
+						"response": "result",
+						"stopReason": "end_turn"
+					},
+					{
+						"ordinal": 2,
+						"response": "result",
+						"stopReason": "end_turn"
+					},
+					{
+						"ordinal": 3,
+						"response": "result",
+						"stopReason": "end_turn"
+					}
+				],
+				"evidenceProblems": []
+			},
+			{
+				"scenario": "gate-failure",
+				"provenance": {
+					"source": "prime-agent",
+					"version": "0.9.7",
+					"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+					"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+					"build": "clean-checkout",
+					"mode": "acp",
+					"generatedBy": "prime-conformance-v0",
+					"probeVersion": "0.14.7",
+					"platform": "linux-x64",
+					"node": "v26.10.0",
+					"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+					"endophasiaBuild": "clean-checkout",
+					"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+					"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+					"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+					"scenario": "gate-failure"
+				},
+				"initialize": {
+					"protocolVersion": 1,
+					"agentName": "prime-agent",
+					"agentVersion": "0.9.7",
+					"agentInfoKeys": [
+						"name",
+						"title",
+						"version"
+					],
+					"capabilityFields": [
+						"loadSession",
+						"mcpCapabilities",
+						"mcpCapabilities.http",
+						"promptCapabilities",
+						"promptCapabilities.embeddedContext",
+						"promptCapabilities.image",
+						"sessionCapabilities",
+						"sessionCapabilities.close"
+					],
+					"capabilityFlags": {
+						"loadSession": false,
+						"promptCapabilities.image": true,
+						"promptCapabilities.embeddedContext": true,
+						"mcpCapabilities.http": true
+					},
+					"metaNamespaces": [
+						"ai.primeintellect.prime-agent"
+					],
+					"primeMetaKeys": []
+				},
+				"prompts": [
+					{
+						"ordinal": 1,
+						"response": "result",
+						"stopReason": "max_turn_requests"
+					}
+				],
+				"evidenceProblems": []
+			},
+			{
+				"scenario": "unsupported-requests",
+				"provenance": {
+					"source": "prime-agent",
+					"version": "0.9.7",
+					"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+					"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+					"build": "clean-checkout",
+					"mode": "acp",
+					"generatedBy": "prime-conformance-v0",
+					"probeVersion": "0.14.7",
+					"platform": "linux-x64",
+					"node": "v26.10.0",
+					"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+					"endophasiaBuild": "clean-checkout",
+					"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+					"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+					"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+					"scenario": "unsupported-requests"
+				},
+				"initialize": {
+					"protocolVersion": 1,
+					"agentName": "prime-agent",
+					"agentVersion": "0.9.7",
+					"agentInfoKeys": [
+						"name",
+						"title",
+						"version"
+					],
+					"capabilityFields": [
+						"loadSession",
+						"mcpCapabilities",
+						"mcpCapabilities.http",
+						"promptCapabilities",
+						"promptCapabilities.embeddedContext",
+						"promptCapabilities.image",
+						"sessionCapabilities",
+						"sessionCapabilities.close"
+					],
+					"capabilityFlags": {
+						"loadSession": false,
+						"promptCapabilities.image": true,
+						"promptCapabilities.embeddedContext": true,
+						"mcpCapabilities.http": true
+					},
+					"metaNamespaces": [
+						"ai.primeintellect.prime-agent"
+					],
+					"primeMetaKeys": []
+				},
+				"prompts": [],
+				"evidenceProblems": []
+			},
+			{
+				"scenario": "multi-prompt",
+				"provenance": {
+					"source": "prime-agent",
+					"version": "0.9.7",
+					"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+					"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+					"build": "clean-checkout",
+					"mode": "acp",
+					"generatedBy": "prime-conformance-v0",
+					"probeVersion": "0.14.7",
+					"platform": "linux-x64",
+					"node": "v26.10.0",
+					"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+					"endophasiaBuild": "clean-checkout",
+					"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+					"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+					"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+					"scenario": "multi-prompt"
+				},
+				"initialize": {
+					"protocolVersion": 1,
+					"agentName": "prime-agent",
+					"agentVersion": "0.9.7",
+					"agentInfoKeys": [
+						"name",
+						"title",
+						"version"
+					],
+					"capabilityFields": [
+						"loadSession",
+						"mcpCapabilities",
+						"mcpCapabilities.http",
+						"promptCapabilities",
+						"promptCapabilities.embeddedContext",
+						"promptCapabilities.image",
+						"sessionCapabilities",
+						"sessionCapabilities.close"
+					],
+					"capabilityFlags": {
+						"loadSession": false,
+						"promptCapabilities.image": true,
+						"promptCapabilities.embeddedContext": true,
+						"mcpCapabilities.http": true
+					},
+					"metaNamespaces": [
+						"ai.primeintellect.prime-agent"
+					],
+					"primeMetaKeys": []
+				},
+				"prompts": [
+					{
+						"ordinal": 1,
+						"response": "result",
+						"stopReason": "end_turn"
+					},
+					{
+						"ordinal": 2,
+						"response": "result",
+						"stopReason": "end_turn"
+					}
+				],
+				"evidenceProblems": []
+			},
+			{
+				"scenario": "close-recreate",
+				"provenance": {
+					"source": "prime-agent",
+					"version": "0.9.7",
+					"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+					"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+					"build": "clean-checkout",
+					"mode": "acp",
+					"generatedBy": "prime-conformance-v0",
+					"probeVersion": "0.14.7",
+					"platform": "linux-x64",
+					"node": "v26.10.0",
+					"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+					"endophasiaBuild": "clean-checkout",
+					"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+					"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+					"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+					"scenario": "close-recreate"
+				},
+				"initialize": {
+					"protocolVersion": 1,
+					"agentName": "prime-agent",
+					"agentVersion": "0.9.7",
+					"agentInfoKeys": [
+						"name",
+						"title",
+						"version"
+					],
+					"capabilityFields": [
+						"loadSession",
+						"mcpCapabilities",
+						"mcpCapabilities.http",
+						"promptCapabilities",
+						"promptCapabilities.embeddedContext",
+						"promptCapabilities.image",
+						"sessionCapabilities",
+						"sessionCapabilities.close"
+					],
+					"capabilityFlags": {
+						"loadSession": false,
+						"promptCapabilities.image": true,
+						"promptCapabilities.embeddedContext": true,
+						"mcpCapabilities.http": true
+					},
+					"metaNamespaces": [
+						"ai.primeintellect.prime-agent"
+					],
+					"primeMetaKeys": []
+				},
+				"prompts": [
+					{
+						"ordinal": 1,
+						"response": "result",
+						"stopReason": "end_turn"
+					},
+					{
+						"ordinal": 2,
+						"response": "result",
+						"stopReason": "end_turn"
+					}
+				],
+				"evidenceProblems": []
+			}
+		]
+	},
+	"capabilities": [
+		{
+			"contract": "SessionOverviewV0",
+			"rpc": {
+				"support": "adapter-state",
+				"semanticFit": "incompatible",
+				"basis": "established"
+			},
+			"acp": {
+				"support": "adapter-state",
+				"semanticFit": "incompatible",
+				"basis": "established"
+			},
+			"durable": {
+				"support": "unavailable",
+				"semanticFit": "incompatible",
+				"basis": "established",
+				"exactProjection": "unverified",
+				"boundary": "durable-session-files, separately observed"
+			},
+			"adapterState": [
+				"Any new allocator/registry/projection would require an independent implementation and audit"
+			],
+			"missing": [
+				"atomic per-lane tip/operation topology",
+				"durable operation id, kind, status, startedAt and captured model",
+				"lane counts and aborting count"
+			]
+		},
+		{
+			"contract": "MissionTraceEventV0",
+			"rpc": {
+				"contract": "MissionTraceEventV0",
+				"evidence": [
+					"probe:tool-run, probe:tool-error, probe:abort-tool: tool_execution_* (toolCallId, toolName) pairs are Prime's own and match the assistant tool calls: true",
+					"probe:tool-error: tool_execution_end isError=true and the run recovers to stop: true",
+					"probe:provider-failure: final stop reason error",
+					"probe:abort-stream: final stop reason aborted",
+					"probe:abort-tool: final stop reason toolUse; agent_end alone does not say the run was aborted",
+					"probe:length-stop: final stop reason length",
+					"probe:*: adapter identity problems: none",
+					"prime@08ff1b2e:packages/agent/src/types.ts:390-433 (AgentEvent; no operation/run/turn IDs)",
+					"prime@08ff1b2e:packages/agent/src/agent-loop.ts:310-449,751-756 (loop, tool termination, stops)"
+				],
+				"adapterState": [
+					"lane: an adapter label for the one root session an RPC process drives (prime:root); Prime names no lane",
+					"runId: adapter counter opened at agent_start and closed at agent_end; lives only for one observation",
+					"turnId: adapter counter per turn_start within the run",
+					"abort requests the adapter sent, to classify runs whose final stop reason is toolUse",
+					"mission sequence: adapter counter; restarts with each observation"
+				],
+				"qualifications": [
+					"Terminal status comes from the final assistant stop reason, not from agent_end: stop→completed, error→failed, aborted→aborted",
+					"A run aborted during tool execution ends with stop reason toolUse; it maps to mission.aborted only because the adapter itself sent the abort (abort-tool)",
+					"Runs with no truthful terminal kind emit none (length stop, or toolUse without an adapter abort): length-stop",
+					"mission.resumed and mission.suspended are never emitted: Prime has no suspended-run concept in RPC",
+					"model.completed is emitted per assistant message_end, including aborted and errored assistant messages",
+					"Run and turn IDs do not survive a process restart or reconnect: Prime's events carry nothing to rebuild them",
+					"After an abort (or a manual compaction, which aborts first), a plain prompt is refused until a prompt with streamingBehavior resumes the queue (admitted after abort: false; after compaction: false)",
+					"Prime emits event types beyond its documented table: none observed; they are ignored, not mapped"
+				],
+				"unavailable": [
+					"A native run identity (Pi runId)",
+					"A native turn identity (Pi turnId)",
+					"A native lane",
+					"A native run terminal status"
+				],
+				"support": "adapter-state",
+				"semanticFit": "qualified",
+				"basis": "established",
+				"baseline": {
+					"support": "adapter-state",
+					"semanticFit": "qualified"
+				},
+				"missing": [],
+				"contradictions": []
+			},
+			"acp": {
+				"support": "adapter-state",
+				"semanticFit": "qualified",
+				"basis": "established"
+			},
+			"durable": {
+				"support": "unavailable",
+				"semanticFit": "incompatible",
+				"basis": "established",
+				"exactProjection": "unverified",
+				"boundary": "durable-session-files, separately observed"
+			},
+			"adapterState": [
+				"RPC lane/run/turn/sequence labels",
+				"local cancel request correlation",
+				"ACP prompt/sequence counters cannot become durable operation or Usage cursors"
+			],
+			"missing": [
+				"truthful complete worker-lifetime lifecycle including resume/suspend",
+				"model completion and turn boundaries on ACP",
+				"length termination distinct from successful completion"
+			]
+		},
+		{
+			"contract": "RuntimeMetricsV0",
+			"rpc": {
+				"contract": "RuntimeMetricsV0",
+				"evidence": [
+					"probe:*: every assistant usage equals the fake provider's scripted usage through Prime's documented mapping, in every field: true",
+					"probe:compaction: get_session_stats totals decrease after compaction: true",
+					"probe:fork: get_session_stats totals decrease after fork: true; fork writes a new session file: true",
+					"probe:*: tokens.total equals input+output+cacheRead+cacheWrite in every stats read: true",
+					"probe:compaction: summary usage persisted on the compaction entry: true; included in stats cost: false",
+					"probe:reasoning-usage: a reasoning count is reported: false",
+					"probe:child-usage-replay: child usage folded into stats (input, output, cacheRead, cacheWrite, cost): true",
+					"probe:child-usage-replay: after folding, stats tokens.total 1470 vs aggregate totalTokens 1050 (different definitions; not compared as a match)",
+					"probe:multi-turn-reopen: stats identical after reopen in every stable field (message counts, tokens, cost; contextUsage excluded): true",
+					"probe:multi-turn-reopen: adapter rebuild from the session file equals get_session_stats on a single path: true",
+					"probe:compaction: adapter rebuild, from snapshots immediately before and after compaction, equals the pre-compaction rows plus the summary usage in every dimension: true",
+					"prime@08ff1b2e:packages/coding-agent/src/core/agent-session.ts:14776-14824 (current messages, recomputed total)",
+					"prime@08ff1b2e:packages/coding-agent/src/core/agent-session.ts:13434-13444 (failed message removed)",
+					"prime@08ff1b2e:packages/coding-agent/src/core/agent-session.ts:1507-1516 (parent context total retained)",
+					"prime@08ff1b2e:packages/ai/src/providers/openai-completions.ts:1110-1178 (usage mapping)",
+					"prime@08ff1b2e:packages/coding-agent/src/core/settings-manager.ts:1030-1045;core/agent-session.ts:3398-3428 (default-on review)"
+				],
+				"adapterState": [
+					"A cumulative accounting sum rebuilt from every durable session file of the tree (assistant, compaction and branch_summary usage, and child_usage_attributed rows), because get_session_stats is scoped to the current context path",
+					"The set of session files belonging to one logical session (forks write new files linked by parentSession)",
+					"De-duplication by entry id across that file set: a fork copies the path's entries, ids included, into its new file"
+				],
+				"qualifications": [
+					"The native get_session_stats projection is incompatible with RuntimeMetricsV0; only the adapter rebuild from durable session entries is qualified",
+					"The rebuild reads Prime's documented session-file format directly, outside the RPC boundary",
+					"get_session_stats sums assistant usage over the current context path only: totals decrease after compaction and fork, so it is not cumulative accounting",
+					"get_session_stats tokens.total is recomputed from the four components; RuntimeMetricsV0.totalTokens is the sum of reported totalTokens",
+					"Compaction and branch-summary usage is durable on its entry but never counted by get_session_stats",
+					"A failed attempt that is auto-retried is removed from the context path (source only; not exercised live), so its usage leaves get_session_stats",
+					"Prime's default auto-refine runs a review model call after compaction; the probe disables it, so where that call's usage is recorded is not examined",
+					"RLM child usage is folded into the parent assistant usage (input/output/cost) while that message's totalTokens stays at the parent's own context tokens",
+					"messageCount has no equivalent: totalMessages counts current-path messages, not persisted message entries",
+					"contextUsage is a context-window estimate and is deliberately not mapped",
+					"get_session_stats reports only a total cost; per-component cost exists only on durable entries"
+				],
+				"unavailable": [
+					"reasoning: Prime's openai-completions usage carries no reasoning count (it is included in output)",
+					"cacheWrite1h: not reported",
+					"Caller usage adjustments: Prime has no recordUsage equivalent"
+				],
+				"support": "adapter-state",
+				"semanticFit": "qualified",
+				"basis": "established",
+				"baseline": {
+					"support": "adapter-state",
+					"semanticFit": "qualified"
+				},
+				"missing": [],
+				"contradictions": []
+			},
+			"acp": {
+				"support": "unavailable",
+				"semanticFit": "incompatible",
+				"basis": "established"
+			},
+			"durable": {
+				"support": "adapter-state",
+				"semanticFit": "qualified",
+				"basis": "established",
+				"exactProjection": "unverified",
+				"boundary": "durable-session-files, separately observed"
+			},
+			"adapterState": [
+				"Any new allocator/registry/projection would require an independent implementation and audit"
+			],
+			"missing": [
+				"cumulative spend survives compaction, retries, fork and reopen",
+				"reported total is preserved separately from component arithmetic",
+				"absent reasoning/cacheWrite1h stays absent; signed corrections and concurrency remain unproved"
+			]
+		},
+		{
+			"contract": "OperationOutcomeV0",
+			"rpc": {
+				"contract": "OperationOutcomeV0",
+				"evidence": [
+					"prime@08ff1b2e:packages/coding-agent/src/modes/daemon/daemon-protocol.ts:19-238 (command table)",
+					"prime@08ff1b2e:packages/agent/src/types.ts:390-433 (AgentEvent; no operation/run/turn IDs)",
+					"probe:multi-turn-reopen: entry ids stable across reopen: true",
+					"probe:abort-tool: final stop reason toolUse"
+				],
+				"adapterState": [
+					"An adapter-assigned operation ID per prompt command, correlated to the agent_start/agent_end pair it caused",
+					"A durable adapter record of {operationId, status, basis, fromTipId, tipId, startedAt, endedAt} written at agent_end, since Prime keeps none",
+					"fromTipId/tipId from the session leaf entry id before and after the run (via get_state/session file), accepting that fork moves the leaf into a new file"
+				],
+				"qualifications": [
+					"The prompt response acknowledges admission only; the outcome arrives later as events with no operation identity",
+					"An adapter-held outcome is lost if the adapter was detached when agent_end fired: Prime offers no lookup to recover it"
+				],
+				"unavailable": [
+					"Lookup of a terminal result by a stable operation ID, after completion, abort, detach or reopen",
+					"A machine-readable error code for failed runs (only a free-text errorMessage on the assistant message)",
+					"Run start and end timestamps as part of a result record"
+				],
+				"support": "unavailable",
+				"semanticFit": "incompatible",
+				"basis": "established",
+				"baseline": {
+					"support": "unavailable",
+					"semanticFit": "incompatible"
+				},
+				"missing": [],
+				"contradictions": []
+			},
+			"acp": {
+				"support": "unavailable",
+				"semanticFit": "incompatible",
+				"basis": "established"
+			},
+			"durable": {
+				"support": "unavailable",
+				"semanticFit": "incompatible",
+				"basis": "established",
+				"exactProjection": "unverified",
+				"boundary": "durable-session-files, separately observed"
+			},
+			"adapterState": [
+				"Any new allocator/registry/projection would require an independent implementation and audit"
+			],
+			"missing": [
+				"durable immutable registry keyed by native operation identity",
+				"start/finish times, from/tip ids and machine error code",
+				"null only for unknown or nonterminal operation, lookup after reopen"
+			]
+		},
+		{
+			"contract": "UsageLedgerRowV0",
+			"rpc": {
+				"contract": "UsageLedgerRowV0",
+				"evidence": [
+					"probe:multi-turn-reopen: entry ids stable across reopen: true",
+					"probe:compaction: compaction entry carries usage: true",
+					"probe:child-usage-replay: a later child_usage_attributed entry changes the reported usage of an earlier assistant entry on reload: true",
+					"probe:fork: fork writes a new session file: true; entries copied with the original ids: 7; copies identical to the originals: true; header links to the original (parentSession): true",
+					"prime@08ff1b2e:packages/coding-agent/src/core/session-manager.ts:54-167,418-433 (tree and child attribution)",
+					"prime@08ff1b2e:packages/coding-agent/src/core/compaction/compaction.ts:108-116,829-866 (summary accounting)",
+					"prime@08ff1b2e:packages/coding-agent/src/core/session-manager.ts:1780-1794,1893-1911,2544-2615 (rewrite/fork)"
+				],
+				"adapterState": [
+					"Row id: the session entry id (8 hex, stable across reopen); a fork copies path entries with the same ids into its new file, so the id names one durable row across the file set only after de-duplication",
+					"Row sequence: a durable adapter-owned sequence across the whole fork family; Prime has none, and a file's line ordinal is not session-global (the original and a fork file reuse the same ordinals)",
+					"Paging: the adapter reads the session file itself (Prime has no usage scan command)",
+					"Fork: rows of a forked session live in a new file whose copied prefix repeats the original's rows; the adapter must track the file set and de-duplicate"
+				],
+				"qualifications": [
+					"Rows are session entries (assistant messages, compaction, branch_summary, child_usage_attributed), not Pi usage rows",
+					"child_usage_attributed is a separate durable row, but on reload Prime also rewrites the target assistant's in-memory usage; an adapter must read the file's original row, never the replayed message",
+					"A child row's association (targetId) names the parent assistant entry, not the child session that spent it",
+					"adjustment is always false: Prime has no caller adjustments",
+					"Prime rewrites the whole session file on format migration and session moves; a line ordinal is a stable cursor only while a rewrite preserves entry order, and the adapter must detect rewrites (inode or size shrink) to re-validate it",
+					"Live observation needs the adapter to watch message_end/compaction_end and re-read the file for the durable row; events carry no sequence"
+				],
+				"unavailable": [
+					"A native durable monotonic usage sequence or cursor, and any session-global one: line ordinals are per file",
+					"A native usage paging command",
+					"reasoning and cacheWrite1h counts"
+				],
+				"support": "adapter-state",
+				"semanticFit": "qualified",
+				"basis": "established",
+				"baseline": {
+					"support": "adapter-state",
+					"semanticFit": "qualified"
+				},
+				"missing": [],
+				"contradictions": []
+			},
+			"acp": {
+				"support": "unavailable",
+				"semanticFit": "incompatible",
+				"basis": "established"
+			},
+			"durable": {
+				"support": "adapter-state",
+				"semanticFit": "qualified",
+				"basis": "established",
+				"exactProjection": "unverified",
+				"boundary": "durable-session-files, separately observed"
+			},
+			"adapterState": [
+				"Any new allocator/registry/projection would require an independent implementation and audit"
+			],
+			"missing": [
+				"session-global committed sequence across values and entries",
+				"exclusive cursor pages, exact hasEarlier and race-free tail/live handoff",
+				"stable allocation across fork, restart, whole-file rewrite and concurrent writers"
+			]
+		},
+		{
+			"contract": "ContinuitySnapshotV0",
+			"rpc": {
+				"support": "adapter-state",
+				"semanticFit": "incompatible",
+				"basis": "established"
+			},
+			"acp": {
+				"support": "adapter-state",
+				"semanticFit": "incompatible",
+				"basis": "established"
+			},
+			"durable": {
+				"support": "adapter-state",
+				"semanticFit": "qualified",
+				"basis": "established",
+				"exactProjection": "unverified",
+				"boundary": "durable-session-files, separately observed"
+			},
+			"adapterState": [
+				"Any new allocator/registry/projection would require an independent implementation and audit"
+			],
+			"missing": [
+				"Pi compaction-bounded source-entry context rather than assembled transcript",
+				"retained-tail semantics and exact stable source sequences",
+				"durable captured settings, topology, counts and timestamp identity"
+			]
+		}
+	],
+	"candidateForPR27": [],
+	"boundaryDrift": {
+		"rpc": "rpc",
+		"acp": "acp",
+		"sameBoundary": false,
+		"combinedRuntimeInterface": false
+	},
+	"sourceReferences": {
+		"primeCommit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+		"rpc": "packages/agent/src/agent-loop.ts:310-449; packages/coding-agent/src/core/agent-session.ts:14776-14824",
+		"acp": "packages/coding-agent/src/modes/acp/acp-mode.ts:186-337,736-906,919-1030; acp-events.ts:147-323; acp-stop-reason.ts:1-29",
+		"durable": "packages/coding-agent/src/core/session-manager.ts:54-167,446-575,1893-1911,2544-2615",
+		"sdk": "package-lock.json: @agentclientprotocol/sdk 1.3.0; JSON-RPC 2.0 NDJSON, protocol 1"
+	},
+	"qualifications": [
+		"Research evidence only; no production Runtime Profile or capability admission",
+		"ACP durable files are a separate boundary, not ACP-native Usage or Continuity",
+		"No existing Endophasia capability is exact on either boundary"
+	],
+	"privacyViolations": []
+}

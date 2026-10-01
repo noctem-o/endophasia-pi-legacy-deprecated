@@ -5,7 +5,41 @@
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.13.0";
+export const PROBE_VERSION = "0.14.7";
+
+/** Mandatory RPC envelope lists, shared by fixture reading and the pre-persistence shape gate. */
+export const RPC_EVIDENCE_ARRAYS = [
+	"events",
+	"abortRequestedAfter",
+	"commands",
+	"stats",
+	"sessionEntries",
+	"entrySnapshots",
+	"stateKeys",
+	"protocolErrors",
+	"failures",
+] as const;
+
+/** Required on every sanitized scenario, including diagnostics. Optional build identities remain separate. */
+export function assertRequiredProvenance(value: unknown, mode: "rpc" | "acp"): void {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("provenance required");
+	const p = value as Record<string, unknown>;
+	for (const key of [
+		"source",
+		"version",
+		"build",
+		"mode",
+		"generatedBy",
+		"probeVersion",
+		"platform",
+		"node",
+		"scenario",
+	])
+		if (!Object.hasOwn(p, key) || typeof p[key] !== "string" || p[key].length === 0)
+			throw new Error("required provenance field missing");
+	if (p.source !== "prime-agent" || p.generatedBy !== PROBE_NAME || p.mode !== mode)
+		throw new Error("provenance boundary mismatch");
+}
 
 /**
  * How the Prime that ran is known:
@@ -33,6 +67,13 @@ export interface PrimeProvenanceV0 {
 	readonly probeVersion: string;
 	readonly platform: string;
 	readonly node: string;
+	/** Research source revision, distinct from Prime and from a production composition. */
+	readonly endophasiaCommit?: string;
+	readonly endophasiaBuild?: string;
+	readonly researchHash?: string;
+	/** Hash of the exact launcher and dependency lock used with the freshly built artifacts. */
+	readonly launcherHash?: string;
+	readonly lockHash?: string;
 }
 
 /** Provenance of one scenario's evidence, as committed with each fixture. */
@@ -292,7 +333,20 @@ export function invalidStatsFieldsV0(stats: PrimeStatsEvidenceV0): string[] {
 	return Object.entries(fields).flatMap(([name, value]) => (isCountV0(value) ? [] : [name]));
 }
 
-function entryProblems(where: string, entries: readonly PrimeSessionEntryEvidenceV0[]): string[] {
+/** Outer accounting accepted by the decoder, shared with the persisted inventory check. Assistant usage is nested. */
+export function unretainedAccountingKeys(type: string, keys: readonly string[]): string[] {
+	const retained =
+		type === "compaction" || type === "branch_summary"
+			? ["usage"]
+			: type === "child_usage_attributed"
+				? ["childUsage", "aggregateUsage"]
+				: [];
+	return keys.filter(
+		(key) => ["usage", "cost", "childUsage", "aggregateUsage"].includes(key) && !retained.includes(key),
+	);
+}
+
+export function entryProblems(where: string, entries: readonly PrimeSessionEntryEvidenceV0[]): string[] {
 	const ids = entries.map((entry) => entry.id);
 	const duplicates = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
 	return [
@@ -309,7 +363,35 @@ function entryProblems(where: string, entries: readonly PrimeSessionEntryEvidenc
 		),
 		...entries.flatMap((entry, index) => {
 			const label = `${where} entry ${index} (${entry.type})`;
+			// These are outer wire keys; role/assistant usage live inside the message key, not beside it.
+			const required = ["type", "id", ...(entry.type === "session" ? [] : ["parentId"])];
+			if (entry.type === "message") required.push("message");
+			if (entry.type === "compaction") required.push("firstKeptEntryId");
+			for (const field of ["targetId", "childUsage", "aggregateUsage"] as const)
+				if (entry[field] !== undefined) required.push(field);
+			if (entry.type !== "message" && entry.usage !== undefined) required.push("usage");
 			return [
+				...(unretainedAccountingKeys(entry.type, entry.keys).length
+					? [`${label}: unretained accounting wire fields`]
+					: []),
+				...(entry.usage !== undefined &&
+				!(
+					["compaction", "branch_summary"].includes(entry.type) ||
+					(entry.type === "message" && entry.role === "assistant")
+				)
+					? [`${label}: usage has no decoded accounting source`]
+					: []),
+				...(entry.type !== "child_usage_attributed" &&
+				(entry.childUsage !== undefined || entry.aggregateUsage !== undefined)
+					? [`${label}: child usage has no decoded accounting source`]
+					: []),
+				...(new Set(entry.keys).size !== entry.keys.length || required.some((key) => !entry.keys.includes(key))
+					? [`${label}: durable key inventory contradicts retained wire observations`]
+					: []),
+				...(["compaction", "branch_summary"].includes(entry.type) &&
+				entry.keys.includes("usage") !== (entry.usage !== undefined)
+					? [`${label}: durable usage key contradicts retained wire observations`]
+					: []),
 				...(missingText(entry.type) || missingText(entry.id) ? [`${label}: entry without type or id`] : []),
 				...(entry.type !== "session" && entry.parentId !== null && missingText(entry.parentId)
 					? [`${label}: parentId is neither a non-empty string nor null`]

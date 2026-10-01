@@ -1,0 +1,442 @@
+{
+	"schemaVersion": "prime-acp-evidence.v0",
+	"provenance": {
+		"source": "prime-agent",
+		"version": "0.9.7",
+		"commit": "08ff1b2e2794ea9e8f4a08d12bc95408a66e1074",
+		"artifactsHash": "a25d17fdb3691f581521f7e9f1a7fb35d0ae1c7bd45d9a7b213156aee9bc85b6",
+		"build": "clean-checkout",
+		"mode": "acp",
+		"generatedBy": "prime-conformance-v0",
+		"probeVersion": "0.14.7",
+		"platform": "linux-x64",
+		"node": "v26.10.0",
+		"endophasiaCommit": "45adf6b103bf484f40aa69b4774c089ccd170bda",
+		"endophasiaBuild": "clean-checkout",
+		"researchHash": "56e25aee3557d266f8b40e3efc883e3ffbf6f2dcdbcee42407dc3989186600f0",
+		"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
+		"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
+		"scenario": "close-recreate"
+	},
+	"updates": [
+		{
+			"sessionId": "87f35dcc-0c79-4c82-b366-6c05470340ad",
+			"kind": "agent_message_chunk",
+			"keys": [
+				"_meta",
+				"content",
+				"messageId",
+				"sessionUpdate"
+			],
+			"metaKeys": [
+				"eventSequence",
+				"phase",
+				"promptTurnId"
+			],
+			"promptTurnId": 1,
+			"eventSequence": 1,
+			"phase": "event",
+			"messageId": "prime-agent-assistant-1"
+		},
+		{
+			"sessionId": "87f35dcc-0c79-4c82-b366-6c05470340ad",
+			"kind": "session_info_update",
+			"keys": [
+				"_meta",
+				"sessionUpdate"
+			],
+			"metaKeys": [
+				"eventSequence",
+				"outcome",
+				"phase",
+				"promptTurnId",
+				"terminalQuiescenceExpected"
+			],
+			"promptTurnId": 1,
+			"eventSequence": 2,
+			"phase": "responseBoundary",
+			"outcome": "result",
+			"terminalQuiescenceExpected": true
+		},
+		{
+			"sessionId": "87f35dcc-0c79-4c82-b366-6c05470340ad",
+			"kind": "session_info_update",
+			"keys": [
+				"_meta",
+				"sessionUpdate"
+			],
+			"metaKeys": [
+				"eventSequence",
+				"phase",
+				"promptTurnId",
+				"quiescence"
+			],
+			"promptTurnId": 1,
+			"eventSequence": 3,
+			"phase": "event",
+			"quiescence": {
+				"outstandingSubagents": 0,
+				"remainingAutonomousContinuations": 0
+			}
+		},
+		{
+			"sessionId": "87f35dcc-0c79-4c82-b366-6c05470340ad",
+			"kind": "session_info_update",
+			"keys": [
+				"_meta",
+				"sessionUpdate"
+			],
+			"metaKeys": [
+				"eventSequence",
+				"outcome",
+				"phase",
+				"promptTurnId",
+				"quiescence"
+			],
+			"promptTurnId": 1,
+			"eventSequence": 4,
+			"phase": "terminalQuiescence",
+			"outcome": "result",
+			"quiescence": {
+				"outstandingSubagents": 0,
+				"remainingAutonomousContinuations": 0
+			}
+		},
+		{
+			"sessionId": "ad0d9488-2d53-4cdf-9885-e6f49207ddce",
+			"kind": "agent_message_chunk",
+			"keys": [
+				"_meta",
+				"content",
+				"messageId",
+				"sessionUpdate"
+			],
+			"metaKeys": [
+				"eventSequence",
+				"phase",
+				"promptTurnId"
+			],
+			"promptTurnId": 1,
+			"eventSequence": 1,
+			"phase": "event",
+			"messageId": "prime-agent-assistant-1"
+		},
+		{
+			"sessionId": "ad0d9488-2d53-4cdf-9885-e6f49207ddce",
+			"kind": "session_info_update",
+			"keys": [
+				"_meta",
+				"sessionUpdate"
+			],
+			"metaKeys": [
+				"eventSequence",
+				"outcome",
+				"phase",
+				"promptTurnId",
+				"terminalQuiescenceExpected"
+			],
+			"promptTurnId": 1,
+			"eventSequence": 2,
+			"phase": "responseBoundary",
+			"outcome": "result",
+			"terminalQuiescenceExpected": true
+		},
+		{
+			"sessionId": "ad0d9488-2d53-4cdf-9885-e6f49207ddce",
+			"kind": "session_info_update",
+			"keys": [
+				"_meta",
+				"sessionUpdate"
+			],
+			"metaKeys": [
+				"eventSequence",
+				"phase",
+				"promptTurnId",
+				"quiescence"
+			],
+			"promptTurnId": 1,
+			"eventSequence": 3,
+			"phase": "event",
+			"quiescence": {
+				"outstandingSubagents": 0,
+				"remainingAutonomousContinuations": 0
+			}
+		},
+		{
+			"sessionId": "ad0d9488-2d53-4cdf-9885-e6f49207ddce",
+			"kind": "session_info_update",
+			"keys": [
+				"_meta",
+				"sessionUpdate"
+			],
+			"metaKeys": [
+				"eventSequence",
+				"outcome",
+				"phase",
+				"promptTurnId",
+				"quiescence"
+			],
+			"promptTurnId": 1,
+			"eventSequence": 4,
+			"phase": "terminalQuiescence",
+			"outcome": "result",
+			"quiescence": {
+				"outstandingSubagents": 0,
+				"remainingAutonomousContinuations": 0
+			}
+		}
+	],
+	"prompts": [
+		{
+			"ordinal": 1,
+			"response": "result",
+			"stopReason": "end_turn"
+		},
+		{
+			"ordinal": 2,
+			"response": "result",
+			"stopReason": "end_turn"
+		}
+	],
+	"commands": [
+		{
+			"method": "initialize",
+			"success": true
+		},
+		{
+			"method": "session/new",
+			"success": true,
+			"sessionId": "87f35dcc-0c79-4c82-b366-6c05470340ad"
+		},
+		{
+			"method": "session/prompt",
+			"success": true,
+			"sessionId": "87f35dcc-0c79-4c82-b366-6c05470340ad",
+			"ordinal": 1
+		},
+		{
+			"method": "session/close",
+			"success": true,
+			"sessionId": "87f35dcc-0c79-4c82-b366-6c05470340ad"
+		},
+		{
+			"method": "session/new",
+			"success": true,
+			"sessionId": "ad0d9488-2d53-4cdf-9885-e6f49207ddce"
+		},
+		{
+			"method": "session/prompt",
+			"success": true,
+			"sessionId": "ad0d9488-2d53-4cdf-9885-e6f49207ddce",
+			"ordinal": 2
+		},
+		{
+			"method": "session/close",
+			"success": true,
+			"sessionId": "ad0d9488-2d53-4cdf-9885-e6f49207ddce"
+		}
+	],
+	"sessionIds": [
+		"87f35dcc-0c79-4c82-b366-6c05470340ad",
+		"ad0d9488-2d53-4cdf-9885-e6f49207ddce"
+	],
+	"cancelAfter": [],
+	"providerRequests": 2,
+	"summaryRequests": 0,
+	"files": [
+		[
+			{
+				"type": "session",
+				"id": "01a0f834-1b7b-764a-8757-3c3f9780d285",
+				"keys": [
+					"cwd",
+					"id",
+					"rlmDepth",
+					"timestamp",
+					"type",
+					"version"
+				]
+			},
+			{
+				"type": "model_change",
+				"id": "ed98add7",
+				"parentId": null,
+				"keys": [
+					"id",
+					"modelId",
+					"parentId",
+					"provider",
+					"timestamp",
+					"type"
+				]
+			},
+			{
+				"type": "thinking_level_change",
+				"id": "d0b5c1fb",
+				"parentId": "ed98add7",
+				"keys": [
+					"id",
+					"parentId",
+					"thinkingLevel",
+					"timestamp",
+					"type"
+				]
+			},
+			{
+				"type": "service_tier_change",
+				"id": "2a07cfed",
+				"parentId": "d0b5c1fb",
+				"keys": [
+					"id",
+					"parentId",
+					"serviceTier",
+					"timestamp",
+					"type"
+				]
+			},
+			{
+				"type": "session_state",
+				"id": "582f28e2",
+				"parentId": "2a07cfed",
+				"keys": [
+					"id",
+					"parentId",
+					"state",
+					"timestamp",
+					"type"
+				]
+			},
+			{
+				"type": "custom_message",
+				"id": "fac8ccc0",
+				"parentId": "582f28e2",
+				"keys": [
+					"content",
+					"customType",
+					"details",
+					"display",
+					"id",
+					"parentId",
+					"timestamp",
+					"type"
+				]
+			},
+			{
+				"type": "message",
+				"id": "b65692c8",
+				"parentId": "fac8ccc0",
+				"keys": [
+					"id",
+					"message",
+					"parentId",
+					"timestamp",
+					"type"
+				],
+				"role": "user"
+			},
+			{
+				"type": "message",
+				"id": "a8b5170a",
+				"parentId": "b65692c8",
+				"keys": [
+					"id",
+					"message",
+					"parentId",
+					"timestamp",
+					"type"
+				],
+				"role": "assistant",
+				"stopReason": "stop",
+				"usage": {
+					"input": 500,
+					"output": 7,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 507,
+					"cost": {
+						"input": 500,
+						"output": 14,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 514
+					},
+					"extraKeys": []
+				}
+			},
+			{
+				"type": "message",
+				"id": "bcd32b17",
+				"parentId": "a8b5170a",
+				"keys": [
+					"id",
+					"message",
+					"parentId",
+					"timestamp",
+					"type"
+				],
+				"role": "user"
+			},
+			{
+				"type": "message",
+				"id": "6c17e59f",
+				"parentId": "bcd32b17",
+				"keys": [
+					"id",
+					"message",
+					"parentId",
+					"timestamp",
+					"type"
+				],
+				"role": "assistant",
+				"stopReason": "stop",
+				"usage": {
+					"input": 400,
+					"output": 11,
+					"cacheRead": 250,
+					"cacheWrite": 50,
+					"totalTokens": 711,
+					"cost": {
+						"input": 400,
+						"output": 22,
+						"cacheRead": 125,
+						"cacheWrite": 12.5,
+						"total": 559.5
+					},
+					"extraKeys": []
+				}
+			}
+		]
+	],
+	"protocolErrors": [],
+	"failures": [],
+	"initialize": {
+		"protocolVersion": 1,
+		"agentName": "prime-agent",
+		"agentVersion": "0.9.7",
+		"agentInfoKeys": [
+			"name",
+			"title",
+			"version"
+		],
+		"capabilityFields": [
+			"loadSession",
+			"mcpCapabilities",
+			"mcpCapabilities.http",
+			"promptCapabilities",
+			"promptCapabilities.embeddedContext",
+			"promptCapabilities.image",
+			"sessionCapabilities",
+			"sessionCapabilities.close"
+		],
+		"capabilityFlags": {
+			"loadSession": false,
+			"promptCapabilities.image": true,
+			"promptCapabilities.embeddedContext": true,
+			"mcpCapabilities.http": true
+		},
+		"metaNamespaces": [
+			"ai.primeintellect.prime-agent"
+		],
+		"primeMetaKeys": []
+	}
+}

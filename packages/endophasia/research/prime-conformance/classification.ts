@@ -1,8 +1,10 @@
 // Research-only (Prime Runtime Conformance v0). Derives conformance facts from sanitized probe evidence and classifies
 // each Endophasia v0 contract on two axes. Nothing here is an Endophasia contract or runtime interface.
 
+import { auditedProvenance, PRIME_097_SOURCE } from "./audited.ts";
 import { PROBE_MODEL_COST } from "./environment.ts";
 import type { PrimeScenarioEvidenceV0, PrimeSessionEntryEvidenceV0, PrimeStatsEvidenceV0 } from "./evidence.ts";
+import { PROBE_VERSION } from "./evidence.ts";
 import {
 	CHILD_USAGE_SEED,
 	EXPECTED_ASSISTANT_USAGE,
@@ -477,13 +479,7 @@ export function derivePrimeFactsV0(evidence: readonly PrimeScenarioEvidenceV0[])
 
 	const provenance = evidence[0]?.provenance;
 	return {
-		auditedRevision:
-			provenance !== undefined &&
-			provenance.build === "clean-checkout" &&
-			provenance.version === AUDITED_PRIME.version &&
-			provenance.commit === AUDITED_PRIME.commit
-				? true
-				: undefined,
+		auditedRevision: auditedProvenance(provenance) ? true : undefined,
 		forkSharedEntriesIdentical: fork?.observations.forkSharedEntriesIdentical,
 		forkParentLinked: fork?.observations.forkParentLinked,
 		providerUsageDecodedExactly: providerUsageDecodedExactly(evidence),
@@ -621,6 +617,14 @@ export function classifyPrimeConformanceV0(
 	evidence: readonly PrimeScenarioEvidenceV0[],
 	facts: PrimeFactsV0 = derivePrimeFactsV0(evidence),
 ): PrimeConformanceFindingV0[] {
+	const current = evidence[0]?.provenance.version === "0.9.7";
+	const source = current ? PRIME_097_SOURCE : PRIME_SOURCE;
+	const auditedRevision = current
+		? {
+				...AUDITED_REVISION,
+				fact: `Prime 0.9.7 @ 08ff1b2e (the audited revision), clean checkout and probe ${PROBE_VERSION}`,
+			}
+		: AUDITED_REVISION;
 	const traces = mapScenarioMissionTracesV0(evidence);
 	const ambiguous = traces.flatMap(({ scenario, mapping }) =>
 		mapping.terminals.filter((terminal) => terminal.basis === "ambiguous").map(() => scenario),
@@ -637,7 +641,7 @@ export function classifyPrimeConformanceV0(
 		support: "adapter-state",
 		semanticFit: "qualified",
 		requires: [
-			AUDITED_REVISION,
+			auditedRevision,
 			expect("toolCallIdentityNative", true),
 			expect("toolErrorRecovered", true),
 			expect("providerFailureStop", "error"),
@@ -659,8 +663,8 @@ export function classifyPrimeConformanceV0(
 			`probe:abort-tool: final stop reason ${show(facts.abortToolStop)}; agent_end alone does not say the run was aborted`,
 			`probe:length-stop: final stop reason ${show(facts.lengthStop)}`,
 			`probe:*: adapter identity problems: ${identityProblems.length === 0 ? "none" : identityProblems.join("; ")}`,
-			PRIME_SOURCE.rpcEvents,
-			PRIME_SOURCE.agentEndPaths,
+			source.rpcEvents,
+			source.agentEndPaths,
 		],
 		adapterState: [
 			"lane: an adapter label for the one root session an RPC process drives (prime:root); Prime names no lane",
@@ -692,7 +696,7 @@ export function classifyPrimeConformanceV0(
 		support: "adapter-state",
 		semanticFit: "qualified",
 		requires: [
-			AUDITED_REVISION,
+			auditedRevision,
 			expect("providerUsageDecodedExactly", true),
 			expect("statsDropAfterCompaction", true),
 			expect("statsDropAfterFork", true),
@@ -717,11 +721,11 @@ export function classifyPrimeConformanceV0(
 			`probe:multi-turn-reopen: stats identical after reopen in every stable field (message counts, tokens, cost; contextUsage excluded): ${show(facts.reopenStatsEqual)}`,
 			`probe:multi-turn-reopen: adapter rebuild from the session file equals get_session_stats on a single path: ${show(facts.rebuildMatchesStatsOnSinglePath)}`,
 			`probe:compaction: adapter rebuild, from snapshots immediately before and after compaction, equals the pre-compaction rows plus the summary usage in every dimension: ${show(facts.rebuildIncludesCompactionUsage)}`,
-			PRIME_SOURCE.sessionStats,
-			PRIME_SOURCE.retrySlice,
-			PRIME_SOURCE.childUsage,
-			PRIME_SOURCE.openAiUsage,
-			PRIME_SOURCE.autoRefine,
+			source.sessionStats,
+			source.retrySlice,
+			source.childUsage,
+			source.openAiUsage,
+			source.autoRefine,
 		],
 		adapterState: [
 			"A cumulative accounting sum rebuilt from every durable session file of the tree (assistant, compaction and branch_summary usage, and child_usage_attributed rows), because get_session_stats is scoped to the current context path",
@@ -754,10 +758,10 @@ export function classifyPrimeConformanceV0(
 		semanticFit: "incompatible",
 		// The absence of a result lookup rests on Prime's RPC surface (source and docs); the probe must still see the
 		// abort-during-tool case that no Prime record can recover.
-		requires: [AUDITED_REVISION, expect("abortToolStop", "toolUse"), expect("reopenEntryIdsStable", true)],
+		requires: [auditedRevision, expect("abortToolStop", "toolUse"), expect("reopenEntryIdsStable", true)],
 		evidence: [
-			PRIME_SOURCE.rpcCommands,
-			PRIME_SOURCE.rpcEvents,
+			source.rpcCommands,
+			source.rpcEvents,
 			`probe:multi-turn-reopen: entry ids stable across reopen: ${show(facts.reopenEntryIdsStable)}`,
 			`probe:abort-tool: final stop reason ${show(facts.abortToolStop)}`,
 		],
@@ -782,7 +786,7 @@ export function classifyPrimeConformanceV0(
 		support: "adapter-state",
 		semanticFit: "qualified",
 		requires: [
-			AUDITED_REVISION,
+			auditedRevision,
 			expect("providerUsageDecodedExactly", true),
 			expect("reopenEntryIdsStable", true),
 			expect("forkSharedEntriesIdentical", true),
@@ -800,9 +804,9 @@ export function classifyPrimeConformanceV0(
 			`probe:compaction: compaction entry carries usage: ${show(facts.compactionUsageDurable)}`,
 			`probe:child-usage-replay: a later child_usage_attributed entry changes the reported usage of an earlier assistant entry on reload: ${show(facts.childUsageRewritesEarlierRow)}`,
 			`probe:fork: fork writes a new session file: ${show(facts.forkNewFile)}; entries copied with the original ids: ${show(facts.forkSharedEntryIds)}; copies identical to the originals: ${show(facts.forkSharedEntriesIdentical)}; header links to the original (parentSession): ${show(facts.forkParentLinked)}`,
-			PRIME_SOURCE.sessionFormat,
-			PRIME_SOURCE.compactionUsage,
-			PRIME_SOURCE.sessionRewrite,
+			source.sessionFormat,
+			source.compactionUsage,
+			source.sessionRewrite,
 		],
 		adapterState: [
 			"Row id: the session entry id (8 hex, stable across reopen); a fork copies path entries with the same ids into its new file, so the id names one durable row across the file set only after de-duplication",

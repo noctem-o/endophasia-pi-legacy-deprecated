@@ -21,6 +21,8 @@
 		"check": "biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:runtime-deps && npm run check:ts-imports && npm run check:entry-graphs && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsc --noEmit && npm run check:browser-smoke && npm run check:endophasia-cockpit",
 		"check:browser-smoke": "node scripts/check-browser-smoke.mjs",
 		"check:endophasia-cockpit": "node scripts/check-endophasia-cockpit-types.mjs",
+		"check:prime-conformance:097:offline": "node packages/endophasia/research/prime-conformance/offline-097.ts",
+		"check:prime-conformance:097": "node packages/endophasia/research/prime-conformance/cli-097.ts",
 		"check:prime-conformance": "node packages/endophasia/research/prime-conformance/cli.ts",
 		"check:pinned-deps": "node scripts/check-pinned-deps.mjs",
 		"check:runtime-deps": "node scripts/check-runtime-deps.mjs",
