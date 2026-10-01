@@ -5,7 +5,7 @@
 import type { PrimeEvidenceEventV0, PrimeUsageEvidenceV0 } from "./protocol.ts";
 
 export const PROBE_NAME = "prime-conformance-v0";
-export const PROBE_VERSION = "0.14.3";
+export const PROBE_VERSION = "0.14.4";
 
 /** Required on every sanitized scenario, including diagnostics. Optional build identities remain separate. */
 export function assertRequiredProvenance(value: unknown, mode: "rpc" | "acp"): void {

@@ -332,6 +332,8 @@ export function acpScenarioProblems(run: AcpScenarioEvidence): string[] {
 	const sequences = new Map<string, number>();
 	const tools = new Map<string, string>();
 	for (const u of run.updates) {
+		if (new Set(u.metaKeys).size !== u.metaKeys.length)
+			problems.push("ACP metadata inventory contains duplicate keys");
 		if (
 			new Set(u.keys).size !== u.keys.length ||
 			!["sessionUpdate", "_meta"].every((field) => u.keys.includes(field)) ||

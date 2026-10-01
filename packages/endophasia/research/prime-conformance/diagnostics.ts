@@ -17,7 +17,8 @@ export function writePrime097Diagnostics(
 	if (
 		rpc.flatMap(rpcPrivacyShapeProblems).length ||
 		acp.flatMap(acpPrivacyShapeProblems).length ||
-		scanForSentinelsV0("joint evidence", { rpc, acp }).length
+		baseline.flatMap(rpcPrivacyShapeProblems).length ||
+		scanForSentinelsV0("joint evidence and baseline", { rpc, acp, baseline }).length
 	)
 		throw new Error("privacy/shape violation; nothing written");
 	const report = buildPrime097Report(rpc, acp, baseline);
