@@ -7,12 +7,12 @@
 		"build": "clean-checkout",
 		"mode": "rpc",
 		"generatedBy": "prime-conformance-v0",
-		"probeVersion": "0.14.4",
+		"probeVersion": "0.14.5",
 		"platform": "linux-x64",
 		"node": "v26.10.0",
-		"endophasiaCommit": "4dd9916ace190a5b1e7c83504032051ab347b393",
+		"endophasiaCommit": "0744c2d4aef9c482e326f638d78a6ab43b89449a",
 		"endophasiaBuild": "clean-checkout",
-		"researchHash": "7856d769634bfbb041ef97f431c59c21be08fe7343d7be4344fa9206c2d65389",
+		"researchHash": "7a297d27268437d110a8838db2dfb8c1841995c069017d7d722c14bd553deb43",
 		"launcherHash": "0ceef94210da44aa2cb232fb18fd215c5a25caf7b652531856c5a90af01df09d",
 		"lockHash": "4c305464abcef869ad1f812835209fe9c7aed39dca42b724296c4f4ed1c9cd51",
 		"scenario": "provider-failure"
@@ -172,7 +172,7 @@
 	"sessionEntries": [
 		{
 			"type": "session",
-			"id": "01a0f68b-c8b2-77aa-a26f-9ac752f378c2",
+			"id": "01a0f6d4-9ab5-725d-9445-8a5606cf09df",
 			"keys": [
 				"cwd",
 				"id",
@@ -184,7 +184,7 @@
 		},
 		{
 			"type": "model_change",
-			"id": "3f270fe6",
+			"id": "3664e0fb",
 			"parentId": null,
 			"keys": [
 				"id",
@@ -197,8 +197,8 @@
 		},
 		{
 			"type": "thinking_level_change",
-			"id": "40392b09",
-			"parentId": "3f270fe6",
+			"id": "626534b3",
+			"parentId": "3664e0fb",
 			"keys": [
 				"id",
 				"parentId",
@@ -209,8 +209,8 @@
 		},
 		{
 			"type": "service_tier_change",
-			"id": "b353cd75",
-			"parentId": "40392b09",
+			"id": "512618a6",
+			"parentId": "626534b3",
 			"keys": [
 				"id",
 				"parentId",
@@ -221,8 +221,8 @@
 		},
 		{
 			"type": "session_state",
-			"id": "41f96218",
-			"parentId": "b353cd75",
+			"id": "75fedd7a",
+			"parentId": "512618a6",
 			"keys": [
 				"id",
 				"parentId",
@@ -233,8 +233,8 @@
 		},
 		{
 			"type": "custom_message",
-			"id": "ba06b312",
-			"parentId": "41f96218",
+			"id": "56135f97",
+			"parentId": "75fedd7a",
 			"keys": [
 				"content",
 				"customType",
@@ -248,8 +248,8 @@
 		},
 		{
 			"type": "message",
-			"id": "9772841a",
-			"parentId": "ba06b312",
+			"id": "3709a17e",
+			"parentId": "56135f97",
 			"keys": [
 				"id",
 				"message",
@@ -261,8 +261,8 @@
 		},
 		{
 			"type": "message",
-			"id": "651e7210",
-			"parentId": "9772841a",
+			"id": "2d13efe0",
+			"parentId": "3709a17e",
 			"keys": [
 				"id",
 				"message",
